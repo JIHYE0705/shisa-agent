@@ -50,3 +50,10 @@ test('SSE edited: 이 창이 보낸 답을 고쳤으면 새 답도 이 창 것(�
   assert.equal(q.pending[A].text, '새 글');
   assert.equal(q.pending[A].queued, true);
 });
+
+test('AI 없이 고른 말은 로컬 사본에 canned 표시가 남는다(서버 말·답에는 안 붙음)', () => {
+  const at = '2026-10-14T09:00:00Z';
+  assert.equal(appendLocal([], { role: 'user', text: '좀 쉬어도 될까요?', at, canned: true })[0].canned, true);
+  assert.equal(appendLocal([], { role: 'assistant', text: '잠깐 쉬어요', at, canned: true })[0].canned, undefined);
+  assert.equal(mergeMessages([], [{ role: 'user', text: 'x', at, canned: true }]).find((m) => m.text === 'x')?.canned, undefined);
+});

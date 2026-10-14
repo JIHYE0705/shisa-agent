@@ -2245,6 +2245,7 @@ function metaEl(m, status) {
 // 서버 기록(로컬 사본 아님)은 줄 섰다 간 말만 「대기 N분 뒤 보냄」
 function userStatus(m) {
   if (m.local && m.error) return { status: '못 보냄' };
+  if (m.canned) return { status: '보냄', tone: 'sent' }; // AI 없이 고른 말: 패널 안에서 바로 답한다
   if (!m.local) return m.queuedAt ? sentStatus(m.queuedAt, m.at) : null;
   const st = localState(chat, m.chatId);
   if (st === 'sending') return { status: '보내는 중', tone: 'sending', title: m.chatId ? '데몬이 받았어요 — 바로 보낼지 줄 설지 확인하는 중' : '데몬에 보내는 중' };
@@ -2613,6 +2614,7 @@ function renderChat(opts = {}) {
         h('span', { text: t?.kind === 'todo' ? '"내일로 미뤄", "끝났어", "둘로 나눠"처럼 말하면 바로 바꿔요.' : `무엇이든 물어보세요. 예: ${hasCoder() ? '"오늘 커밋 보여줘", "P1 할 일 뭐 있어?"' : '"오늘 일정 알려줘", "급한 할 일 뭐 있어?"'} 다른 대화의 내용은 이어지지 않아요.` })));
   }
   if (selectedId && isRunning(chat, selectedId)) items.push(h('div.typing', null, h('i'), h('i'), h('i'), h('span', { text: busyLabel(chat, selectedId) })));
+  else if (cannedTyping) items.push(h('div.typing', null, h('i'), h('i'), h('i'), h('span', { text: '입력 중' })));
   for (const p of queued) items.push(queuedRow(p, target?.kind === 'queued' && target.chatId === p.chatId));
   chatLog.replaceChildren(...items);
   renderChatLock();
@@ -2676,11 +2678,19 @@ function applyBrain(v) {
 cy.brain?.().then(applyBrain).catch(() => {});
 cy.onBrain?.(applyBrain);
 
+// AI 없이 고른 말: 내 말은 바로 「보냄」, 시사는 1~2초 입력 중(점 세 개)을 보이고 답한다
+let cannedTyping = null; // 답을 기다리는 타이머(입력 중 표시)
 function sayCanned(c) {
+  if (cannedTyping) return; // 앞 답이 오기 전엔 하나씩
   const openItems = rawTodos();
   const text = cannedReply(c.id, { open: openItems.length, done: vm.recentDone.length, next: openItems[0]?.title || '', hour: new Date().getHours() }, { override: sisa.canned });
-  const at = new Date().toISOString();
-  messages = appendLocal(appendLocal(messages, { role: 'user', text: c.label, at }), { role: 'assistant', text, at });
+  messages = appendLocal(messages, { role: 'user', text: c.label, at: new Date().toISOString(), canned: true });
+  cannedTyping = setTimeout(() => {
+    cannedTyping = null;
+    messages = appendLocal(messages, { role: 'assistant', text, at: new Date().toISOString() });
+    renderChat();
+    scrollChat(true);
+  }, 1000 + Math.round(Math.random() * 800));
   renderChat();
   scrollChat(true);
 }

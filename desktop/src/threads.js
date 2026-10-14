@@ -149,6 +149,7 @@ function normMsg(m) {
   }
   if (m.via === 'cli' && !m.local) out.via = 'cli'; // 터미널 Claude Code 에서 이어 간 말
   if (m.local) out.local = true;
+  if (m.local && role === 'user' && m.canned === true) out.canned = true; // AI 없이 고른 말(패널이 바로 답함 — 늘 「보냄」)
   if (m.local && typeof m.chatId === 'string' && m.chatId) out.chatId = m.chatId; // 이 말의 POST /chat chatId(대기 중·지금 보내기·취소)
   // clientId: 패널이 보낼 때 붙인 말 id — 서버 기록(같은 clientId)이 오면 로컬 사본을 정확히 걷는다
   if (role === 'user' && typeof m.clientId === 'string' && m.clientId) out.clientId = m.clientId;
