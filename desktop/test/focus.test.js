@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normFocus, elapsedSec, todayLive, fmtClock, fmtDuration, fmtShort, focusBubble, focusLevel, isFocusCmd,
-  weekRange, monthRange, shiftAnchor, monthGrid, rangeTitle, dayLabel, cellTitle, summarize, barRatio, parseDay, addDays, localDay,
+  weekRange, monthRange, shiftAnchor, monthGrid, rangeTitle, dayLabel, cellTitle, dayDetail, summarize, barRatio, parseDay, addDays, localDay,
 } from '../src/focus.js';
 import { initialActivity, activityReducer, viewOf } from '../src/character.js';
 
@@ -128,4 +128,11 @@ test('캐릭터: 집중 중이면 공부 영상, 일시정지면 기본, 그만�
   // 끊기면 집중 표시도 걷힌다
   s = activityReducer(s, { type: 'connection', connected: false });
   assert.equal(s.focus, undefined);
+});
+
+test('날짜를 누르면: 총 집중·최대 연속 집중 한 줄', () => {
+  assert.equal(dayDetail({ date: '2026-10-14', seconds: 4320, longest: 2700 }), '10월 14일 (수) · 총 1시간 12분 · 최대 연속 45분');
+  assert.equal(dayDetail({ date: '2026-10-14', seconds: 0, longest: 0 }), '10월 14일 (수) · 집중 기록 없음');
+  assert.equal(dayDetail({ date: '2026-10-14', seconds: 600 }), '10월 14일 (수) · 총 10분 · 최대 연속 10분'); // 예전 데몬(longest 없음)
+  assert.equal(dayDetail(null), '');
 });

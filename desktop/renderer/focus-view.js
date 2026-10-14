@@ -3,7 +3,7 @@
 // 경과 시간·오늘 합계는 1초마다 글자만 바꾼다(목록을 다시 그리지 않는다). 순수 계산은 src/focus.js.
 import {
   normFocus, elapsedSec, todayLive, fmtClock, fmtDuration, fmtShort, focusLevel, LEVEL_LABELS, localDay, rangeOf, shiftAnchor,
-  monthGrid, rangeTitle, cellTitle, dayLabel, summarize, barRatio, parseDay, WEEKDAYS,
+  monthGrid, rangeTitle, cellTitle, dayLabel, dayDetail, summarize, barRatio, parseDay, WEEKDAYS,
 } from '../src/focus.js';
 
 const TAB_KEY = 'focusTab';
@@ -14,6 +14,7 @@ export function createFocusView({ h, cy }) {
   let err = '';
   let open = false; // 기록 보기 펼침
   let tab = 'week';
+  let picked = null; // 눌러 본 날짜(YYYY-MM-DD) — 아래에 총·최대 연속 집중
   try { if (globalThis.localStorage?.getItem(TAB_KEY) === 'month') tab = 'month'; } catch { /* 저장소 없음 */ }
   let anchor = localDay(Date.now()); // 보고 있는 주·달 안의 날
   let stats = null; // { key, status: 'loading'|'ok'|'error', data? }
@@ -165,6 +166,7 @@ export function createFocusView({ h, cy }) {
           h('span', null, '하루 평균 ', h('b', { text: fmtDuration(sum.avg) })),
           sum.best ? h('span.muted', { text: `가장 오래 집중한 날 ${dayLabel(sum.best.date)} · ${fmtDuration(sum.best.seconds)}` }) : null),
         tab === 'month' ? monthView(r, days, today) : weekView(days, today),
+        pickedLine(days),
         legend());
     }
     return h('div.card.focus-stats', null, h('div.focus-stats-head', null, tabs, nav), body);
@@ -175,14 +177,29 @@ export function createFocusView({ h, cy }) {
     return (days ?? []).map((d) => (d.date === today ? { ...d, seconds: Math.max(d.seconds, live) } : d));
   }
 
+  // 날짜 칸 누르기: 그날 총·최대 연속 집중을 아래 한 줄로(같은 날 다시 누르면 닫힘)
+  function pick(date) {
+    picked = picked === date ? null : date;
+    if (picked && picked === localDay(Date.now())) loadStats(); // 오늘은 지금 집중 중인 것까지 다시
+    redrawStats();
+  }
+  function pickedLine(days) {
+    const d = picked && days.find((x) => x.date === picked);
+    return d ? h('div.focus-day-detail', { role: 'status', text: dayDetail(d) }) : null;
+  }
+  const pickable = (date) => ({
+    role: 'button', tabindex: '0', onclick: () => pick(date),
+    onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(date); } },
+  });
+
   function weekView(days, today) {
     const max = Math.max(0, ...days.map((d) => d.seconds));
-    return h('div.focus-week', { role: 'list' }, days.map((d, i) => {
+    return h('div.focus-week', null, days.map((d, i) => {
       const lv = focusLevel(d.seconds);
       const date = parseDay(d.date);
       const fill = h(`div.fw-bar.lv-${lv}`);
       fill.style.height = `${Math.round(barRatio(d.seconds, max) * 100)}%`; // CSP: style 속성 대신 CSSOM
-      return h(`div.fw-col${d.date === today ? '.today' : ''}${d.date > today ? '.future' : ''}`, { role: 'listitem', title: cellTitle(d.date, d.seconds) },
+      return h(`div.fw-col${d.date === today ? '.today' : ''}${d.date > today ? '.future' : ''}${d.date === picked ? '.picked' : ''}`, { ...pickable(d.date), title: cellTitle(d.date, d.seconds), 'aria-pressed': String(d.date === picked) },
         h('div.fw-time', { text: fmtShort(d.seconds) }),
         h('div.fw-track', null, fill),
         h('div.fw-day', null, h('b', { text: WEEKDAYS[i] }), h('span', { text: date ? String(date.getDate()) : '' })));
@@ -195,7 +212,7 @@ export function createFocusView({ h, cy }) {
     const weeks = monthGrid(r.from, r.to).map((wk) => h('div.fm-row', null, wk.map((d) => {
       if (!d) return h('span.fm-cell.blank', { 'aria-hidden': 'true' });
       const s = sec.get(d) ?? 0;
-      return h(`span.fm-cell.lv-${focusLevel(s)}${d === today ? '.today' : ''}${d > today ? '.future' : ''}`, { title: cellTitle(d, s), 'aria-label': cellTitle(d, s) },
+      return h(`span.fm-cell.lv-${focusLevel(s)}${d === today ? '.today' : ''}${d > today ? '.future' : ''}${d === picked ? '.picked' : ''}`, { ...pickable(d), title: cellTitle(d, s), 'aria-label': cellTitle(d, s), 'aria-pressed': String(d === picked) },
         h('span.fm-num', { text: String(Number(d.slice(8))) }));
     })));
     return h('div.focus-month', null, head, weeks);

@@ -61,6 +61,15 @@ test("시작 → 일시정지 → 다시 시작 → 그만: 일시정지 시간�
   assert.equal(row.ended, at(14, 9, 45));
 });
 
+test("가장 길게 이어서 집중한 시간: 일시정지로 끊긴 구간 중 가장 긴 것", () => {
+  const s = setup(at(14, 9));
+  s.f.start(); s.add(10 * 60e3); s.f.pause(); s.add(5 * 60e3); // 10분 집중, 5분 쉼
+  s.f.resume(); s.add(25 * 60e3); s.f.pause(); s.f.resume(); s.add(5 * 60e3); s.f.stop(); // 25분 + 5분
+  const d = s.f.stats("2026-10-14", "2026-10-14")!.days[0];
+  assert.equal(d.seconds, 40 * 60);
+  assert.equal(d.longest, 25 * 60);
+});
+
 test("일별 합계: 여러 세션 · 자정 넘김 · 범위 밖은 0", () => {
   const s = setup(at(13, 22));
   s.f.start(); s.add(3600e3); s.f.stop(); // 13일 1시간
@@ -68,11 +77,11 @@ test("일별 합계: 여러 세션 · 자정 넘김 · 범위 밖은 0", () => {
   s.set(at(15, 9)); s.f.start(); s.add(15 * 60e3); s.f.stop(); // 15일 15분
   const st = s.f.stats("2026-10-12", "2026-10-16")!;
   assert.deepEqual(st.days, [
-    { date: "2026-10-12", seconds: 0 },
-    { date: "2026-10-13", seconds: 3600 },
-    { date: "2026-10-14", seconds: 1200 },
-    { date: "2026-10-15", seconds: 2100 },
-    { date: "2026-10-16", seconds: 0 },
+    { date: "2026-10-12", seconds: 0, longest: 0 },
+    { date: "2026-10-13", seconds: 3600, longest: 3600 },
+    { date: "2026-10-14", seconds: 1200, longest: 1200 },
+    { date: "2026-10-15", seconds: 2100, longest: 1200 },
+    { date: "2026-10-16", seconds: 0, longest: 0 },
   ]);
   assert.equal(st.total, 6900);
   assert.equal(s.f.stats("2026-10-15", "2026-10-14"), undefined);
@@ -158,7 +167,7 @@ test("bus: GET /focus · /focus/stats · POST /focus/:cmd (헤더 필수) · SSE
     const stop = await (await post("/focus/stop")).json();
     assert.equal(stop.stopped.seconds, 90);
     const st = await (await fetch(`${base}/focus/stats?from=2026-10-14&to=2026-10-14`)).json();
-    assert.deepEqual(st.days, [{ date: "2026-10-14", seconds: 90 }]);
+    assert.deepEqual(st.days, [{ date: "2026-10-14", seconds: 90, longest: 90 }]);
     assert.equal((await fetch(`${base}/focus/stats?from=2026-10-14`)).status, 400);
     assert.equal((await fetch(`${base}/focus/stats?from=2026-10-15&to=2026-10-14`)).status, 400);
   } finally {

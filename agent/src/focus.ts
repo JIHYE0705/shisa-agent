@@ -15,7 +15,7 @@ export const RESUME_GAP_MS = 3 * 60e3; // 데몬이 이 안에 다시 켜지면 
 // 지금 집중 중인 세션. base = 끝난 구간들 합(초 아님, ms) · since = 지금 구간 시작(일시정지면 null)
 export type FocusActive = { id: string; startedAt: number; paused: boolean; baseMs: number; since: number | null; seconds: number };
 export type FocusView = { active: FocusActive | null; day: string; today: number; now: number };
-export type FocusDay = { date: string; seconds: number };
+export type FocusDay = { date: string; seconds: number; longest: number }; // longest = 그날 가장 길게 이어서 집중한 초(일시정지 없이 한 구간)
 
 // ---- 로컬 날짜 ----
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -47,6 +47,22 @@ export function splitByDay(spans: { start: number; end: number }[], from = -Infi
       const cut = Math.min(b, nextDayStart(a));
       const k = localDay(a);
       out.set(k, (out.get(k) ?? 0) + (cut - a));
+      a = cut;
+    }
+  }
+  return out;
+}
+
+// 날마다 가장 긴 구간(일시정지 없이 이어서 집중한 ms). 자정을 넘긴 구간은 날마다 잘라서 잰다
+export function longestByDay(spans: { start: number; end: number }[], from = -Infinity, to = Infinity): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const s of spans) {
+    let a = Math.max(s.start, from);
+    const b = Math.min(s.end, to);
+    while (a < b) {
+      const cut = Math.min(b, nextDayStart(a));
+      const k = localDay(a);
+      out.set(k, Math.max(out.get(k) ?? 0, cut - a));
       a = cut;
     }
   }
@@ -207,12 +223,12 @@ export class Focus {
     const end = nextDayStart(z), now = this.now();
     const rows = this.store.db.prepare("SELECT start, end, open FROM focus_spans WHERE start < ? AND (end > ? OR open = 1)").all(end, a) as any[];
     const spans = rows.map((r) => ({ start: Number(r.start), end: r.open ? Math.max(Number(r.end), now) : Number(r.end) }));
-    const ms = splitByDay(spans, a, end);
+    const ms = splitByDay(spans, a, end), long = longestByDay(spans, a, end);
     const days: FocusDay[] = [];
     let total = 0;
     for (let t = a; t < end; t = nextDayStart(t)) {
       const date = localDay(t), seconds = Math.floor((ms.get(date) ?? 0) / 1000);
-      days.push({ date, seconds });
+      days.push({ date, seconds, longest: Math.floor((long.get(date) ?? 0) / 1000) });
       total += seconds;
     }
     return { from, to, days, total };

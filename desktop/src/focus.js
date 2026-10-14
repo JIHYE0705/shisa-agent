@@ -151,6 +151,13 @@ export function dayLabel(day) {
 export function cellTitle(day, sec) {
   return `${dayLabel(day)} · ${sec ? fmtDuration(sec) : '집중 기록 없음'}`;
 }
+// 날짜를 눌렀을 때 보이는 한 줄: 「10월 14일 (화) · 총 1시간 12분 · 최대 연속 45분」
+export function dayDetail(d) {
+  if (!d || typeof d.date !== 'string') return '';
+  const sec = Math.max(0, Number(d.seconds) || 0), long = Math.max(0, Number(d.longest) || 0);
+  if (!sec) return `${dayLabel(d.date)} · 집중 기록 없음`;
+  return `${dayLabel(d.date)} · 총 ${fmtDuration(sec)} · 최대 연속 ${fmtDuration(Math.min(long || sec, sec))}`;
+}
 // 기록 보기 머리: 주 「10월 12일 ~ 18일」(달이 바뀌면 「9월 28일 ~ 10월 4일」) · 달 「2026년 10월」
 export function rangeTitle(tab, r) {
   const a = parseDay(r?.from), z = parseDay(r?.to);
