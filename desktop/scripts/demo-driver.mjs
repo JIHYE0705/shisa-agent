@@ -18,7 +18,7 @@ export const BEATS = [
   { id: 'briefing', title: '브리핑 — 공부 영상·진행 보고·할 거 많다', est: 30 },
   { id: 'new-todos', title: '새 할 일 스티커 → 눌러서 패널 할 일', est: 18 },
   { id: 'overview', title: '패널 — 개요·프로젝트·숨기기', est: 30 },
-  { id: 'todos', title: '할 일 — 펼침·팝오버 diff·규칙·끌기·설명 고치기·완료', est: 95 },
+  { id: 'todos', title: '할 일 — 펼침·제목·설명 고치기·규칙·끌기·완료', est: 70 },
   { id: 'today', title: '오늘 할 일 — 표에 적기·체크·저장', est: 22 },
   { id: 'chat', title: '채팅 — 단계 → 표·콜아웃·색 답 → 프로젝트로', est: 36 },
   { id: 'hover', title: '더블클릭 채팅 — 입력창·생각 중·패널에서 보기', est: 26 },
@@ -737,32 +737,20 @@ const SCENES = {
     await pn.waitFor(`document.querySelector('${rowSel(IDS.pr128)}')?.closest('.todo-wrap')?.querySelector('.origin')`, { label: 'PR #128 원본' });
     await d.wait(5000);
 
-    d.cue('두 번 누르면 팝오버 — "이거 내일로 미뤄"');
+    d.cue('두 번 누르면 그 자리에서 제목·설명 고치기');
     await pn.click(row(IDS.qa), { double: true });
-    await pn.waitFor(`!document.querySelector('.ask-pop').hidden && document.activeElement?.classList.contains('ask-input')`, { label: '팝오버' });
-    await d.wait(1200);
-    await pn.type('이거 내일로 미뤄');
-    await d.wait(500);
+    await pn.waitFor(`document.activeElement?.matches('.todo-edit input.edit-title')`, { label: '제목 칸' });
+    await d.wait(1000);
+    await pn.type(' (급한 3건 먼저)');
+    await d.wait(600);
+    await pn.click('.todo-edit textarea.edit-desc');
+    await pn.waitFor(`document.activeElement?.matches('.todo-edit textarea.edit-desc')`, { label: '설명 칸' });
+    await pn.type(' 저장 버튼·토글 간격·다크모드 구분선은 이번 배포 전에.');
+    await d.wait(900);
+    await d.snap('row-edit');
     await pn.key('Enter');
-    await pn.waitFor(`document.querySelector('.ask-pop .ask-yes')`, { label: '제안 diff' });
-    await d.snap('popover-diff');
-    await d.hold('panel');
-    d.cue('✓ 적용');
-    await pn.click('.ask-pop .ask-yes');
     await d.wait(3000);
 
-    d.cue('규칙 — "앞으로 모든 주간회의 준비는 우선순위 매우 낮음"');
-    await pn.click(row(IDS.weekly), { double: true });
-    await pn.waitFor(`!document.querySelector('.ask-pop').hidden && document.activeElement?.classList.contains('ask-input')`, { label: '팝오버' });
-    await d.wait(1000);
-    await pn.type('야 앞으로 모든 주간회의 준비는 우선순위 매우 낮음');
-    await d.wait(500);
-    await pn.key('Enter');
-    await pn.waitFor(`document.querySelector('.ask-pop .ask-yes')`, { label: '규칙 미리보기' });
-    await d.snap('rule-preview');
-    await d.wait(6500);
-    await pn.click('.ask-pop .ask-yes');
-    await d.wait(2500);
     d.cue('규칙 칩 → 목록');
     await pn.scrollTop('#content');
     await pn.click('.rules-chip');
@@ -791,22 +779,7 @@ const SCENES = {
     await d.snap('backlog-open');
     await d.wait(3000);
 
-    d.cue('설명 두 번 눌러 직접 고치기');
-    await pn.scrollTop('#content');
-    await pn.click(row(IDS.slackQ));
-    await pn.waitFor(`document.querySelector('${rowSel(IDS.slackQ)}')?.closest('.todo-wrap')?.querySelector('p.desc')`, { label: '설명' });
-    await d.wait(2000);
-    await pn.click({ scope: '.todo-wrap', has: '팀원 질문 답장', sel: 'p.desc', fx: 0.85 }, { double: true });
-    await pn.waitFor(`document.activeElement?.matches('textarea.desc-edit')`, { label: '설명 편집칸' });
-    await d.wait(800);
-    await pn.type(' → 내일 오전 안드로이드 기기로 재현해서 영상 보내주기로 함.');
-    await d.wait(900);
-    await d.snap('desc-edit');
-    await pn.key('Enter');
-    await d.wait(3500);
-
     d.cue('체크 → 완료 → 최근 완료');
-    await d.wait(1500); // 설명 저장 뒤 목록이 다시 그려질 때까지
     for (let k = 0; k < 2; k++) {
       await pn.click(`${rowSel(IDS.okr)} input.check`);
       const ok = await pn.waitFor(`!document.querySelector('${rowSel(IDS.okr)}')`, { timeout: 4000, label: '완료 처리' }).then(() => true, () => false);

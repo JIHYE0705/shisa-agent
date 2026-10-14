@@ -218,7 +218,7 @@ function renderHead() {
       keptWorktree(transcript.events) ? h('span.kept', { text: `📁 남긴 워크트리: ${keptWorktree(transcript.events)}`, title: '저장 안 된 작업이 있어 지우지 않았어요' }) : null,
     ].filter(Boolean));
   }
-  // 원래 화면(대화·할 일 팝오버·제안)이 있으면
+  // 원래 화면(대화·할 일·제안)이 있으면
   const origin = cleanOrigin(r?.origin);
   $('btn-origin').hidden = !origin;
   if (origin) $('btn-origin').title = `이 세션이 시작된 ${originLabel(origin)} 화면을 패널에서 열어요 (⌘O)`;

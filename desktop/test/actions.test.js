@@ -76,7 +76,7 @@ test('말풍선: actions "action" 은 제안 + actionId 일 때만', () => {
 });
 
 // ── 도구 승인 카드(tool_permission) ──
-import { actionButtons, belongsToTodo, PERMISSION } from '../src/actions.js';
+import { actionButtons, PERMISSION } from '../src/actions.js';
 const pcard = { icon: '📄', title: 'docs · upload_document', verb: '실행', question: '**docs.upload_document** 를 실행할까요?', notice: '허용하면 바로 실행돼요',
   fields: [{ label: '제목', value: '테스트' }, { label: '', value: 'x' }, 'bad'], body: '본문 «redacted»', bodyKind: 'text', always: 'docs upload_document' };
 const praw = (o = {}) => ({ id: 'p1', type: PERMISSION, status: 'pending', card: pcard, summary: 's', threadId: 't1', via: 'chat', toolName: 'mcp__docs__upload_document', todoId: 'mail:1', ...o });
@@ -107,13 +107,6 @@ test('도구 승인 카드 상태: 누르는 중 잠금, 허용 ✅ · 거부 �
   assert.equal(cardView(normalizeAction(praw({ status: 'expired', result: { ok: false, message: '응답이 없어 취소했어요' } }))).status, '⌛ 응답이 없어 취소했어요 — 실행하지 않았어요');
   assert.match(decideResult(a, 'cancel', { ok: false }).error, /거부하지 못했어요/);
   assert.match(decideResult(a, 'always', { ok: false }).error, /허용하지 못했어요/);
-});
-
-test('팝오버: 이 할 일에서 난 도구 승인 카드만 잡는다', () => {
-  assert.equal(belongsToTodo(normalizeAction(praw()), 'mail:1'), true);
-  assert.equal(belongsToTodo(normalizeAction(praw()), 'mail:2'), false);
-  assert.equal(belongsToTodo(normalizeAction(raw({ todoId: 'mail:1' })), 'mail:1'), false);
-  assert.equal(belongsToTodo(normalizeAction(praw()), null), false);
 });
 
 test('말풍선: actions "permission" 은 제안 + actionId 일 때만', () => {

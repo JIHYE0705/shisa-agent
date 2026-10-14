@@ -15,7 +15,7 @@ export function cleanOrigin(o) {
   return null;
 }
 
-export const ORIGIN_LABELS = { thread: '채팅', todo: '할 일 팝오버', proposal: '제안' };
+export const ORIGIN_LABELS = { thread: '채팅', todo: '할 일', proposal: '제안' };
 export const originLabel = (o) => ORIGIN_LABELS[cleanOrigin(o)?.type] ?? '';
 
 // 세션 창 입력창이 원래 대화로 보낼 곳: 대화·할 일 origin 만(제안은 수정 run 의 이어서 하기 그대로)
@@ -44,10 +44,10 @@ export function originPlan(origin) {
   return o.threadId ? { action: 'thread', threadId: o.threadId } : { action: 'proposal', proposalId: o.proposalId };
 }
 
-// 할 일 origin: 마지막 문답 응답(res = { ok, status, data }) → 팝오버로 / 대화로(이유 한 줄) / 할 일 탭만
+// 할 일 origin: GET /todos/:id/thread/last 응답(res = { ok, status, data }) → 그 줄로 / 대화로(이유 한 줄) / 할 일 탭만
 //  - 404(지웠거나 휴지통): 그 할 일의 대화가 있으면 채팅 탭에서 그 대화 + 안내
 //  - 끝난 할 일: 줄이 열린 목록에 없으니 대화로
-//  - 그 밖: 팝오버(지난 문답째로)
+//  - 그 밖: 할 일 탭에서 그 줄(펼쳐서)
 export function todoPlan(origin, res) {
   const o = cleanOrigin(origin);
   if (!o || o.type !== 'todo') return null;
@@ -63,9 +63,5 @@ export function todoPlan(origin, res) {
   if (data.todo.status === 'done') {
     return thread ? { action: 'thread', threadId: thread, note: '끝난 할 일이라 그 할 일의 대화를 열었어요.' } : { action: 'todos', note: '끝난 할 일이에요.' };
   }
-  return {
-    action: 'popover', todo: data.todo, threadId: thread,
-    exchange: data.exchange && typeof data.exchange === 'object' ? data.exchange : null,
-    actions: Array.isArray(data.actions) ? data.actions : [],
-  };
+  return { action: 'row', todo: data.todo, threadId: thread };
 }

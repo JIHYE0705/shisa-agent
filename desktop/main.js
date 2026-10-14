@@ -13,8 +13,7 @@ import { isSafeLink } from './src/bubbles.js';
 import { defaultPosition, restorePosition } from './src/geometry.js';
 import { normalizeSection } from './src/dashboard.js';
 import { sanitizeTodoPatch } from './src/todos.js';
-import { cleanQuestion, sanitizeAskOps } from './src/todo-ask.js';
-import { okRuleId, sanitizeAskRule, sanitizeRulePatch } from './src/todo-rules.js';
+import { okRuleId, sanitizeRulePatch } from './src/todo-rules.js';
 import { clickTarget, pickRun, okRunId, okModelId, cleanMessage } from './src/session.js';
 import { okClientId, okMsgId } from './src/session-inbox.js';
 import { okToolUseId, normAgents, runningCount } from './src/agents.js';
@@ -556,7 +555,7 @@ function showPanel(section, id) {
   panel.focus();
 }
 
-// 세션 창 "원래 화면 열기": 패널을 (없으면 만들어) 앞으로 + 그 대화·할 일 팝오버·제안으로
+// 세션 창 "원래 화면 열기": 패널을 (없으면 만들어) 앞으로 + 그 대화·할 일·제안으로
 function showOrigin(origin) {
   const o = cleanOrigin(origin);
   if (!o) return false;
@@ -739,7 +738,7 @@ function onSSE({ event, data }) {
 }
 
 // 데몬 호출. POST 는 X-CY-Agent 헤더 + JSON 본문. 결과는 { ok, status, data } | { ok: false, error }
-// timeoutMs: 모델을 부르는 호출(할 일 팝오버 묻기)은 길게
+// timeoutMs: 모델을 부르는 호출은 길게
 async function request(method, pathname, body, timeoutMs) {
   const headers = { Accept: 'application/json' };
   const init = { method, headers, signal: AbortSignal.timeout(timeoutMs ?? (method === 'GET' ? 8000 : 15000)) };
@@ -1402,27 +1401,6 @@ function setupIPC() {
   ipcMain.handle('project-hide', (e, id, hide) => {
     if (!fromOurs(e) || typeof id !== 'string' || !id || id.length > 1000 || typeof hide !== 'boolean') return denied();
     return post(`/projects/${hide ? 'hide' : 'unhide'}`, { id });
-  });
-  // 할 일 팝오버: 한 번 묻기(데몬은 안 바꿈) → ✓ 적용 / ✗ 거절
-  const okId = (id) => typeof id === 'string' && !!id && id.length <= 500;
-  ipcMain.handle('todo-ask', (e, id, text) => {
-    const q = cleanQuestion(text);
-    if (!fromOurs(e) || !okId(id) || !q) return denied();
-    return post(`/todos/${encodeURIComponent(id)}/ask`, { text: q }, 120_000);
-  });
-  // rule: 같이 제안된 지속 규칙(모양만 거름 — 데몬이 엄격히 다시 검증). 규칙이 있으면 ops는 비어도 된다
-  ipcMain.handle('todo-apply', (e, id, ops, rev, rule) => {
-    const r = sanitizeAskRule(rule);
-    const o = sanitizeAskOps(ops, { allowEmpty: !!r });
-    if (!fromOurs(e) || !okId(id) || !o || r === undefined || (rev != null && (typeof rev !== 'string' || rev.length > 64))) return denied();
-    return post(`/todos/${encodeURIComponent(id)}/apply`, { ops: o, ...(rev ? { rev } : {}), ...(r ? { rule: r } : {}) });
-  });
-  ipcMain.handle('todo-reject', (e, id, text, ops, rule) => {
-    const o = sanitizeAskOps(ops ?? [], { allowEmpty: true });
-    const r = sanitizeAskRule(rule);
-    if (!fromOurs(e) || !okId(id) || !o || r === undefined) return denied();
-    const q = cleanQuestion(text);
-    return post(`/todos/${encodeURIComponent(id)}/reject`, { ...(q ? { text: q } : {}), ops: o, ...(r ? { rule: r } : {}) });
   });
   // 할 일 규칙: 목록 · 켜기/끄기·글 고치기 · 지우기
   ipcMain.handle('todo-rules', (e) => (fromOurs(e) ? request('GET', '/todo-rules') : denied()));

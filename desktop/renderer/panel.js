@@ -17,15 +17,15 @@ import { stamp, withDayDividers } from '../src/chat-time.js';
 import { KIND_ICONS, KIND_LABELS, normThread, normThreads, upsertThread, groupThreads, filterThreads, initSeen, isUnread, markSeen, pruneSeen, unreadCount, pickInitial, neighborThread, afterRemoval, mergeMessages, appendLocal, tagLocal, dropLocal, markSent, isDoubleSend, todoChip, okThreadId, editTarget, dropFrom } from '../src/threads.js';
 import { PRIORITIES, mergeRecentDone, newTodoBody, overlayTodos, descriptionPatch, isDoing, patchToday, isToday } from '../src/todos.js';
 import { createClickSorter, toggleOpen, dropTarget, autoScrollDelta, reorderLocal, isNoopMove, keyMove, detailView, LONG_PRESS, MOVE_SLOP } from '../src/todo-rows.js';
-import { askReducer, askKey, chatHandoff, canApply, hasProposal, isAskBusy, diffBlocks, placePopover, previewOverlay, commitOverlay } from '../src/todo-ask.js';
+import { openEdit, fillDescription, editKey, editPatch } from '../src/todo-edit.js';
 import { originPlan, todoPlan } from '../src/origin.js';
 import { trashModel, commitTrash, trashItemOf, todoBodyOf, confirmReducer, isConfirming, confirmKey, isTrashKey, createUndo, readTrashOpen, writeTrashOpen, overTrash, CONFIRM_TEXT, UNDO_MS } from '../src/todo-trash.js';
-import { BACKLOG, rulesChip, overlayRules, hitsLabel, readBacklogOpen, writeBacklogOpen, isCollapsed, ruleBlock, ruleOverlay } from '../src/todo-rules.js';
+import { BACKLOG, rulesChip, overlayRules, hitsLabel, readBacklogOpen, writeBacklogOpen, isCollapsed } from '../src/todo-rules.js';
 import { attachSlashMenu } from './slash-menu.js';
 import { createAttachTray } from './attach-tray.js';
 import { attachUrl, chipView, attachSummary } from '../src/attachments.js';
 import { cleanModels } from '../src/session.js';
-import { normalizeActions, upsertAction, placeActions, cardView, decideResult, belongsToTodo, aroundAnswer, foldedPermission, foldApprovals } from '../src/actions.js';
+import { normalizeActions, upsertAction, placeActions, cardView, decideResult, aroundAnswer, foldedPermission, foldApprovals } from '../src/actions.js';
 import { normalizePermissionRules, ruleUsage, withoutPending } from '../src/permissions.js';
 import { normAgents, agentStrip, agentCard, canStopAgent, placeAgents, agentsSig, normSessions, sessionCard, placeSessions, sessionsSig, sessionsPlaceSig } from '../src/agents.js';
 import { normWorktrees, worktreeCard, openTarget, placeWorktrees, worktreesSig, worktreesPlaceSig } from '../src/worktrees.js';
@@ -210,7 +210,6 @@ function goto(s) {
   const prevSection = section;
   section = normalizeSection(s) ?? section;
   if (!visibleSections(vm).includes(section)) section = 'overview';
-  if (section !== prevSection || !isListSection()) closeAsk(); // 팝오버는 그 탭의 줄에 붙는다
   try { localStorage.setItem('section', section); } catch { /* 무시 */ }
   for (const b of nav.children) b.setAttribute('aria-selected', String(b.dataset.section === section));
   for (const x of SECTIONS) $(`sec-${x}`).hidden = x !== section;
@@ -900,7 +899,7 @@ function projectCards() {
 }
 
 // ---- 할 일 ----
-// 줄: 한 번 누르면 아래에 설명·원본(펼침), 두 번 누르면 그 자리 팝오버(한 턴 편집), 꾹 눌러 끌면 순서·우선순위.
+// 줄: 한 번 누르면 아래에 설명·원본(펼침), 두 번 누르면 그 자리에서 제목·설명 고치기, 꾹 눌러 끌면 순서·우선순위.
 // 변경은 낙관적으로: pendingOps 를 서버 목록 위에 겹쳐 그리고, 실패하면 빼서 되돌린다.
 let pendingOps = [];
 let opSeq = 0;
@@ -918,7 +917,7 @@ let todayDraft = '';
 const why = (r) => (typeof r?.data?.error === 'string' ? r.data.error : r?.status ? `HTTP ${r.status}` : '시사 연결 확인');
 
 // 서버 호출 + 낙관적 반영. 성공하면 commit 으로 raw 에 반영, 실패하면 겹침만 빼서 원래대로
-// op 하나 또는 여러 개(팝오버 적용). failText 가 null 이면 목록에 오류를 띄우지 않는다(팝오버가 보여줌)
+// op 하나 또는 여러 개. failText 가 null 이면 목록에 오류를 띄우지 않는다
 async function mutate(op, call, failText, commit) {
   const ops = Array.isArray(op) ? op : [op];
   for (const o of ops) o.seq = ++opSeq;
@@ -1044,7 +1043,7 @@ function trashTodo(t) {
   const op = { kind: 'trash', item };
   confirmState = null;
   if (openId === t.id) openId = null;
-  if (ask?.todoId === t.id) closeAsk();
+  if (todoEditing?.id === t.id) todoEditing = null;
   // 키보드로 지웠으면 다음 줄로 포커스(mutate 가 바로 다시 그린다)
   const ids = listGroups().flatMap((g) => g.items.map((x) => x.id));
   const i = ids.indexOf(t.id);
@@ -1223,7 +1222,7 @@ document.addEventListener('mousedown', (e) => {
 // 추가 입력칸은 값을 addDraft 에 들고 있으니 다시 그린 뒤 포커스만 되돌린다.
 const todosSec = $('sec-todos');
 const todaySec = $('sec-today');
-// 할 일 탭과 오늘 할 일 탭은 같은 줄·같은 묶음·같은 조작. 지금 보이는 쪽이 끌기·포커스·팝오버의 기준
+// 할 일 탭과 오늘 할 일 탭은 같은 줄·같은 묶음·같은 조작. 지금 보이는 쪽이 끌기·포커스·고치기의 기준
 const isListSection = () => section === 'todos' || section === 'today';
 const listSec = () => (section === 'today' ? todaySec : todosSec);
 const listGroups = () => (section === 'today' ? vm.todayGroups : vm.todoGroups);
@@ -1251,7 +1250,6 @@ function renderTodos() {
   if (confirmState?.kind === 'trash' && !findTodo(confirmState.id)) confirmState = null; // 지워졌거나 끝난 줄
   todosSec.replaceChildren(...todoListKids());
   todaySec.replaceChildren(...todayListKids());
-  syncAsk();
   const yes = (focusConfirm || sec.contains(document.activeElement) || document.activeElement === document.body) && confirmState ? sec.querySelector('.inline-confirm .yes') : null;
   focusConfirm = false;
   if (yes) yes.focus();
@@ -1390,12 +1388,12 @@ function prioritySelect(value, onChange) {
   return sel;
 }
 
-// ---- 할 일 줄: 한 번 = 펼침, 두 번 = 팝오버, 꾹 눌러 끌기 = 순서·우선순위, Alt+↑↓/1·2·3 = 키보드로 같은 일 ----
+// ---- 할 일 줄: 한 번 = 펼침, 두 번 = 제목·설명 고치기, 꾹 눌러 끌기 = 순서·우선순위, Alt+↑↓/1·2·3 = 키보드로 같은 일 ----
 const ROW_CONTROLS = 'button, select, input, textarea, a, label, .todo-detail, .inline-confirm';
 const findTodo = (id) => vm.todoGroups.flatMap((g) => g.items).find((t) => t.id === id);
 const sorter = createClickSorter({
   onSingle: (id) => toggleDetail(id),
-  onDouble: (id, x) => { const t = findTodo(id); if (t && !t.pending) showAsk(t, x); },
+  onDouble: (id) => startTodoEdit(id),
 });
 let suppressClick = false; // 끌기를 끝낸 직후의 click 은 무시
 
@@ -1413,17 +1411,19 @@ async function loadDetail(id, force = false) {
   let r;
   try { r = await cy.todoDetail(id); } catch { r = { ok: false }; }
   details.set(id, r?.ok && r.data ? { status: 'ok', data: r.data } : { status: 'error', error: r?.status === 404 ? '이 할 일을 못 찾았어요.' : `설명을 못 불러왔어요 — ${why(r)}` });
+  if (details.get(id)?.status === 'ok') fillEditDesc(id, details.get(id).data?.description);
   if (openId === id) renderTodos();
 }
 
 function todoRow(t) {
+  if (todoEditing?.id === t.id) return todoEditRow(t);
   const open = openId === t.id;
   const confirming = isConfirming(confirmState, 'trash', t.id);
   const flashing = flash?.id === t.id && Date.now() < flash.until;
-  const row = h(`div.todo.row${t.pending ? '.pending' : ''}${open ? '.open' : ''}${ask?.todoId === t.id ? '.asking' : ''}${confirming ? '.confirming' : ''}${flashing ? '.flash' : ''}`, {
+  const row = h(`div.todo.row${t.pending ? '.pending' : ''}${open ? '.open' : ''}${confirming ? '.confirming' : ''}${flashing ? '.flash' : ''}`, {
     dataset: { id: t.id }, tabindex: '0', role: 'button', 'aria-expanded': String(open),
-    'aria-label': `${t.title} — Enter 설명, Shift+Enter 편집, Alt+↑↓ 순서, Alt+1·2·3 우선순위, Alt+4 백로그, Delete 휴지통`,
-    title: '눌러서 설명 · 두 번 눌러 편집 · 꾹 눌러 끌어서 순서·우선순위',
+    'aria-label': `${t.title} — Enter 설명, Shift+Enter 제목·설명 고치기, Alt+↑↓ 순서, Alt+1·2·3 우선순위, Alt+4 백로그, Delete 휴지통`,
+    title: '눌러서 설명 · 두 번 눌러 제목·설명 고치기 · 꾹 눌러 끌어서 순서·우선순위',
     onclick: (e) => {
       if (suppressClick) { suppressClick = false; return; }
       if (t.pending || e.target.closest(ROW_CONTROLS)) return;
@@ -1452,7 +1452,7 @@ function onRowKey(t, e) {
     if (m) { refocusId = t.id; moveTodo(t.id, m.priority, m.beforeId); }
   } else if (e.key === 'Enter') {
     e.preventDefault();
-    if (e.shiftKey) { if (!t.pending) showAsk(t); } else toggleDetail(t.id);
+    if (e.shiftKey) startTodoEdit(t.id); else toggleDetail(t.id);
   } else if (isTrashKey(e)) {
     e.preventDefault();
     askTrash(t);
@@ -1492,78 +1492,113 @@ function todoDetailView(t) {
       : null);
 }
 
-// ---- 설명 직접 고치기: 펼친 설명을 두 번 누르면 그 자리 편집(AI 없음). 한 번 누르면(링크 있으면) 원본 열기 ----
-let editingDesc = null; // 고치는 중인 할 일 id
-let descDraft = '';
+// ---- 그 자리 고치기: 줄을 두 번 누르면(Shift+Enter 도) 제목·설명을 바로 고친다. AI 없이, 뇌 연결과 상관없이 같다 ----
+// 펼친 설명을 두 번 눌러도 같은 편집기(설명 칸에 포커스). 설명을 한 번 누르면(링크 있으면) 원본 열기
+let todoEditing = null; // todo-edit.js 상태(null = 안 고침)
 const descSorter = createClickSorter({
   onSingle: (_id, link) => { if (link) cy.openLink(link); },
-  onDouble: (id) => startDescEdit(id),
+  onDouble: (id) => startTodoEdit(id, 'desc'),
 });
 
 function descNode(t, text, link) {
-  if (editingDesc === t.id) return descEditor(t, text);
   return h(`p.desc${link ? '.link' : ''}${text ? '' : '.empty'}`, {
     text: text || '설명 없음',
-    title: link ? '원본 열기' : '설명 고치기',
+    title: link ? '원본 열기 · 두 번 눌러 제목·설명 고치기' : '두 번 눌러 제목·설명 고치기',
     role: link ? 'link' : 'button', tabindex: '0',
     onclick: (e) => { e.stopPropagation(); descSorter.click(t.id, link); },
     onkeydown: (e) => {
       if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
       e.stopPropagation();
-      if (link && !e.shiftKey) cy.openLink(link); else startDescEdit(t.id);
+      if (link && !e.shiftKey) cy.openLink(link); else startTodoEdit(t.id, 'desc');
     },
   });
 }
 
-function startDescEdit(id) {
+function startTodoEdit(id, focus = 'title') {
   const t = findTodo(id);
   if (!t || t.pending) return;
-  const d = details.get(id);
-  descDraft = (d?.status === 'ok' ? d.data?.description : null) || t.description || '';
-  editingDesc = id;
+  if (todoEditing && todoEditing.id !== id) finishTodoEdit(true);
+  sorter.cancel();
+  cancelPress();
+  if (todoEditing?.id !== id) todoEditing = openEdit(t, details.get(id));
+  if (!todoEditing) return;
+  const a = document.activeElement;
+  if (a && a !== document.body && listSec().contains(a)) a.blur(); // 줄 안 칸(체크 등)에 포커스가 있으면 다시 그리지 않으니까
+  loadDetail(id); // 설명이 아직 없으면 불러온다(오면 안 건드린 설명만 채움)
   renderTodos();
-  const ta = listSec().querySelector('textarea.desc-edit');
-  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); growDesc(ta); }
+  const box = listSec().querySelector(`.todo-edit[data-id="${CSS.escape(id)}"]`);
+  const el = box?.querySelector(focus === 'desc' ? 'textarea.edit-desc' : 'input.edit-title');
+  if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+}
+
+// 상세가 편집 중에 왔다: 설명 칸을 안 건드렸으면 그 값으로 채운다(다시 그리지 않고 칸만)
+function fillEditDesc(id, description) {
+  if (todoEditing?.id !== id) return;
+  const next = fillDescription(todoEditing, description);
+  if (next === todoEditing) return;
+  todoEditing = next;
+  for (const ta of document.querySelectorAll(`.todo-edit[data-id="${CSS.escape(id)}"] textarea.edit-desc`)) { ta.value = next.desc; growDesc(ta); }
 }
 
 const growDesc = (ta) => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight + 2, 320)}px`; };
 
-function descEditor(t, current) {
-  const ta = h('textarea.desc-edit', { rows: '2', 'aria-label': '설명 고치기', placeholder: '무슨 일인지 — Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소' });
-  ta.value = descDraft;
-  let finished = false;
-  const finish = (save) => {
-    if (finished) return;
-    finished = true;
-    editingDesc = null;
-    if (save) saveDesc(t, current);
-    ta.blur();
-    renderTodos();
-  };
-  ta.addEventListener('input', () => { descDraft = ta.value; growDesc(ta); });
-  ta.addEventListener('keydown', (e) => {
-    const k = askKey(e); // Enter 저장(⌘Enter 도), Esc 취소, 한글 조합 중엔 무시, Shift+Enter 줄바꿈
+// 편집기: 줄과 펼친 설명 자리에 제목 칸 + 설명 칸. 끌기·한 번 누르기·키보드 이동은 붙이지 않는다
+function todoEditRow(t) {
+  const s = todoEditing;
+  const title = h('input.edit-title', { type: 'text', 'aria-label': `제목 고치기: ${t.title}`, placeholder: '제목' });
+  title.value = s.title;
+  const desc = h('textarea.edit-desc', { rows: '2', 'aria-label': '설명 고치기', placeholder: '설명' });
+  desc.value = s.desc;
+  const box = h('div.todo.todo-edit', { dataset: { id: t.id } },
+    title, desc,
+    h('div.edit-hint.muted.small', { text: 'Enter 저장 · 설명 줄바꿈은 Shift+Enter · Esc 취소' }));
+  title.addEventListener('input', () => { if (todoEditing?.id === t.id) todoEditing = { ...todoEditing, title: title.value }; });
+  desc.addEventListener('input', () => {
+    if (todoEditing?.id === t.id) todoEditing = { ...todoEditing, desc: desc.value, descTouched: true };
+    growDesc(desc);
+  });
+  const onKey = (field) => (e) => {
+    const k = editKey(e, field); // 한글 조합 중엔 null
     if (!k) return;
     e.preventDefault();
     e.stopPropagation();
-    finish(k !== 'discard');
-  });
-  ta.addEventListener('blur', () => finish(true));
-  ta.addEventListener('click', (e) => e.stopPropagation());
-  return ta;
+    finishTodoEdit(k === 'save', true);
+  };
+  title.addEventListener('keydown', onKey('title'));
+  desc.addEventListener('keydown', onKey('desc'));
+  // 바깥을 누르거나 포커스가 빠지면 저장. 두 칸 사이 이동, 다른 앱으로 잠깐 간 건 그대로
+  box.addEventListener('focusout', () => setTimeout(() => {
+    if (todoEditing?.id !== t.id || box.contains(document.activeElement)) return;
+    finishTodoEdit(true);
+  }, 0));
+  box.addEventListener('mousedown', (e) => { if (!e.target.closest('input, textarea')) e.preventDefault(); }); // 안내 글·빈 곳을 눌러도 포커스 그대로
+  requestAnimationFrame(() => growDesc(desc));
+  return box;
 }
 
-// 낙관적: 펼친 설명·목록을 바로 바꾸고, 실패하면 되돌린다
-function saveDesc(t, current) {
-  const r = descriptionPatch(current, descDraft);
-  if (r.error) { todoMsg = { ok: false, text: r.error }; return; }
-  if (!r.patch) return;
-  const prev = details.get(t.id);
-  if (prev?.status === 'ok') details.set(t.id, { status: 'ok', data: { ...prev.data, description: r.patch.description } });
-  mutate({ kind: 'edit', id: t.id, patch: r.patch }, () => cy.todoEdit(t.id, r.patch), '설명 저장 실패', () => {
-    setRawTodos(rawTodos().map((x) => (x.id === t.id ? { ...x, ...(r.patch.description ? { description: r.patch.description } : {}), userEdited: true } : x)));
-  }).then((res) => { if (!res?.ok && prev) { details.set(t.id, prev); renderTodos(); } });
+function finishTodoEdit(save, refocus = false) {
+  const s = todoEditing;
+  if (!s) return;
+  todoEditing = null;
+  const t = findTodo(s.id);
+  if (refocus) refocusId = s.id; // 키보드로 끝냈으면 그 줄로 포커스
+  if (document.activeElement?.closest?.('.todo-edit')) document.activeElement.blur(); // 칸에 포커스가 있으면 다시 그리지 않으니까
+  if (save && t) saveTodoEdit(t, s);
+  renderTodos();
+}
+
+// 낙관적: 목록·펼친 설명을 바로 바꾸고, 실패하면 되돌린다. 바뀐 필드만 보낸다
+function saveTodoEdit(t, s) {
+  const { patch, notice } = editPatch(t, s);
+  if (patch) {
+    const prev = details.get(t.id);
+    if ('description' in patch && prev?.status === 'ok') details.set(t.id, { status: 'ok', data: { ...prev.data, description: patch.description } });
+    mutate({ kind: 'edit', id: t.id, patch }, () => cy.todoEdit(t.id, patch), '고치기 실패', () => {
+      setRawTodos(rawTodos().map((x) => (x.id === t.id ? { ...x, ...patch, userEdited: true } : x)));
+    }).then((res) => { if (!res?.ok && prev) { details.set(t.id, prev); renderTodos(); } });
+  }
+  if (notice) todoMsg = { ok: false, text: notice }; // 빈 제목: 원래 제목 그대로(mutate 가 지운 뒤에 단다)
 }
 
 // ---- 꾹 눌러 끌기 ----
@@ -1677,240 +1712,6 @@ document.addEventListener('pointerup', () => {
   if (drag) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); finishDrag(true); } else cancelPress();
 });
 document.addEventListener('pointercancel', () => { if (drag) finishDrag(false); else cancelPress(); });
-
-// ---- 할 일 팝오버: 그 자리에서 한 번 묻고 → 제안 diff(빨강 전 / 초록 후) → ✓ 적용 · ✗ 버림 ----
-let ask = null; // todo-ask.js 상태(null = 닫힘)
-let askActions = []; // 팝오버 답에 붙은 확인 카드(회의 응답)
-let askPointX = null; // 누른 x — 화살표가 가리킬 곳
-let askTimer = null;
-const askInput = h('input.ask-input', { type: 'text', placeholder: '이 할 일에 대해 — 예: 내일로 미뤄 / 끝났어 / 둘로 나눠', 'aria-label': '이 할 일에 대해 묻기' });
-const askSend = h('button.primary.ask-send', { type: 'button', text: '묻기', onclick: () => sendAsk() });
-const askBody = h('div.ask-body', { 'aria-live': 'polite' });
-const askTitle = h('span.ask-title');
-const askArrow = h('div.ask-arrow');
-const askPop = h('div.ask-pop', { role: 'dialog', 'aria-label': '할 일에 대해 묻기', hidden: true },
-  askArrow,
-  h('div.ask-head', null, askTitle,
-    // 이 할 일의 대화(팝오버 문답이 쌓인 곳)를 채팅 탭에서 이어 간다 — 입력 중이던 글은 옮겨 간다
-    h('button.ghost.ask-chat', { type: 'button', text: '💬 채팅 창에서 열기', title: '이 할 일 대화를 채팅 탭에서 이어 가기 — 긴 질문·코드 질문도 (⌘⇧Enter)', onclick: () => continueAskInChat() }),
-    h('button.ghost.ask-x', { type: 'button', text: '✕', title: '닫기 (Esc)', 'aria-label': '닫기', onclick: () => discardAsk() })),
-  askBody,
-  h('div.ask-row', null, askInput, askSend));
-document.body.append(askPop);
-
-askInput.addEventListener('keydown', (e) => {
-  const k = askKey(e);
-  if (!k) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (k === 'send') sendAsk();
-  else if (k === 'chat') continueAskInChat();
-  else if (k === 'apply') applyAsk();
-  else discardAsk();
-});
-// 팝오버 밖을 누르면 닫는다(그 줄 자체를 누른 건 줄 클릭이 처리)
-document.addEventListener('mousedown', (e) => {
-  if (!ask || askPop.contains(e.target)) return;
-  if (e.target.closest?.(`.todo[data-id="${CSS.escape(ask.todoId)}"]`)) return;
-  closeAsk();
-}, true);
-window.addEventListener('resize', () => syncAsk());
-$('content').addEventListener('scroll', () => syncAsk(), { passive: true });
-
-function dispatchAsk(action) {
-  const prev = ask;
-  ask = askReducer(ask, action);
-  if (ask === prev) return;
-  if (prev?.todoId !== ask?.todoId) {
-    for (const el of listSec().querySelectorAll('.todo.row')) el.classList.toggle('asking', el.dataset.id === ask?.todoId);
-  }
-  renderAsk();
-}
-
-function showAsk(t, x) {
-  if (ask?.todoId !== t.id) closeAsk();
-  askPointX = Number.isFinite(x) ? x : null;
-  dispatchAsk({ type: 'open', todo: t });
-  askInput.focus();
-}
-
-function continueAskInChat() {
-  const hand = chatHandoff(ask, askInput.value);
-  if (!hand) return;
-  closeAsk();
-  openTodoThread(hand.todoId, hand.draft);
-}
-
-function closeAsk() {
-  clearTimeout(askTimer);
-  askActions = [];
-  if (!ask) return;
-  dispatchAsk({ type: 'close' });
-  askInput.value = '';
-}
-
-// ✗·Esc: 제안이 있었으면 거절했다고 데몬에 알린다(학습 신호)
-function discardAsk() {
-  const s = ask;
-  if (s && s.status === 'proposal' && hasProposal(s)) cy.todoReject(s.todoId, s.question, s.ops, s.rule?.proposal ?? null).catch(() => {});
-  closeAsk();
-}
-
-async function sendAsk(text = askInput.value) {
-  if (!ask || isAskBusy(ask)) return;
-  const q = String(text ?? '').trim();
-  if (!q) return;
-  askActions = [];
-  dispatchAsk({ type: 'ask', text: q });
-  askInput.value = '';
-  const { todoId, seq } = ask;
-  let r;
-  try { r = await cy.todoAsk(todoId, q); } catch { r = { ok: false }; }
-  if (ask?.todoId !== todoId) return;
-  if (r?.ok && r.data && typeof r.data.reply === 'string') {
-    for (const a of normalizeActions(r.data.actions)) askActions = upsertAction(askActions, a);
-    dispatchAsk({ type: 'answer', seq, threadId: r.data.threadId, reply: r.data.reply, ops: r.data.ops, preview: r.data.preview, rev: r.data.rev, rule: r.data.rule });
-  } else {
-    const msg = r?.status === 404 ? '그 할 일을 못 찾았어요. 이미 지워졌거나 끝났을 수 있어요.' : `못 물어봤어요 — ${why(r)}`;
-    dispatchAsk({ type: 'askFail', seq, message: msg });
-  }
-  if (ask?.todoId === todoId && ask.status !== 'thinking') askInput.focus();
-}
-
-// ✓: 목록에 바로 반영(낙관적), 실패하면 되돌리고 팝오버에 오류. 미리보기 뒤에 바뀌었으면(409) 새 diff 로 다시 확인
-async function applyAsk() {
-  const s = ask;
-  if (!canApply(s)) return;
-  dispatchAsk({ type: 'apply' });
-  const overlay = [...previewOverlay(s.preview, `tmp:ask${opSeq + 1}`), ...ruleOverlay(s.rule)]; // 규칙이 맞는 다른 할 일도 바로
-  const doneItem = s.preview.find((p) => p.kind === 'done')
-    ? rawTodos().find((x) => x.id === s.todoId) : null;
-  const r = await mutate(overlay, () => cy.todoApply(s.todoId, s.ops, s.rev, s.rule?.proposal ?? null), null, (res) => {
-    setRawTodos(commitOverlay(rawTodos(), overlay, res.data?.added));
-    if (doneItem) recentDone = [{ ...doneItem, userEdited: true }, ...recentDone.filter((x) => x.id !== doneItem.id)].slice(0, 5);
-  });
-  if (ask?.todoId !== s.todoId) return;
-  if (r?.ok) {
-    dispatchAsk({ type: 'applied' });
-    clearTimeout(askTimer);
-    askTimer = setTimeout(closeAsk, 900);
-  } else if (r?.status === 409 && r.data) {
-    dispatchAsk({ type: 'stale', ops: r.data.ops, preview: r.data.preview, rev: r.data.rev, rule: r.data.rule });
-  } else {
-    dispatchAsk({ type: 'applyFail', message: r?.status === 404 ? '그 할 일이 그새 없어졌어요.' : `적용 못 했어요 — ${why(r)}` });
-  }
-}
-
-function askAnchor() {
-  return ask && listSec().querySelector(`.todo[data-id="${CSS.escape(ask.todoId)}"]`);
-}
-
-// 목록이 다시 그려지면 그 줄을 다시 찾아 붙는다. 줄이 사라졌거나 화면 밖이면 닫는다(적용 직후는 자리 유지)
-function syncAsk() {
-  if (!ask) return;
-  const row = askAnchor();
-  if (row) row.classList.add('asking');
-  else if (raw && !rawTodos().some((x) => x.id === ask.todoId)) dispatchAsk({ type: 'gone' });
-  placeAsk(row);
-}
-
-let askLastRect = null;
-function placeAsk(row) {
-  if (!ask) return;
-  const rect = row?.getBoundingClientRect() ?? askLastRect;
-  if (!rect) return;
-  const box = $('content').getBoundingClientRect();
-  if (row && (rect.bottom < box.top || rect.top > box.bottom)) { closeAsk(); return; }
-  askLastRect = { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
-  const view = { width: window.innerWidth, height: window.innerHeight };
-  const width = Math.min(420, Math.max(300, rect.right - rect.left - 24), view.width - 16);
-  askPop.style.width = `${width}px`; // 폭을 먼저 정해야 높이를 잴 수 있다
-  const p = placePopover({ anchor: askLastRect, size: { width, height: askPop.offsetHeight || 160 }, view, pointX: askPointX ?? undefined });
-  Object.assign(askPop.style, { top: `${p.top}px`, left: `${p.left}px`, width: `${p.width}px` });
-  askPop.dataset.placement = p.placement;
-  askArrow.style.left = `${p.arrowX}px`;
-}
-
-function renderAsk() {
-  askPop.hidden = !ask;
-  if (!ask) return;
-  const s = ask;
-  askTitle.textContent = s.title;
-  askTitle.title = s.title;
-  askInput.disabled = isAskBusy(s) || s.status === 'applied';
-  askSend.disabled = askInput.disabled;
-  askInput.placeholder = s.status === 'idle' ? '이 할 일에 대해 — 예: 내일로 미뤄 / 끝났어 / 둘로 나눠' : '다시 물어보기 (Enter)';
-  const kids = [];
-  if (s.restored) kids.push(h('div.ask-past.muted.small', { text: `지난 문답${s.at ? ` · ${relativeTime(s.at)}` : ''} — 이어서 물어보세요` }));
-  if (s.question && s.status !== 'idle') kids.push(h('div.ask-q', { text: s.question }));
-  if (s.status === 'idle') kids.push(h('div.ask-hint.muted.small', { text: 'Enter 묻기 · ⌘Enter 적용 · Esc 닫기' }));
-  if (s.status === 'thinking') {
-    kids.push(h('div.ask-thinking', null, h('span.spin'), h('span', { text: '생각 중…' })));
-    for (const a of askActions) kids.push(actionCard(a)); // 묻는 동안 뜬 도구 승인 카드
-  }
-  if (['proposal', 'applying', 'applied'].includes(s.status) || (s.status === 'error' && s.retry === 'apply')) {
-    if (s.reply) kids.push(h('div.ask-reply', { text: s.reply }));
-    const blocks = diffBlocks(s.preview);
-    const rb = ruleBlock(s.rule);
-    if (blocks.length || rb) kids.push(h('div.ask-diff', null, rb ? ruleDiff(rb) : null, blocks.map(diffBlock)));
-    if (s.notice) kids.push(h('div.ask-notice', { role: 'status', text: s.notice }));
-    if (s.result) kids.push(h('div.ask-result', { role: 'status', text: s.result }));
-    for (const a of askActions) kids.push(actionCard(a));
-  }
-  if (s.status === 'applied') kids.push(h('div.ask-done', { role: 'status', text: '적용했어요 ✓' }));
-  if (s.status === 'error') kids.push(h('div.ask-err', { role: 'alert', text: s.error }));
-  const acts = [];
-  if (s.status === 'proposal' || s.status === 'applying') {
-    if (hasProposal(s)) {
-      acts.push(h('button.ask-no', { type: 'button', text: '✗ 버리기', title: '버리기 (Esc)', disabled: s.status === 'applying', onclick: discardAsk }));
-      acts.push(h('button.ask-yes', { type: 'button', text: s.status === 'applying' ? '적용 중…' : '✓ 적용', title: '적용 (⌘Enter)', disabled: s.status === 'applying', onclick: applyAsk }));
-    } else {
-      acts.push(h('button.ghost', { type: 'button', text: '닫기', onclick: closeAsk }));
-    }
-  } else if (s.status === 'error') {
-    acts.push(h('button.ghost', { type: 'button', text: '닫기', onclick: closeAsk }));
-    acts.push(h('button.primary', {
-      type: 'button', text: '다시 시도',
-      onclick: () => { if (s.retry === 'apply') { dispatchAsk({ type: 'retryApply' }); applyAsk(); } else sendAsk(s.question); },
-    }));
-  }
-  if (acts.length) kids.push(h('div.ask-acts', null, h('span.spacer'), acts));
-  fill(askBody, ...kids);
-  syncAsk();
-}
-
-// 지속 규칙 제안: "📏 새 규칙: …" + 맞는 열린 할 일 전부의 전/후(빨강 → 초록)
-function ruleDiff(rb) {
-  return h('div.diff.rule', null,
-    h('div.rule-new', null, h('span.tag.rule-tag', { text: '📏 새 규칙' }), h('span.rule-text', { text: rb.text })),
-    rb.summary ? h('div.meta.rule-sum', { text: rb.summary }) : null,
-    rb.changes.length ? h('div.rule-hits.muted.small', { text: `${rb.changes.length}개 적용` }) : h('div.rule-hits.muted.small', { text: '이후 할 일에 적용' }),
-    rb.changes.map((c) => h('div.diff.edit.rule-change', null,
-      h('div.ctx', { text: c.title }),
-      c.fields.map((f) => h(`div.field.f-${f.key}`, null,
-        h('span.label', { text: f.label }),
-        f.old !== null ? h('del.old', { text: f.old }) : h('span.none', { text: '(없음)' }),
-        h('span.arrow', { text: '→' }),
-        f.new !== null ? h('ins.new', { text: f.new }) : h('span.none', { text: '(지움)' }))))),
-    rb.skipped.length ? h('div.muted.small.rule-skip', { text: `직접 정한 우선순위라 그대로: ${rb.skipped.map((x) => x.title).join(', ')}` }) : null);
-}
-
-// diff 블록 하나: 수정은 필드별 '이름 · 빨강(전) → 초록(후)', 삭제는 통째로 빨간 취소선, 추가는 초록 새 줄
-function diffBlock(b) {
-  if (b.kind === 'delete') {
-    return h('div.diff.del', null, h('span.sign', { text: '−' }), h('del.old', null, h('span', { text: b.title }), b.meta ? h('span.meta', { text: ` · ${b.meta}` }) : null), h('span.tag', { text: '삭제' }));
-  }
-  if (b.kind === 'add') {
-    return h('div.diff.add', null, h('span.sign', { text: '+' }), h('ins.new', null, h('span', { text: b.title }), b.meta ? h('span.meta', { text: ` · ${b.meta}` }) : null), h('span.tag', { text: '새 할 일' }));
-  }
-  return h(`div.diff.edit.${b.kind}`, null,
-    b.fields.some((f) => f.key === 'title') ? null : h('div.ctx', { text: b.title }),
-    b.fields.map((f) => h(`div.field.f-${f.key}`, null,
-      h('span.label', { text: f.label }),
-      f.old !== null ? h('del.old', { text: f.old }) : h('span.none', { text: '(없음)' }),
-      h('span.arrow', { text: '→' }),
-      f.new !== null ? h('ins.new', { text: f.new }) : h('span.none', { text: '(지움)' }))));
-}
 
 // ---- 채팅: 대화 목록(스레드) + 선택한 대화 ----
 const chatLog = $('chat-log');
@@ -2052,31 +1853,28 @@ function pushApprovals(items, cards) {
 function updateAction(a) {
   if (!a) return;
   if (a.threadId && a.threadId === selectedId) threadActions = upsertAction(threadActions, a);
-  // 팝오버: 응답에 온 카드 + 묻는 동안 이 할 일에서 난 도구 승인 카드(SSE)
-  if (askActions.some((x) => x.id === a.id) || belongsToTodo(a, ask?.todoId)) askActions = upsertAction(askActions, a);
   if (a.type === 'tool_permission' && a.status === 'done' && /항상 허용/.test(a.result?.message ?? '')) loadPermissions();
 }
 
 async function decideAction(a, decision) {
   if (['confirming', 'cancelling', 'always'].includes(actionLocal.get(a.id))) return;
   actionLocal.set(a.id, decision === 'confirm' ? 'confirming' : decision === 'always' ? 'always' : 'cancelling');
-  renderChat(); if (ask) renderAsk();
+  renderChat();
   let r;
   try { r = await cy.actionDecide(a.id, decision); } catch { r = { ok: false }; }
   const out = decideResult(a, decision, r);
   if (out.error) actionLocal.set(a.id, { error: out.error }); else actionLocal.delete(a.id);
   updateAction(out.action);
-  renderChat(); if (ask) renderAsk();
+  renderChat();
 }
 
 function onActionEvent(p) {
   const a = normalizeActions([p?.action])[0];
   if (!a) return;
   if (actionLocal.get(a.id) && a.status !== 'pending') actionLocal.delete(a.id);
-  const before = threadActions, beforeAsk = askActions;
+  const before = threadActions;
   updateAction(a);
   if (before !== threadActions) renderChat();
-  if (beforeAsk !== askActions && ask) renderAsk();
 }
 
 function dispatchChat(action) {
@@ -2199,7 +1997,7 @@ function newChat() {
   chatInput.focus();
 }
 
-// 다른 곳(말풍선·할 일 팝오버)에서 그 대화를 열어 달라고 할 때 — 목록에 아직 없으면 불러온 뒤
+// 다른 곳(말풍선 등)에서 그 대화를 열어 달라고 할 때 — 목록에 아직 없으면 불러온 뒤
 let pendingOpen = null;
 async function openThread(id) {
   if (!okThreadId(id)) return;
@@ -3127,7 +2925,7 @@ cy.onSection(({ section: s, id } = {}) => {
   if (normalizeSection(s)) goto(s);
   if (s === 'todos' && typeof id === 'string' && id && openId !== id) toggleDetail(id);
 });
-// ---- 세션 창 "원래 화면 열기" — 그 대화(채팅 탭) · 할 일 팝오버(지난 문답째) · 제안(개요) ----
+// ---- 세션 창 "원래 화면 열기" — 그 대화(채팅 탭) · 할 일(그 줄 펼침) · 제안(개요) ----
 let originSeq = 0;
 function flashFor(id, ms = 2400) {
   flash = { id, until: Date.now() + ms };
@@ -3152,7 +2950,7 @@ async function openOrigin(origin) {
     else setBanner('그 제안은 지금 개요 목록에 없어요(오래됐거나 처리됐을 수 있어요).');
     return;
   }
-  // 할 일: 지난 문답을 받아 팝오버째로. 없어졌거나 끝났으면 그 할 일의 대화로
+  // 할 일: 할 일 탭에서 그 줄을 펼쳐 보인다. 없어졌거나 끝났으면 그 할 일의 대화로
   let r;
   try { r = await cy.todoLastAsk(plan.todoId); } catch { r = { ok: false }; }
   if (seq !== originSeq) return;
@@ -3165,7 +2963,7 @@ async function openOrigin(origin) {
   const t = findTodo(p.todo.id);
   if (t?.priority === BACKLOG && !backlogOpen) { backlogOpen = true; writeBacklogOpen(globalThis.localStorage, true); }
   flashFor(p.todo.id);
-  renderTodos();
+  if (t && openId !== t.id) toggleDetail(t.id); else renderTodos();
   const row = todosSec.querySelector(`.todo.row[data-id="${CSS.escape(p.todo.id)}"]`);
   if (!t || !row) {
     if (p.threadId) return openOriginThread(p.threadId, '목록에서 그 할 일을 못 찾아서 대화를 열었어요.');
@@ -3173,11 +2971,7 @@ async function openOrigin(origin) {
     return;
   }
   row.scrollIntoView({ block: 'center' });
-  closeAsk();
-  askPointX = null;
-  askActions = normalizeActions(p.actions);
-  dispatchAsk({ type: 'restore', todo: t, exchange: p.exchange, threadId: p.threadId });
-  askInput.focus();
+  row.focus();
 }
 cy.onOpenOrigin?.(openOrigin);
 
@@ -3206,13 +3000,6 @@ cy.onCaps?.(applyCaps);
 $('close').addEventListener('click', () => cy.close());
 document.addEventListener('keydown', (e) => {
   if (drag && e.key === 'Escape') { e.preventDefault(); finishDrag(false); return; } // 끌기 취소
-  if (ask && (e.key === 'Escape' || e.key === 'Enter')) {
-    const k = askKey(e);
-    if (k === 'discard') { e.preventDefault(); discardAsk(); return; }
-    if (k === 'apply') { e.preventDefault(); applyAsk(); return; }
-    if (k === 'chat') { e.preventDefault(); continueAskInChat(); return; }
-    if (e.key === 'Escape') return; // 한글 조합 중 Esc
-  }
   if (e.key === 'Escape' && !e.isComposing) {
     if (section === 'chat' && rowMode) { rowMode = null; renderThreadList(); return; }
     if (section === 'chat' && listOpen) { setListOpen(false); return; }

@@ -85,7 +85,7 @@ export function readOnlyReason(run) {
 
 // ---- 입력창 모드(Claude·ChatGPT 처럼 늘 쓸 수 있게) ----
 // inject: 돌고 있는 수정 run 에 바로 · continue: 끝난 수정 run → 연결된 새 run · followup: 그 밖 → 대화로 이어가기 · wait: 마무리 중
-// thread: 원래 대화(채팅·할 일 팝오버)가 있는 run → 그 대화로(POST /chat {threadId, todoId?, parentRunId}). 수정 run 은 그대로
+// thread: 원래 대화(채팅·할 일)가 있는 run → 그 대화로(POST /chat {threadId, todoId?, parentRunId}). 수정 run 은 그대로
 export function composerMode(run) {
   if (!run) return { mode: 'none', enabled: false, placeholder: '왼쪽에서 세션을 고르세요', button: '보내기', hint: '' };
   if (canSend(run)) return { mode: 'inject', enabled: true, placeholder: '이 세션에 메시지 보내기 (Enter 보내기 · Shift+Enter 줄바꿈)', button: '보내기', hint: '' };

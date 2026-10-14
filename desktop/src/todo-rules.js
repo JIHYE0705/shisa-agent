@@ -1,5 +1,5 @@
 // 할 일 규칙·백로그 — 순수 로직. 규칙 목록 다듬기(대시보드 todoRules), 낙관적 켜기/끄기·지우기 겹침,
-// 백로그 묶음 접힘 상태, IPC 인자 거르기, 팝오버의 규칙 미리보기 블록.
+// 백로그 묶음 접힘 상태, IPC 인자 거르기.
 
 const str = (v) => (typeof v === 'string' ? v : '');
 const arr = (v) => (Array.isArray(v) ? v : []);
@@ -58,38 +58,3 @@ export function sanitizeRulePatch(v) {
   return Object.keys(out).length ? out : null;
 }
 export const okRuleId = (id) => typeof id === 'string' && /^rule:[\w-]{1,40}$/.test(id);
-
-// 팝오버 ✓/✗ 에 같이 보내는 규칙 제안: 모양만 거르고(엄격한 검증은 데몬) 크기를 막는다. 없으면 null, 이상하면 undefined
-export function sanitizeAskRule(v) {
-  if (v === null || v === undefined) return null;
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
-  if (typeof v.text !== 'string' || !v.match || typeof v.match !== 'object' || !v.effect || typeof v.effect !== 'object') return undefined;
-  let s;
-  try { s = JSON.stringify({ text: v.text, match: v.match, effect: v.effect }); } catch { return undefined; }
-  return s.length <= 4000 ? JSON.parse(s) : undefined;
-}
-
-// ---- 팝오버: 서버 rule 미리보기 → 그릴 블록 ----
-// { text, summary, changes: [{ id, title, fields: [{ key, label, old, new }] }], skipped: [{ id, title, reason }] } | null
-const PRIO = (p) => ([1, 2, 3].includes(p) ? `P${p}` : p === 4 ? '백로그' : null);
-export function ruleBlock(rule) {
-  if (!rule || typeof rule !== 'object' || !rule.proposal || !str(rule.proposal.text)) return null;
-  const changes = arr(rule.changes).filter((c) => c && str(c.id) && c.before && c.after).map((c) => {
-    const fields = [];
-    if (c.before.priority !== c.after.priority) fields.push({ key: 'priority', label: '우선순위', old: PRIO(c.before.priority), new: PRIO(c.after.priority) });
-    if ((c.before.note ?? null) !== (c.after.note ?? null)) fields.push({ key: 'note', label: '메모', old: str(c.before.note) || null, new: str(c.after.note) || null });
-    return { id: c.id, title: str(c.title), fields };
-  }).filter((c) => c.fields.length);
-  const skipped = arr(rule.skipped).filter((x) => x && str(x.id)).map((x) => ({ id: x.id, title: str(x.title), reason: str(x.reason) }));
-  return { text: rule.proposal.text, summary: str(rule.summary), changes, skipped };
-}
-
-// 규칙 미리보기 → 낙관적 겹침(우선순위·메모 수정)
-export function ruleOverlay(rule) {
-  return arr(rule?.changes).filter((c) => c && str(c.id) && c.before && c.after).map((c) => {
-    const patch = {};
-    if (c.before.priority !== c.after.priority) patch.priority = c.after.priority;
-    if ((c.before.note ?? null) !== (c.after.note ?? null)) patch.note = c.after.note ?? null;
-    return { kind: 'edit', id: c.id, patch, rule: true };
-  }).filter((o) => Object.keys(o.patch).length);
-}

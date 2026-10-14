@@ -13,7 +13,7 @@ function fakeTimers() {
   };
 }
 
-test('createClickSorter: 한 번은 220ms 뒤 펼침, 그 안에 두 번이면 팝오버만(펼침 없음), 다른 줄 누르면 앞의 한 번은 바로', () => {
+test('createClickSorter: 한 번은 220ms 뒤 펼침, 그 안에 두 번이면 고치기만(펼침 없음), 다른 줄 누르면 앞의 한 번은 바로', () => {
   const T = fakeTimers();
   const log = [];
   const s = createClickSorter({ onSingle: (k) => log.push(['single', k]), onDouble: (k, x) => log.push(['double', k, x]), setTimer: T.set, clearTimer: T.clear });

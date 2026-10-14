@@ -1,4 +1,4 @@
-// 확인 카드(회의 응답 등)·도구 승인 카드(type tool_permission) — 순수 로직. 패널 채팅·할 일 팝오버·오버레이 말풍선이 같이 쓴다.
+// 확인 카드(회의 응답 등)·도구 승인 카드(type tool_permission) — 순수 로직. 패널 채팅·오버레이 말풍선이 같이 쓴다.
 // 데몬이 보낸 PendingAction 을 정리하고, 카드 모양(글·버튼·상태 줄)을 정한다. 실행은 늘 사용자가 누를 때만.
 
 export const ACTION_STATUSES = ['pending', 'running', 'done', 'failed', 'cancelled', 'expired'];
@@ -283,11 +283,6 @@ export function actionButtons(a, local = null) {
     ...(a.card.always ? [{ decision: 'always', label: local === 'always' ? '저장하는 중…' : '항상 허용', title: `항상 허용: ${a.card.always}` }] : []),
     { decision: 'cancel', label: '거부', danger: true, title: '실행하지 않고 모델에 거부했다고 알려요' },
   ];
-}
-
-// 팝오버(할 일 하나)에 보일 카드인가: 응답에 온 것 또는 이 할 일에서 난 도구 승인
-export function belongsToTodo(a, todoId) {
-  return !!a && !!todoId && a.todoId === todoId && a.type === PERMISSION;
 }
 
 // 말풍선 한 줄(오버레이): 물음까지

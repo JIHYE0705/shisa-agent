@@ -30,11 +30,6 @@ contextBridge.exposeInMainWorld('cy', {
   todoReorder: (id, priority, beforeId) => ipcRenderer.invoke('todo-reorder', String(id), Number(priority), beforeId == null ? null : String(beforeId)),
   // 프로젝트 숨기기(hide=true) / 다시 보이기(false). id = 프로젝트 경로
   projectHide: (path, hide) => ipcRenderer.invoke('project-hide', String(path), !!hide),
-  // 할 일 팝오버: 묻기 → 제안(diff) → 적용/거절
-  todoAsk: (id, text) => ipcRenderer.invoke('todo-ask', String(id), String(text)),
-  // rule: 같이 제안된 지속 규칙(있으면)
-  todoApply: (id, ops, rev, rule) => ipcRenderer.invoke('todo-apply', String(id), ops, rev == null ? null : String(rev), rule ?? null),
-  todoReject: (id, text, ops, rule) => ipcRenderer.invoke('todo-reject', String(id), text == null ? null : String(text), ops ?? [], rule ?? null),
   // 할 일 규칙: 목록 · 켜기/끄기·글 고치기({ enabled?, text? }) · 지우기
   todoRules: () => ipcRenderer.invoke('todo-rules'),
   todoRuleEdit: (id, patch) => ipcRenderer.invoke('todo-rule-edit', String(id), patch),
@@ -108,9 +103,9 @@ contextBridge.exposeInMainWorld('cy', {
   // 작업 세션 창(runId 없으면 돌고 있는 것·최근 것)
   // toolUseId(선택): 그 Agent 줄을 펼쳐서 — 채팅의 에이전트 줄·카드
   openSession: (runId, toolUseId) => ipcRenderer.send('open-session', runId == null ? null : String(runId), toolUseId == null ? null : String(toolUseId)),
-  // 세션 창 "원래 화면 열기": { type: 'thread'|'todo'|'proposal', … } — 그 대화·할 일 팝오버·제안으로
+  // 세션 창 "원래 화면 열기": { type: 'thread'|'todo'|'proposal', … } — 그 대화·할 일·제안으로
   onOpenOrigin: on('open-origin'),
-  // 팝오버 지난 문답(GET /todos/:id/thread/last)
+  // 할 일 상태·그 대화(GET /todos/:id/thread/last): 원래 화면 열기가 그 줄로 갈지 대화로 갈지 정한다
   todoLastAsk: (id) => ipcRenderer.invoke('todo-last-ask', String(id)),
   // 집중하기: SSE focus · 지금 상태 · cmd('start'|'pause'|'resume'|'stop') · 날마다 집중한 초(from·to = 로컬 YYYY-MM-DD)
   onFocus: on('focus'),
