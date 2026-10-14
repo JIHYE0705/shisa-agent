@@ -1,0 +1,47 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { detectTestCommand, isBlockedBash, resolveRepo, slugify } from "./fixer.ts";
+
+test("resolveRepo: 허용 루트 안의 git 레포만", () => {
+  const root = mkdtempSync(join(tmpdir(), "cy-root-"));
+  const repo = join(root, "app");
+  mkdirSync(join(repo, "src"), { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  assert.ok(resolveRepo({ repoRoots: [root] }, join(repo, "src")).endsWith("/app"));
+  const other = mkdtempSync(join(tmpdir(), "cy-other-"));
+  assert.throws(() => resolveRepo({ repoRoots: [root] }, other), /허용된 레포 루트 밖/);
+  assert.throws(() => resolveRepo({ repoRoots: [root] }, join(root, "../nope-xyz")), /없어/);
+});
+
+test("에이전트의 커밋·푸시·머지는 막고 테스트는 허용", () => {
+  for (const c of ["git commit -m x", "git push origin main", "gh pr merge 1", "cd a && git push", "rm -rf ~/"]) assert.equal(isBlockedBash(c), true, c);
+  for (const c of ["npm test", "git status", "git diff", "pnpm install", "rm -rf node_modules"]) assert.equal(isBlockedBash(c), false, c);
+});
+
+test("detectTestCommand", () => {
+  const d = mkdtempSync(join(tmpdir(), "cy-t-"));
+  assert.equal(detectTestCommand(d), undefined);
+  writeFileSync(join(d, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
+  assert.deepEqual(detectTestCommand(d), ["npm", "test"]);
+  writeFileSync(join(d, "pnpm-lock.yaml"), "");
+  assert.deepEqual(detectTestCommand(d), ["pnpm", "test"]);
+  // 파이썬: 워크트리 → 원래 체크아웃의 .venv, 없으면 uv · 시스템 python3
+  const py = mkdtempSync(join(tmpdir(), "cy-py-")), main = mkdtempSync(join(tmpdir(), "cy-main-"));
+  writeFileSync(join(py, "pyproject.toml"), ""); mkdirSync(join(py, "tests"));
+  assert.deepEqual(detectTestCommand(py, main), ["python3", "-m", "pytest", "-q"]);
+  writeFileSync(join(py, "uv.lock"), "");
+  assert.deepEqual(detectTestCommand(py, main), ["uv", "run", "pytest", "-q"]);
+  mkdirSync(join(main, ".venv", "bin"), { recursive: true }); writeFileSync(join(main, ".venv", "bin", "python"), "");
+  assert.deepEqual(detectTestCommand(py, main), [join(main, ".venv", "bin", "python"), "-m", "pytest", "-q"]);
+  mkdirSync(join(py, "venv", "bin"), { recursive: true }); writeFileSync(join(py, "venv", "bin", "python"), "");
+  assert.deepEqual(detectTestCommand(py, main), [join(py, "venv", "bin", "python"), "-m", "pytest", "-q"]);
+});
+
+test("slugify: 한글만이면 기본값", () => {
+  assert.equal(slugify("Fix Button Color!"), "fix-button-color");
+  assert.equal(slugify("버튼 색"), "change");
+});

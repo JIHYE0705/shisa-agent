@@ -1,0 +1,21 @@
+{
+  "name": "cy-agent-daemon",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.ts",
+    "test": "tsc -p . && CY_AGENT_HOME=${TMPDIR:-/tmp}/cy-agent-test-home node --test 'src/**/*.test.ts'",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.293",
+    "@slack/bolt": "^5.1.0",
+    "@slack/web-api": "^8.2.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}

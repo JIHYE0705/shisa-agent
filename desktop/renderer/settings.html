@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>설정</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <main id="app">
+    <header id="top">
+      <h1>설정</h1>
+      <span id="saved" role="status" aria-live="polite"></span>
+      <span class="spacer"></span>
+      <button id="open-setup" type="button" class="small ghost" title="이름·뇌·캘린더·Slack·레포 폴더를 다시 연결해요">설치 다시 하기</button>
+      <button id="start-tour" type="button" class="small ghost" title="캐릭터가 사용법을 하나씩 보여 줘요">사용법 다시 보기</button>
+    </header>
+    <div id="banner" role="alert" hidden></div>
+
+    <section class="card" aria-labelledby="h-models">
+      <h2 id="h-models">AI·모델</h2>
+      <p class="hint">대화·브리핑에 쓸 AI(Gemini·GPT·Claude Code 등)는 패널의 [모델] 탭에서 골라요. <button id="open-models" type="button" class="small ghost">AI 고르기</button></p>
+      <p id="models-hint" class="hint" hidden></p>
+      <p id="models-note" class="hint">Claude Code 세부 모델 — 바꾸면 바로 적용돼요. <span id="config-path"></span></p>
+      <div id="models" class="rows"></div>
+    </section>
+
+    <section class="card" aria-labelledby="h-brief">
+      <h2 id="h-brief">브리핑에 넣을 출처</h2>
+      <p class="hint">끈 출처는 정기 브리핑에서 확인하지도, 말하지도 않아요.</p>
+      <div id="sources" class="toggles"></div>
+    </section>
+
+    <section id="am-card" class="card" aria-labelledby="h-am">
+      <h2 id="h-am">자동 머지</h2>
+      <p class="hint">여기 있는 레포는 ✓ 없이 머지까지 해요 — 채팅에서 시킨 머지, 시사가 고친 코드로 올린 PR 이 검사(실패·대기 중 검사·충돌·초안)를 통과하면 바로 머지해요. 채팅에서 「이 레포는 알아서 머지까지 해」·「X는 이제 머지 묻고 해」로도 바꿀 수 있어요.</p>
+      <p id="am-hint" class="hint" hidden>코드 고치기·머지는 Claude Code가 있어야 해요. 설치 탭에서 Claude Code를 연결하면 여기서 고를 수 있어요.</p>
+      <div id="am-list" class="gl-list"></div>
+      <div class="gl-add">
+        <input id="am-add-text" type="text" placeholder="owner/name (예: my-name/my-app)" aria-label="자동 머지할 레포">
+        <button id="am-add" type="button" class="primary">넣기</button>
+      </div>
+      <div id="am-err" class="ph-err" role="status"></div>
+    </section>
+
+    <section class="card" aria-labelledby="h-phrases">
+      <h2 id="h-phrases">문구</h2>
+      <p class="hint">캐릭터가 정해진 때 하는 말이에요. 여러 줄이면 그중 하나를 골라요. <code>{title}</code> 같은 자리표시는 그 문구에 적힌 것만 쓸 수 있어요. 비우면 기본값 — 저장하면 바로 적용돼요.</p>
+      <div id="phrases" class="ph-groups"></div>
+    </section>
+
+    <section class="card" aria-labelledby="h-gl">
+      <div class="card-head">
+        <h2 id="h-gl">행동 지침</h2>
+        <span id="gl-count" class="faint"></span>
+      </div>
+      <p class="hint">내가 정한 말투·답 모양·일하는 법이에요. 켜 둔 지침은 대화·브리핑·코드 작업 프롬프트에 늘 붙어요(범위대로). 부딪치면 아래쪽(최근) 것이 이겨요. 나에 대해 배운 사실(프로필·지식그래프)과는 따로예요.</p>
+      <div id="gl-list" class="gl-list"></div>
+      <div class="gl-add">
+        <input id="gl-add-text" type="text" placeholder="예: 답은 짧게, 표는 쓰지 않기" aria-label="새 지침">
+        <select id="gl-add-scope" aria-label="적용 범위"></select>
+        <button id="gl-add" type="button" class="primary">넣기</button>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="h-conn">
+      <div class="card-head">
+        <h2 id="h-conn">연결 상태</h2>
+        <span id="conn-at" class="faint"></span>
+        <button id="check-all" type="button" class="ghost">모두 다시 확인</button>
+      </div>
+      <p class="hint">읽기만 해요. 안 되는 게 있으면 [설치 안내]를 눌러 패널의 설치 탭에서 차근차근 연결해요 — 비밀번호·토큰은 여기서 받지 않아요.</p>
+      <div id="conn-core" class="conn-list"></div>
+      <h3>연결한 서비스</h3>
+      <div id="conn-used" class="conn-list"></div>
+      <details id="conn-other-wrap" hidden>
+        <summary id="conn-other-sum">그 밖의 서비스</summary>
+        <div id="conn-other" class="conn-list"></div>
+      </details>
+      <h3>이 컴퓨터</h3>
+      <div id="conn-local" class="conn-list"></div>
+    </section>
+  </main>
+  <script type="module" src="settings.js"></script>
+</body>
+</html>

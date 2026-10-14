@@ -1,0 +1,74 @@
+// 설정 창(메인 프로세스 쪽): 창 하나 + 이 창에서만 받는 IPC. 일렉트론 객체는 main.js 가 넘긴다(시험은 가짜로).
+// 모델·브리핑 출처 저장(PUT /settings) · 연결 상태(GET /connections, POST /connections/check) · 패널의 설치 안내·모델 탭 열기.
+import { sanitizeSettingsPatch, okCheckId, okPanelTarget } from './settings.js';
+import { sanitizeGuidelineAdd, sanitizeGuidelinePatch, okGuidelineId } from './guidelines.js';
+
+export const SETTINGS_SIZE = { width: 720, height: 760 };
+
+// deps: { BrowserWindow, ipcMain, shell, request(method, path, body?, timeoutMs?), preload, html, fromOurs(e), debug?, openPanel?(section), caps?() }
+export function setupSettings(deps) {
+  let win = null;
+
+  const isMine = (e) => !!win && !win.isDestroyed() && e.sender === win.webContents;
+  const denied = () => ({ ok: false, error: 'bad args' });
+
+  function create() {
+    win = new deps.BrowserWindow({
+      ...SETTINGS_SIZE,
+      minWidth: 520,
+      minHeight: 480,
+      show: false,
+      title: '설정',
+      acceptFirstMouse: true,
+      webPreferences: { preload: deps.preload, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false },
+    });
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.on('will-navigate', (e) => e.preventDefault());
+    if (deps.debug) win.webContents.on('console-message', (e) => console.error(`[settings] ${e.message}`));
+    win.loadFile(deps.html);
+    win.once('ready-to-show', () => win?.show());
+    win.on('closed', () => { win = null; });
+  }
+
+  function show() {
+    if (!win) create();
+    else { win.show(); win.focus(); }
+  }
+
+  const { ipcMain } = deps;
+  // 열기: 패널 ⚙ · 그 밖의 우리 창
+  ipcMain.on('open-settings', (e) => { if (deps.fromOurs(e) || isMine(e)) show(); });
+  ipcMain.handle('settings-get', (e) => (isMine(e) ? deps.request('GET', '/settings') : denied()));
+  ipcMain.handle('settings-put', (e, patch) => {
+    const p = isMine(e) ? sanitizeSettingsPatch(patch) : null;
+    return p ? deps.request('PUT', '/settings', p) : denied();
+  });
+  ipcMain.handle('connections-get', (e) => (isMine(e) ? deps.request('GET', '/connections', undefined, 20000) : denied()));
+  // claude·services 는 SDK 를 띄우거나 경량 모델을 한 번 부른다 — 넉넉히
+  ipcMain.handle('connections-check', (e, id) => {
+    if (!isMine(e) || (id != null && !okCheckId(id))) return denied();
+    return deps.request('POST', '/connections/check', id ? { id } : {}, 90000);
+  });
+  // 행동 지침(GET/POST /guidelines · PUT/DELETE /guidelines/:id)
+  ipcMain.handle('guidelines-get', (e) => (isMine(e) ? deps.request('GET', '/guidelines') : denied()));
+  ipcMain.handle('guidelines-add', (e, g) => {
+    const p = isMine(e) ? sanitizeGuidelineAdd(g) : null;
+    return p ? deps.request('POST', '/guidelines', p) : denied();
+  });
+  ipcMain.handle('guidelines-edit', (e, id, patch) => {
+    const p = isMine(e) && okGuidelineId(id) ? sanitizeGuidelinePatch(patch) : null;
+    return p ? deps.request('PUT', `/guidelines/${id}`, p) : denied();
+  });
+  ipcMain.handle('guidelines-delete', (e, id) => (isMine(e) && okGuidelineId(id) ? deps.request('DELETE', `/guidelines/${id}`) : denied()));
+  // 이 컴퓨터에서 쓸 수 있는 것({ claude, codex }) — Claude Code 가 없으면 코드 관련 칸은 안내로
+  ipcMain.handle('settings-caps', async (e) => (isMine(e) ? ((await deps.caps?.()) ?? {}) : denied()));
+  // [설치 안내]·[AI 고르기] → 패널의 그 탭
+  ipcMain.on('settings-open-panel', (e, section) => {
+    if (isMine(e) && okPanelTarget(section)) deps.openPanel?.(section);
+  });
+
+  // 사용법 다시 보기
+  ipcMain.on('settings-tour', (e) => { if (isMine(e)) deps.startTour?.(); });
+
+  return { show, isSender: isMine, get window() { return win; } };
+}

@@ -1,0 +1,44 @@
+// 프리로드 — 샌드박스라 CommonJS. 렌더러엔 최소 API 만 노출.
+const { contextBridge, ipcRenderer } = require('electron');
+
+const on = (channel) => (cb) => {
+  const h = (_e, payload) => cb(payload);
+  ipcRenderer.on(channel, h);
+  return () => ipcRenderer.removeListener(channel, h);
+};
+
+contextBridge.exposeInMainWorld('cy', {
+  onBubble: on('bubble'),
+  onState: on('state'),
+  onClear: on('clear'),
+  onConnection: on('connection'),
+  onVisibility: on('visibility'),
+  onChat: on('chat'),
+  onAgents: on('agents'), // { running } — 돌고 있는 서브에이전트 수(캡션 "에이전트 N개 실행 중")
+  setInteractive: (v) => ipcRenderer.send('set-interactive', !!v),
+  dragStart: () => ipcRenderer.send('drag-start'),
+  dragEnd: () => ipcRenderer.send('drag-end'),
+  characterMenu: () => ipcRenderer.send('character-menu'),
+  openLink: (url) => ipcRenderer.send('open-link', String(url)),
+  decide: (proposalId, action) => ipcRenderer.invoke('decide', String(proposalId), String(action)),
+  togglePanel: () => ipcRenderer.send('toggle-panel'),
+  openPanel: (section) => ipcRenderer.send('open-panel', section == null ? null : String(section)),
+  // attachments: 먼저 올려 둔 첨부 id(chatAttach) — 있으면 글 없이도 보낸다
+  chatSend: (text, attachments) => ipcRenderer.invoke('chat-send', String(text), Array.isArray(attachments) ? { attachments: attachments.map(String) } : {}),
+  chatAttach: (name, mime, bytes) => ipcRenderer.invoke('chat-attach', String(name), String(mime ?? ''), bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)),
+  chatStop: (chatId) => ipcRenderer.invoke('chat-stop', String(chatId)), // 답하던 것 멈추기 → POST /chat/:chatId/stop
+  chatFocus: (on) => ipcRenderer.invoke('chat-focus', !!on),
+  // 말풍선 → 패널의 그 섹션·항목
+  openItem: (section, id) => ipcRenderer.send('open-item', String(section), id == null ? null : String(id)),
+  // 머지 승인: action = 'merge' | 'decline'
+  mergeDecide: (proposalId, action) => ipcRenderer.invoke('merge-decide', String(proposalId), String(action)),
+  mergeAsk: (proposalId, text) => ipcRenderer.invoke('merge-ask', String(proposalId), String(text)),
+  // 확인 카드(회의 응답 등): decision = 'confirm' | 'cancel'
+  onAction: on('action'),
+  actionDecide: (id, decision) => ipcRenderer.invoke('action-decide', String(id), String(decision)),
+  // 뇌(말 거는 AI) 연결 상태(brain-state.js brainView) — 없으면 더블클릭이 춤 + 연결 안내
+  brain: () => ipcRenderer.invoke('brain-get'),
+  onBrain: on('brain'),
+  // 사용법 둘러보기 말풍선 버튼: 'next' | 'stop'
+  tour: (cmd) => ipcRenderer.send('tour', cmd === 'stop' ? 'stop' : 'next'),
+});

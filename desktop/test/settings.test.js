@@ -1,0 +1,175 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import {
+  sanitizeSettingsPatch, okPanelTarget, needsSetupHint, okCheckId, dotClass, agoText, latencyText, groupRows, pendingChecks, mergeRows, toggleExclude, metaText,
+  phraseGroups, phraseText, phraseCustom, phraseSaveValue, phraseProblem, repoSlugFrom, autoMergeNext,
+} from '../src/settings.js';
+import { setupSettings } from '../src/settings-window.js';
+
+test('sanitizeSettingsPatch: 모델 역할·출처만, 이상하면 null', () => {
+  assert.deepEqual(sanitizeSettingsPatch({ models: { quick: 'claude-sonnet-5-5' } }), { models: { quick: 'claude-sonnet-5-5' } });
+  assert.deepEqual(sanitizeSettingsPatch({ briefing: { exclude: ['jira', 'jira', 'mail'] } }), { briefing: { exclude: ['jira', 'mail'] } });
+  for (const bad of [null, [], {}, { port: 1 }, { models: {} }, { models: { other: 'x' } }, { models: { quick: 'a b' } }, { models: { quick: 3 } },
+    { briefing: { exclude: 'jira' } }, { briefing: { exclude: ['Jira!'] } }, { briefing: { include: [] } }]) {
+    assert.equal(sanitizeSettingsPatch(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('자동 머지 레포: 저장 본문(owner/name 목록만) · 입력 글 다듬기 · 넣기/빼기', () => {
+  assert.deepEqual(sanitizeSettingsPatch({ autoMerge: ['example/speaker', 'example/speaker'] }), { autoMerge: ['example/speaker'] });
+  assert.deepEqual(sanitizeSettingsPatch({ autoMerge: [] }), { autoMerge: [] });
+  for (const bad of [{ autoMerge: 'a/b' }, { autoMerge: ['a b/c'] }, { autoMerge: ['../x'] }, { autoMerge: [3] }]) assert.equal(sanitizeSettingsPatch(bad), null, JSON.stringify(bad));
+  assert.equal(repoSlugFrom(' https://github.com/example/speaker/pull/3 '), 'example/speaker');
+  assert.equal(repoSlugFrom('my-name/cy-agent'), 'my-name/cy-agent');
+  assert.equal(repoSlugFrom('speaker'), '');
+  assert.deepEqual(autoMergeNext(['a/b'], 'c/d', true), ['a/b', 'c/d']);
+  assert.deepEqual(autoMergeNext(['a/b'], 'A/B', true), ['a/b']);
+  assert.deepEqual(autoMergeNext(['a/b', 'c/d'], 'A/b', false), ['c/d']);
+  const html = readFileSync(new URL('../renderer/settings.html', import.meta.url), 'utf8');
+  assert.match(html, /id="am-list"/);
+  assert.match(html, /id="am-add"/);
+});
+
+test('패널로 보낼 탭·[설치 안내] 붙일 줄', () => {
+  assert.ok(okPanelTarget('setup'));
+  assert.ok(okPanelTarget('models'));
+  for (const s of ['chat', 'https://evil.example/', '', null]) assert.equal(okPanelTarget(s), false, String(s));
+  assert.equal(needsSetupHint({ state: 'error' }), true);
+  assert.equal(needsSetupHint({ state: 'warn' }), true);
+  for (const st of ['ok', 'off', 'unknown']) assert.equal(needsSetupHint({ state: st }), false);
+});
+
+test('표시: 점 색·지연·몇 분 전·꼬리 글', () => {
+  assert.equal(dotClass('ok'), 'ok');
+  assert.equal(dotClass('error'), 'err');
+  assert.equal(dotClass('weird'), 'unknown');
+  assert.equal(latencyText(123.4), '123ms');
+  assert.equal(latencyText(2500), '2.5초');
+  assert.equal(latencyText(30000), '30초');
+  assert.equal(latencyText(undefined), '');
+  const now = new Date('2026-10-13T03:00:00Z');
+  assert.equal(agoText('2026-10-13T02:59:55Z', now), '방금');
+  assert.equal(agoText('2026-10-13T02:57:00Z', now), '3분 전');
+  assert.equal(agoText('2026-10-13T00:00:00Z', now), '3시간 전');
+  assert.equal(agoText('bad', now), '');
+  assert.equal(metaText({ latencyMs: 120, checkedAt: '2026-10-13T02:57:00Z' }, now), '120ms · 3분 전 확인');
+  assert.equal(okCheckId('claude'), true);
+  assert.equal(okCheckId('rm -rf'), false);
+});
+
+test('groupRows·pendingChecks·mergeRows·toggleExclude', () => {
+  const rows = [
+    { id: 'claude', group: 'core', check: 'claude', pending: true, state: 'unknown' },
+    { id: 'net', group: 'core', check: 'net', state: 'ok' },
+    { id: 'mcp:jira', group: 'service', check: 'services', used: true, state: 'warn' },
+    { id: 'mcp:notion', group: 'service', check: 'services', used: false, state: 'off' },
+    { id: 'gh', group: 'local', check: 'gh', state: 'ok' },
+    { id: 'x', group: 'service', check: 'services', pending: true },
+  ];
+  const g = groupRows(rows);
+  assert.deepEqual(g.core.map((r) => r.id), ['claude', 'net']);
+  assert.deepEqual(g.used.map((r) => r.id), ['mcp:jira', 'x']);
+  assert.deepEqual(g.other.map((r) => r.id), ['mcp:notion']);
+  assert.deepEqual(g.local.map((r) => r.id), ['gh']);
+  assert.deepEqual(pendingChecks(rows), ['claude', 'services']);
+  // 아직 도는 확인의 줄은, 새 목록이 pending 이면 화면에 있던 걸 둔다
+  const prev = [{ id: 'claude', check: 'claude', state: 'ok' }, { id: 'gh', check: 'gh', state: 'error' }];
+  const next = [{ id: 'claude', check: 'claude', pending: true }, { id: 'gh', check: 'gh', state: 'ok' }];
+  assert.deepEqual(mergeRows(prev, next, new Set(['claude'])), [{ id: 'claude', check: 'claude', state: 'ok' }, { id: 'gh', check: 'gh', state: 'ok' }]);
+  assert.deepEqual(mergeRows(prev, next), next);
+  assert.deepEqual(toggleExclude(['mail'], 'jira', false), ['mail', 'jira']);
+  assert.deepEqual(toggleExclude(['mail', 'jira'], 'jira', true), ['mail']);
+});
+
+test('설정 창 IPC: 이 창에서 온 것만, 저장 본문은 걸러서 PUT, 패널은 설치·모델 탭만 연다', async () => {
+  const handlers = {}, listeners = {}, requests = [], opened = [];
+  let caps = { claude: false, codex: false };
+  const fakeWin = { webContents: { setWindowOpenHandler() {}, on() {} }, loadFile() {}, once() {}, on() {}, show() {}, focus() {}, isDestroyed: () => false };
+  class BW { constructor() { return fakeWin; } }
+  const ui = setupSettings({
+    BrowserWindow: BW,
+    ipcMain: { handle: (c, f) => { handlers[c] = f; }, on: (c, f) => { listeners[c] = f; } },
+    shell: { openExternal: async () => { throw new Error('밖으로 열지 않는다'); } },
+    openPanel: (s) => { opened.push(s); },
+    caps: async () => caps,
+    request: async (...a) => { requests.push(a); return { ok: true }; },
+    fromOurs: (e) => e.sender === 'panel',
+    preload: 'p', html: 'h',
+  });
+  const mine = { sender: fakeWin.webContents }, other = { sender: 'evil' };
+  assert.deepEqual(await handlers['settings-get'](mine), { ok: false, error: 'bad args' }, '창이 아직 없다');
+  listeners['open-settings']({ sender: 'panel' });
+  assert.equal(ui.window, fakeWin);
+  await handlers['settings-get'](mine);
+  assert.deepEqual(await handlers['settings-get'](other), { ok: false, error: 'bad args' });
+  await handlers['settings-put'](mine, { models: { quick: 'claude-haiku-5-5' } });
+  assert.deepEqual(await handlers['settings-put'](mine, { port: 1 }), { ok: false, error: 'bad args' });
+  await handlers['connections-check'](mine, 'services');
+  assert.deepEqual(await handlers['connections-check'](mine, '../x'), { ok: false, error: 'bad args' });
+  assert.deepEqual(requests.map((r) => r.slice(0, 3)), [['GET', '/settings'], ['PUT', '/settings', { models: { quick: 'claude-haiku-5-5' } }], ['POST', '/connections/check', { id: 'services' }]]);
+  listeners['settings-open-panel'](mine, 'setup');
+  listeners['settings-open-panel'](mine, 'https://evil.example/');
+  listeners['settings-open-panel'](other, 'models');
+  assert.deepEqual(opened, ['setup']);
+  assert.deepEqual(await handlers['settings-caps'](mine), { claude: false, codex: false });
+  caps = { claude: true, codex: true };
+  assert.deepEqual(await handlers['settings-caps'](mine), { claude: true, codex: true });
+  assert.deepEqual(await handlers['settings-caps'](other), { ok: false, error: 'bad args' });
+});
+
+test('캐릭터 한 번 클릭 → 패널, 더블클릭 → 말 걸기(뇌가 없으면 춤 + 연결 안내), 보내면 hover 스레드(chat-send 가 kind hover)', () => {
+  const r = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  assert.match(r, /clickTimer = setTimeout\(\(\) => \{\s*clickTimer = null;\s*hideAsk\(\);\s*cy\.togglePanel\(\);/);
+  assert.match(r, /function onCharacterClick\(\) \{\s*if \(clickTimer\) \{\s*clearTimeout\(clickTimer\);\s*clickTimer = null;\s*talk\(\);/);
+  assert.match(r, /function talk\(\) \{\s*if \(brain\.ready === false\) return noBrain\(\);\s*showAsk\(\);/);
+  assert.match(r, /dispatchActivity\(\{ type: 'localDance', on: true \}\)/);
+  const m = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  assert.match(m, /hover \? \{ kind: 'hover' \}/);
+  // 설정 창으로 가는 길: 트레이·앱 메뉴·패널 ⚙
+  assert.match(m, /label: '설정…', click: \(\) => settingsUi\?\.show\(\)/);
+  assert.match(readFileSync(new URL('../renderer/panel.html', import.meta.url), 'utf8'), /id="open-settings"/);
+  // PUT 도 X-CY-Agent 헤더를 단다
+  assert.match(m, /if \(method === 'POST' \|\| method === 'PUT'\) \{\s*headers\['X-CY-Agent'\] = '1';/);
+});
+
+test('문구: 저장 본문(키 → 글|null)·묶기·보일 글·저장 값·검사', () => {
+  assert.deepEqual(sanitizeSettingsPatch({ phrases: { dance: '춤!\n얍', hello: null } }), { phrases: { dance: '춤!\n얍', hello: null } });
+  for (const bad of [{ phrases: {} }, { phrases: [] }, { phrases: { 'Bad Key': 'x' } }, { phrases: { dance: 3 } }]) {
+    assert.equal(sanitizeSettingsPatch(bad), null, JSON.stringify(bad).slice(0, 60));
+  }
+  const dance = { key: 'dance', group: '캐릭터', label: '춤', vars: [], default: ['💃 춤춰요!'], value: null };
+  const todo = { key: 'todo_new_one', group: '할 일', label: '새 할 일', vars: ['title'], default: ["새 할 일이 생겼어요: '{title}'"], value: ['새: {title}', '또: {title}'] };
+  const hello = { key: 'hello', group: '캐릭터', label: '인사', vars: [], default: ['안녕'], value: null };
+  assert.deepEqual(phraseGroups([dance, todo, hello, { key: '../x' }]).map((g) => [g.group, g.items.map((p) => p.key)]), [['캐릭터', ['dance', 'hello']], ['할 일', ['todo_new_one']]]);
+  assert.equal(phraseText(dance), '💃 춤춰요!');
+  assert.equal(phraseText(todo), '새: {title}\n또: {title}');
+  assert.equal(phraseCustom(dance), false);
+  assert.equal(phraseCustom(todo), true);
+  assert.equal(phraseSaveValue(dance, '  춤!  \n\n 얍 '), '춤!\n얍');
+  assert.equal(phraseSaveValue(dance, '   '), null, '비우면 기본값');
+  assert.equal(phraseSaveValue(dance, '💃 춤춰요!'), null, '기본값과 같으면 기본값');
+  assert.equal(phraseProblem(todo, '{title} 왔어요'), '');
+  assert.match(phraseProblem(todo, '{pr} {title}'), /모르는 자리표시 \{pr\} — 쓸 수 있는 것: \{title\}/);
+  assert.match(phraseProblem(dance, '{title}'), /자리표시를 못 써요/);
+  assert.match(phraseProblem(dance, Array.from({ length: 11 }, (_, i) => `줄${i}`).join('\n')), /10줄까지/);
+  assert.equal(phraseProblem(dance, 'x'.repeat(5000)), '');
+});
+
+test('설정 창: 문구 칸 · 저장은 그 문구 하나만 PUT', async () => {
+  const html = readFileSync(new URL('../renderer/settings.html', import.meta.url), 'utf8');
+  assert.match(html, /id="h-phrases">문구</);
+  assert.match(html, /id="phrases"/);
+  const r = readFileSync(new URL('../renderer/settings.js', import.meta.url), 'utf8');
+  assert.match(r, /save\(\{ phrases: \{ \[p\.key\]: value \} \}\)/);
+  assert.match(r, /reset\.addEventListener\('click', \(\) => put\(null\)\)/);
+  // IPC 는 걸러서 그대로 넘긴다
+  const handlers = {}, requests = [];
+  const fakeWin = { webContents: { setWindowOpenHandler() {}, on() {} }, loadFile() {}, once() {}, on() {}, show() {}, focus() {}, isDestroyed: () => false };
+  class BW { constructor() { return fakeWin; } }
+  const listeners = {};
+  setupSettings({ BrowserWindow: BW, ipcMain: { handle: (c, f) => { handlers[c] = f; }, on: (c, f) => { listeners[c] = f; } }, shell: {}, request: async (...a) => { requests.push(a); return { ok: true }; }, fromOurs: () => true, preload: 'p', html: 'h' });
+  listeners['open-settings']({ sender: 'panel' });
+  await handlers['settings-put']({ sender: fakeWin.webContents }, { phrases: { dance: '춤!' } });
+  assert.deepEqual(requests.map((x) => x.slice(0, 3)), [['PUT', '/settings', { phrases: { dance: '춤!' } }]]);
+});

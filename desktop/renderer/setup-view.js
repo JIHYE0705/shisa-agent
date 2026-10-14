@@ -1,0 +1,508 @@
+// 설치: 한 화면에 할 일 한 줄씩. 토큰은 이 화면 메모리에만 있고 저장하지 않는다.
+import { AGENTS, FEATURES, agentSteps, buildWalk, featureTitle } from '../src/setup-flow.js';
+import { SISA_SAY, providerById, connectSteps, slotCheck, BRAIN_CHOICES, EXTRAS, hubItem } from '../src/ai-onboard.js';
+import { setupSummary, okFolder } from '../src/setup-plan.js';
+
+const slotValues = new Map();
+let redraw = null;
+let focusSlot = null;
+let caret = null;
+
+function h(sel, props, ...kids) {
+  const [tag, ...cls] = sel.split('.');
+  const el = document.createElement(tag || 'div');
+  if (cls.length) el.className = cls.join(' ');
+  for (const [k, v] of Object.entries(props ?? {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'text') el.textContent = v;
+    else if (k === 'dataset') Object.assign(el.dataset, v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) el.append(c);
+  return el;
+}
+
+function splitSay(say) {
+  if (!say) return [];
+  return String(say)
+    .split(/\n+/)
+    .flatMap((p) => p.split(/(?<=(?:다|요|니다|세요|습니다)\.)\s+/))
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function identityAndRows(step) {
+  if (step.rows) return { identity: step.identity || '', rows: step.rows };
+  const parts = splitSay(step.say);
+  if (parts.length <= 1) return { identity: parts[0] || '', rows: [] };
+  return { identity: parts[0], rows: parts.slice(1) };
+}
+
+const slotPlaceholders = new Map();
+
+function rememberSlots(step) {
+  for (const s of step.slots || []) slotPlaceholders.set(s.id, s.placeholder);
+}
+
+function filled(code, step) {
+  let out = code || '';
+  rememberSlots(step);
+  for (const [id, placeholder] of slotPlaceholders) {
+    const v = (slotValues.get(id) || '').trim();
+    if (v && placeholder) out = out.split(placeholder).join(v);
+  }
+  return out;
+}
+
+function pretty(code) {
+  return String(code)
+    .replace(/ \\\n\s*/g, '\n')
+    .replace(/ -e /g, '\n  -e ');
+}
+
+function codeBlock(label, text, onCopy) {
+  const btn = h('button.ghost.setup-copy', { type: 'button', text: '복사' });
+  btn.addEventListener('click', () => onCopy(text, btn));
+  return h('div.setup-code', null,
+    h('div.setup-code-bar', null, h('span', { text: label || '복사' }), btn),
+    h('pre', { text: pretty(text) }));
+}
+
+function richNodes(text) {
+  return String(text ?? '').split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part) => (
+    part.startsWith('**') && part.endsWith('**')
+      ? h('strong', { text: part.slice(2, -2) })
+      : document.createTextNode(part)
+  ));
+}
+
+function rowNode(row, i, ctx) {
+  const text = typeof row === 'string' ? row : row.text;
+  const keys = typeof row === 'string' ? null : row.keys;
+  let links = null;
+  if (typeof row === 'object' && row?.link === true && ctx?.url) {
+    const copyBtn = h('button.ghost.setup-inline', { type: 'button', text: '주소 복사', 'data-label': '주소 복사' });
+    copyBtn.addEventListener('click', () => ctx.onCopy(ctx.url, copyBtn));
+    links = h('span.act-links', null,
+      h('button.primary.setup-inline', { type: 'button', text: '주소 열기', onclick: () => ctx.onOpen(ctx.url) }),
+      copyBtn);
+  }
+  return h('li.act', null,
+    h('span.act-n', { text: String(i + 1) }),
+    h('span.act-tx', null,
+      keys ? h('span.keys', null, keys.map((k) => h('kbd', { text: k }))) : null,
+      ...richNodes(text),
+      links,
+      row.note ? h('small.act-note', null, ...richNodes(row.note)) : null));
+}
+
+function slotFields(step) {
+  rememberSlots(step);
+  if (!step.slots?.length) return null;
+  return h('div.setup-fields', null,
+    ...step.slots.map((s) => {
+      const input = h('input', {
+        type: 'text',
+        spellcheck: 'false',
+        autocomplete: 'off',
+        placeholder: s.hint || `${s.placeholder} 를 여기에 붙여 넣기`,
+        'aria-label': s.label,
+        'data-slot': s.id,
+        value: slotValues.get(s.id) || '',
+      });
+      input.addEventListener('input', () => {
+        slotValues.set(s.id, input.value);
+        focusSlot = s.id;
+        caret = input.selectionStart;
+        redraw?.();
+      });
+      return h('label', null, h('span', { text: s.label }), input);
+    }),
+    h('small', { text: step.slotNote || ((step.slots || []).every((s) => (slotValues.get(s.id) || '').trim())
+      ? '이 칸에 들어갔습니다. 저장하지 않고 서버로 보내지 않습니다.'
+      : '이 칸은 이 화면에만 있습니다. 저장하지 않고 서버로 보내지 않습니다.') }));
+}
+
+// 모양이 정해진 칸(캘린더 주소)이 맞게 채워졌는지
+function slotState(step) {
+  for (const s of step.slots || []) {
+    const v = (slotValues.get(s.id) || '').trim();
+    const r = slotCheck(s.id, v);
+    if (!v) return { ok: false, empty: true };
+    if (!r.ok) return { ok: false, bad: r.bad };
+  }
+  return { ok: true };
+}
+
+function slotStatus(step) {
+  if (!step.slots?.length || !step.slotNote) return null;
+  const st = slotState(step);
+  if (st.empty) return null;
+  if (st.bad) return h('p.setup-gate', null, ...richNodes(st.bad));
+  return h('p.setup-gate.ok', null, ...richNodes('**맞는 주소입니다.** 다음으로 갈 수 있습니다.'));
+}
+
+// 시사 캐릭터 + 말풍선. 패널 사이드바와 같은 그림을 쓴다(CSP: cy-asset: 만).
+const SISA_SRCS = ['cy-asset://app/character/eyes_open@2x.png', 'cy-asset://app/character.png', '../assets/character.png', '../assets/character.svg'];
+
+function sisaHead(say) {
+  if (!say) return null;
+  let at = 0;
+  const img = h('img.sisa-img', { alt: '시사', draggable: 'false', width: '64', height: '64' });
+  img.addEventListener('error', () => { if (at < SISA_SRCS.length - 1) img.src = SISA_SRCS[++at]; });
+  img.src = SISA_SRCS[0];
+  const lines = String(say).split('\n').map((l) => l.trim()).filter(Boolean);
+  return h('div.sisa', null, img, h('div.sisa-say', null, lines.map((l) => h('span.say-line', null, ...richNodes(l)))));
+}
+
+// 화면 하나: 위(말풍선·제목·내용)는 스크롤, 버튼 줄(nav)은 카드 맨 아래 고정 — 이전은 왼쪽, 나중에·다음은 오른쪽
+function screen({ kicker, title, identity, rows, rowCtx, extra, nav, say }) {
+  return h('div.setup', null,
+    h('div.setup-scroll', null,
+    sisaHead(say),
+    h('div.setup-body', null,
+      kicker ? h('p.setup-kicker', { text: kicker }) : null,
+      h('h1', { text: title }),
+      identity ? h('p.identity', null, ...richNodes(identity)) : null,
+      rows?.length ? h('ol.acts', null, rows.map((r, i) => rowNode(r, i, rowCtx))) : null,
+      extra)),
+    nav);
+}
+
+function walkNav({ phase, cursor, total, onList, onPrev, onBack, onSkip, onNext, nextLabel, nextDisabled }) {
+  const goBack = () => { if (cursor > 0) onPrev(); else onBack(); };
+  return h('div.setup-bar', null,
+    phase === 'walk' || phase === 'connect' ? h('button.ghost', { type: 'button', text: '목록', onclick: onList }) : null,
+    h('button.ghost', { type: 'button', text: '이전', onclick: goBack }),
+    h('span.spacer'),
+    phase === 'walk' && cursor < total - 1
+      ? h('button.ghost', { type: 'button', text: '이 기능은 연결 안 할래요', onclick: onSkip })
+      : null,
+    h('button.primary', { type: 'button', text: nextLabel, disabled: !!nextDisabled, onclick: onNext }));
+}
+
+function loginStatus(step, login) {
+  if (step.gate !== 'login') return null;
+  if (login?.loggedIn) return h('p.setup-gate.ok', null, ...richNodes('**완료.** 로그인되었습니다. 다음으로 갈 수 있습니다.'));
+  if (login?.installed === false) {
+    return h('p.setup-gate', null, ...richNodes('아직 **설치가 안 보입니다.** 이전 화면의 설치를 먼저 하세요. 설치와 로그인이 확인되면 다음이 켜집니다.'));
+  }
+  return h('p.setup-gate', null, ...richNodes('아직 **로그인 전**입니다. 터미널에서 로그인이 끝나면 여기에 **완료**가 표시되고 다음이 켜집니다.'));
+}
+
+function agentView({ agent, onAgent, onContinue }) {
+  return screen({
+    title: '코딩 에이전트를 연결할까요?',
+    identity: '하나를 고르면, 그다음부터 그 방법으로 연결합니다.',
+    extra: h('div.setup-picks', null, AGENTS.map((a) => h('button', {
+      type: 'button',
+      class: `setup-pick${agent === a.id ? ' on' : ''}`,
+      'aria-pressed': agent === a.id ? 'true' : 'false',
+      onclick: () => onAgent(a.id),
+    },
+    h('span.setup-pick-title', { text: a.title }),
+    h('span.setup-blurb', { text: a.blurb }),
+    h('span.setup-need', { text: a.need })))),
+    nav: h('div.setup-bar', null,
+      h('span.spacer'),
+      h('button.primary', { type: 'button', text: '다음', disabled: !agent, onclick: onContinue })),
+  });
+}
+
+function pickView({ picked, agent, onToggle, onStart, onDone }) {
+  const set = new Set(picked);
+  const who = AGENTS.find((a) => a.id === agent);
+  return screen({
+    title: '어떤 기능을 연결할까요?',
+    identity: `${who ? who.title : '고른 방법'}으로, 고른 것만 하나씩 안내합니다.`,
+    extra: h('div.setup-picks', null, FEATURES.map((f) => h('button', {
+      type: 'button',
+      class: `setup-pick${set.has(f.id) ? ' on' : ''}`,
+      'aria-pressed': set.has(f.id) ? 'true' : 'false',
+      onclick: () => onToggle(f.id),
+    },
+    h('span.setup-pick-title', { text: f.title }),
+    h('span.setup-blurb', { text: f.blurb }),
+    h('span.setup-need', { text: f.need })))),
+    nav: h('div.setup-bar', null,
+      h('button.ghost', { type: 'button', text: '개요로', onclick: onDone }),
+      h('span.spacer'),
+      h('button.primary', {
+        type: 'button',
+        text: set.size ? '첫 번째 안내' : '나중에 할게요',
+        onclick: set.size ? onStart : onDone,
+      })),
+  });
+}
+
+function oneView(step, { phase, cursor, total, agent, login, onChoose, onCopy, onOpen, onList, onPrev, onBack, onSkip, onNext, nextLabel }) {
+  rememberSlots(step);
+  const { identity, rows } = identityAndRows(step);
+  const choices = (step.choices ?? []).map((c) => h('button', {
+    type: 'button',
+    class: `setup-pick${step.choice === c.id ? ' on' : ''}`,
+    onclick: () => onChoose(step.choiceKey, c.id),
+  }, h('span.setup-pick-title', { text: c.title }), (c.blurb || c.say) ? h('span.setup-blurb', { text: c.blurb || c.say }) : null));
+  const blocks = [];
+  if (step.code) blocks.push(codeBlock(step.codeLabel, filled(step.code, step), onCopy));
+  if (step.config) blocks.push(codeBlock(step.configLabel || 'config.json 에 넣기', step.config, onCopy));
+  return screen({
+    kicker: phase === 'walk'
+      ? `${featureTitle(step.feature)}  ·  ${cursor + 1} / ${total}`
+      : (phase === 'connect' || agent ? `${cursor + 1} / ${total}` : ''),
+    title: step.title,
+    identity,
+    rows,
+    rowCtx: step.url ? { url: step.url, onOpen, onCopy } : undefined,
+    extra: h('div', null,
+      choices.length ? h('div.setup-picks', null, choices) : null,
+      step.need ? h('p.setup-needline', { text: step.need }) : null,
+      loginStatus(step, login),
+      ...blocks,
+      slotFields(step),
+      slotStatus(step),
+      step.details?.length ? h('details.setup-fold', null,
+        h('summary', { text: '막히면' }),
+        h('ul', null, step.details.map((d) => h('li', null, ...richNodes(d))))) : null),
+    nav: walkNav({
+      phase, cursor, total, onList, onPrev, onBack, onSkip, onNext, nextLabel,
+      nextDisabled: (step.gate === 'login' && !login?.loggedIn)
+        || step.gate === 'blocked'
+        || (!!step.slotNote && !slotState(step).ok),
+    }),
+  });
+}
+
+function pickButton(on, title, blurb, onclick, linked, note) {
+  return h('button', {
+    type: 'button',
+    class: `setup-pick${on ? ' on' : ''}${linked ? ' linked' : ''}`,
+    onclick,
+  },
+  h('span.setup-pick-title', { text: title }),
+  h('span.setup-blurb', { text: blurb }),
+  note ? h('span.setup-warn', { text: note }) : null);
+}
+
+// 1) 이름 — 비워 두고 넘어가도 된다
+let nameDraft = null;
+function nameView({ name, onName }) {
+  if (nameDraft === null) nameDraft = name || '';
+  const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: '예: 길동', 'aria-label': '이름', value: nameDraft });
+  input.addEventListener('input', () => { nameDraft = input.value; });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) onName(nameDraft.trim()); });
+  focusSlot = null;
+  queueMicrotask(() => input.focus());
+  return screen({
+    say: SISA_SAY.name,
+    title: '반가워요!',
+    identity: '부를 이름을 적어 주세요. 브리핑이나 대화에서 이 이름으로 불러요.',
+    extra: h('div.setup-fields', null, h('label', null, h('span', { text: '이름' }), input)),
+    nav: h('div.setup-bar', null,
+      h('span.spacer'),
+      h('button.ghost', { type: 'button', text: '건너뛰기', onclick: () => onName('') }),
+      h('button.primary', { type: 'button', text: '다음', onclick: () => onName(nameDraft.trim()) })),
+  });
+}
+
+// 2) 뇌 고르기(선택) — 찾은 Claude Code·Codex 는 "찾았어요 ✓", 키는 다음 화면에서 붙여 넣기, 「AI 없이 쓰기」는 로컬 뇌로 다음 단계
+function brainPickView({ detected = {}, connected = [], current = '', onPick, onSkip, onBack }) {
+  return screen({
+    say: SISA_SAY.brain,
+    title: '뇌(AI)를 연결할까요?',
+    identity: 'AI는 선택이에요. 하나만 고르면 되고, AI 없이 시작해도 나중에 설정에서 언제든 연결하거나 바꿀 수 있어요.',
+    extra: h('div.setup-picks', null, BRAIN_CHOICES.map((c) => {
+      const found = c.agent ? detected[c.agent] === true : false;
+      const linked = connected.includes(c.id);
+      const tag = current === c.id ? ' · 지금 쓰는 중' : linked ? ' · 연결됨' : found ? ' · 찾았어요 ✓' : '';
+      const note = c.agent && detected[c.agent] === false ? '이 맥에서 아직 못 찾았어요. 누르면 설치와 로그인을 안내해요' : '';
+      return pickButton(current === c.id, `${c.title}${tag}`, c.blurb, () => onPick(c.id), found || linked, note);
+    })),
+    nav: h('div.setup-bar', null,
+      h('button.ghost', { type: 'button', text: '이전', onclick: onBack }),
+      h('span.spacer'),
+      h('button.ghost', { type: 'button', text: '나중에 할게요', onclick: onSkip })),
+  });
+}
+
+// 3) 더 연결하기(선택) — 캘린더 ICS · Slack · 레포 폴더
+let repoDraft = '';
+function extrasView({ done = {}, repos = [], coder = true, onOpen, onAddRepo, onPickFolder, onRemoveRepo, onFinish, onBack }) {
+  const items = EXTRAS.filter((id) => id !== 'repos').map(hubItem).filter(Boolean);
+  const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: '/Users/나/code', 'aria-label': '레포 폴더', value: repoDraft });
+  input.addEventListener('input', () => { repoDraft = input.value; });
+  const add = () => { if (okFolder(repoDraft)) { onAddRepo(repoDraft.trim()); repoDraft = ''; } };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) add(); });
+  const repo = hubItem('repos');
+  return screen({
+    say: SISA_SAY.extras,
+    title: '더 연결할까요?',
+    identity: '하나를 누르면 그 안내로 들어가고, 끝나면 이 목록으로 돌아와요.',
+    extra: h('div', null,
+      h('div.setup-picks', null, items.map((item) => pickButton(false, done[item.id] ? `${item.title} · 연결됨` : item.title, item.blurb, () => onOpen(item.id), !!done[item.id]))),
+      h('div.setup-folder', null,
+        h('span.setup-pick-title', { text: repos.length ? `${repo.title} · ${repos.length}개` : repo.title }),
+        h('p.setup-blurb', { text: coder ? repo.blurb : `${repo.blurb} (지금은 Claude Code 가 없어서 적어만 둬요)` }),
+        repos.length ? h('ul.setup-repos', null, repos.map((r) => h('li', null, h('code', { text: r }), h('button.ghost.small', { type: 'button', text: '빼기', onclick: () => onRemoveRepo(r) })))) : null,
+        h('div.setup-fields.row', null, input,
+          onPickFolder ? h('button.ghost', { type: 'button', text: '폴더 고르기…', onclick: onPickFolder }) : null,
+          h('button.ghost', { type: 'button', text: '추가', onclick: add })),
+        repoDraft && !okFolder(repoDraft) ? h('p.setup-gate', null, ...richNodes('**/** 로 시작하는 폴더 경로를 적어 주세요.')) : null)),
+    nav: h('div.setup-bar', null,
+      h('button.ghost', { type: 'button', text: '이전', onclick: onBack }),
+      h('span.spacer'),
+      h('button.primary', { type: 'button', text: '다 했어요', onclick: onFinish })),
+  });
+}
+
+// 4) 끝 — 된 것 요약 + 사용법 둘러보기
+function doneView({ brain, done, repos, name, onTour, onClose, onBack }) {
+  const rows = setupSummary({ brain, done, repos, name });
+  return screen({
+    say: SISA_SAY.done,
+    title: name ? `${name} 님, 준비됐어요` : '준비됐어요',
+    identity: '안 한 건 언제든 설정(⚙)이나 이 「설치」 탭에서 다시 할 수 있어요.',
+    extra: h('ul.setup-summary', null, rows.map((r) => h(`li${r.ok ? '.ok' : ''}`, null,
+      h('span.sum-mark', { text: r.ok ? '✓' : '·' }), h('span.sum-label', { text: r.label }), h('span.muted', { text: r.text })))),
+    nav: h('div.setup-bar', null,
+      h('button.ghost', { type: 'button', text: '이전', onclick: onBack }),
+      h('span.spacer'),
+      h('button.ghost', { type: 'button', text: '바로 시작', onclick: onClose }),
+      h('button.primary', { type: 'button', text: '사용법 둘러보기', onclick: onTour })),
+  });
+}
+
+let apiDraft = '';
+
+export function clearApiDraft() {
+  apiDraft = '';
+}
+
+function aiKeyView({ provider, say, keyStatus, onOpen, onCopy, onCheck, onNext, onBack }) {
+  const ok = keyStatus === 'ok';
+  const input = h('input', {
+    type: 'password',
+    spellcheck: 'false',
+    autocomplete: 'off',
+    placeholder: provider.keyHint ? `${provider.keyHint}… 를 여기에 붙여 넣기` : '복사한 키를 여기에 붙여 넣기',
+    'aria-label': 'API 키',
+    value: apiDraft,
+  });
+  input.addEventListener('input', () => { apiDraft = input.value; });
+  return screen({
+    say,
+    title: `${provider.title} 키 만들기`,
+    identity: `${provider.note} 키는 이 칸에만 붙입니다. 이 맥의 시사 설정 파일에만 저장하고, 화면에는 다시 보이지 않습니다.`,
+    rows: provider.rows,
+    rowCtx: { url: provider.url, onOpen, onCopy },
+    extra: h('div', null,
+      h('div.setup-fields', null, h('label', null, h('span', { text: 'API 키' }), input)),
+      h('small', { text: `키는 채팅에 붙이지 마세요. 확인을 누르면 ${provider.title}를 만든 회사에만 키가 맞는지 물어봅니다.` }),
+      keyStatus && !ok ? h('p.setup-gate', null, ...richNodes(keyStatus)) : null,
+      ok ? h('p.setup-gate.ok', null, ...richNodes('**완료.** 키가 확인되었습니다. 다음으로 갈 수 있습니다.')) : null,
+      provider.stuck?.length ? h('details.setup-fold', null,
+        h('summary', { text: '막히면' }),
+        h('ul', null, provider.stuck.map((d) => h('li', null, ...richNodes(d))))) : null),
+    nav: h('div.setup-bar', null,
+      h('button.ghost', { type: 'button', text: '이전', onclick: onBack }),
+      h('span.spacer'),
+      ok
+        ? h('button.primary', { type: 'button', text: '다음', onclick: onNext })
+        : h('button.primary', { type: 'button', text: '확인', onclick: () => onCheck(apiDraft) })),
+  });
+}
+
+export function readSlot(id) {
+  return (slotValues.get(id) || '').trim();
+}
+
+export function renderSetup(root, state) {
+  redraw = () => renderSetup(root, state);
+  const {
+    phase, agent, picked, cursor, choices, link, keyStatus, done, connectAgent, connected,
+    onAgent, onToggle, onContinue, onChoose, onCopy, onList, onPrev, onBack, onSkip, onNext, onStart, onDone,
+    onCheckKey, onKeyNext, onOpen, login,
+    name, detected, current, repos, brain, coder,
+    onName, onPickBrain, onSkipBrain, onOpenExtra, onAddRepo, onPickFolder, onRemoveRepo, onFinishExtras, onTour, onClose,
+  } = state;
+
+  if (phase === 'name') {
+    root.replaceChildren(nameView({ name, onName }));
+    return;
+  }
+  nameDraft = null;
+  if (phase === 'brain') {
+    root.replaceChildren(brainPickView({ detected, connected, current, onPick: onPickBrain, onSkip: onSkipBrain, onBack }));
+    return;
+  }
+  if (phase === 'ai-key') {
+    const provider = providerById(link);
+    if (!provider) {
+      root.replaceChildren(brainPickView({ detected, connected, current, onPick: onPickBrain, onSkip: onSkipBrain, onBack }));
+      return;
+    }
+    root.replaceChildren(aiKeyView({
+      provider, say: SISA_SAY.brain, keyStatus, onOpen, onCopy, onCheck: onCheckKey, onNext: onKeyNext, onBack,
+    }));
+    return;
+  }
+  if (phase === 'extras') {
+    root.replaceChildren(extrasView({ done, repos, coder, onOpen: onOpenExtra, onAddRepo, onPickFolder, onRemoveRepo, onFinish: onFinishExtras, onBack }));
+    return;
+  }
+  if (phase === 'done') {
+    root.replaceChildren(doneView({ brain, done, repos, name, onTour, onClose, onBack }));
+    return;
+  }
+
+  if (phase === 'agent') {
+    root.replaceChildren(agentView({ agent, onAgent, onContinue }));
+    return;
+  }
+  if (phase === 'pick') {
+    root.replaceChildren(pickView({ picked, agent, onToggle, onStart, onDone }));
+    return;
+  }
+
+  const steps = phase === 'agentWalk'
+    ? agentSteps(agent)
+    : phase === 'connect'
+      ? ((link === 'claude' || link === 'codex') ? agentSteps(link) : connectSteps(link, connectAgent))
+      : buildWalk(picked, choices, agent);
+  const step = steps[cursor];
+  if (!step) {
+    root.replaceChildren(screen({
+      title: '안내가 없습니다',
+      identity: '목록에서 기능을 고르세요.',
+      nav: h('div.setup-bar', null, h('button.primary', { type: 'button', text: '목록', onclick: onList })),
+    }));
+    return;
+  }
+  const last = cursor >= steps.length - 1;
+  root.replaceChildren(oneView(step, {
+    phase,
+    cursor,
+    total: steps.length,
+    agent,
+    onChoose,
+    onCopy,
+    onOpen,
+    onList,
+    onPrev,
+    onBack,
+    onSkip,
+    login,
+    onNext,
+    nextLabel: phase === 'agentWalk' ? (last ? '기능 고르기' : '다음') : phase === 'connect' ? (last ? '완료' : '다음') : (last ? '개요로' : '다음'),
+  }));
+  if (focusSlot) {
+    const el = root.querySelector(`[data-slot="${focusSlot}"]`);
+    if (el) {
+      el.focus();
+      const at = caret ?? el.value.length;
+      el.setSelectionRange(at, at);
+    }
+    focusSlot = null;
+  }
+}

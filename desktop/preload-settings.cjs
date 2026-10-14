@@ -1,0 +1,18 @@
+// 설정 창 프리로드 — 샌드박스라 CommonJS. 설정 읽기·저장, 행동 지침, 연결 상태 보기·다시 확인, 패널의 설치 안내·모델 탭 열기만 노출.
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('cy', {
+  getSettings: () => ipcRenderer.invoke('settings-get'), // → { ok, data: GET /settings }
+  // patch = { models?: { quick|general|code|light: id }, briefing?: { exclude: [...] } } → { ok, status, data }
+  saveSettings: (patch) => ipcRenderer.invoke('settings-put', patch && typeof patch === 'object' ? JSON.parse(JSON.stringify(patch)) : null),
+  getConnections: () => ipcRenderer.invoke('connections-get'),
+  checkConnection: (id) => ipcRenderer.invoke('connections-check', id == null ? null : String(id)), // id: net|claude|services|gh|local, 없으면 전부
+  // 행동 지침: 목록 · 추가 { text, scope? } · 고치기(id, { text?, scope?, active? }) · 지우기(id) → { ok, status, data }
+  getGuidelines: () => ipcRenderer.invoke('guidelines-get'),
+  addGuideline: (g) => ipcRenderer.invoke('guidelines-add', g && typeof g === 'object' ? JSON.parse(JSON.stringify(g)) : null),
+  editGuideline: (id, patch) => ipcRenderer.invoke('guidelines-edit', String(id), patch && typeof patch === 'object' ? JSON.parse(JSON.stringify(patch)) : null),
+  deleteGuideline: (id) => ipcRenderer.invoke('guidelines-delete', String(id)),
+  getCaps: () => ipcRenderer.invoke('settings-caps'), // { claude, codex } — 이 컴퓨터에 Claude Code·Codex 가 있나
+  openPanel: (section) => ipcRenderer.send('settings-open-panel', String(section)), // 'setup'(설치 안내) | 'models'(AI 고르기)
+  startTour: () => ipcRenderer.send('settings-tour'), // 사용법 다시 보기(캐릭터 말풍선)
+});

@@ -1,0 +1,230 @@
+// 모델 탭: 연결된 AI마다 쓸 수 있는 모델 목록을 보여 주고, 단순 채팅·코딩 작업에 쓸 모델을 고른다.
+// 말투(AI 연결 시)와 정해진 말(연결 안 됐을 때)도 여기서 고친다. 키는 이 화면에 오지 않는다.
+
+import { CANNED, CANNED_CATALOG, CANNED_DEFAULTS } from '../src/canned.js';
+
+export const PROVIDER_TITLE = {
+  gemini: 'Gemini',
+  claude: 'Claude (API 키)',
+  openai: 'GPT',
+  claudecode: 'Claude Code',
+  codexcli: 'Codex',
+};
+
+const DEFAULT_OPTION = { id: 'default', label: '기본값' };
+
+export function optionsFor(provider, list, current) {
+  const base = list?.status === 'ok' ? list.models : [];
+  const rows = [DEFAULT_OPTION, ...base.filter((m) => m.id !== 'default')];
+  if (current && current !== 'default' && !rows.some((m) => m.id === current)) rows.push({ id: current, label: '지금 쓰는 값' });
+  return rows;
+}
+
+export function codeOptions(lists, connected, current) {
+  const rows = [{ id: 'default', label: '기본값' }];
+  const seen = new Set(['default']);
+  for (const p of ['claudecode', 'claude']) {
+    if (!connected.includes(p)) continue;
+    for (const m of lists[p]?.status === 'ok' ? lists[p].models : []) {
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      rows.push(m);
+    }
+  }
+  if (current && !seen.has(current)) rows.push({ id: current, label: '지금 쓰는 값' });
+  return rows;
+}
+
+function sameLines(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+export function cannedOverrideOf(draft, stored) {
+  const out = {};
+  for (const g of CANNED_CATALOG) {
+    const lines = (draft?.[g.key] ?? stored?.[g.key] ?? CANNED_DEFAULTS[g.key])
+      .map((s) => String(s ?? '').replace(/\r\n/g, '\n').trim())
+      .filter(Boolean);
+    if (lines.length && !sameLines(lines, CANNED_DEFAULTS[g.key])) out[g.key] = lines;
+  }
+  return out;
+}
+
+export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
+  const lists = {};
+  let note = '';
+  let busy = false;
+  let personaDraft = null;
+  let cannedDraft = null;
+
+  function linesOf(key) {
+    if (cannedDraft?.[key]) return cannedDraft[key];
+    const own = getSisa().canned?.[key];
+    return Array.isArray(own) && own.length ? own : [...CANNED_DEFAULTS[key]];
+  }
+
+  function setLine(key, i, value) {
+    if (!cannedDraft) cannedDraft = {};
+    cannedDraft[key] = [...linesOf(key)];
+    cannedDraft[key][i] = value;
+  }
+
+  async function loadList(provider, force) {
+    if (!force && lists[provider]?.status === 'ok') return;
+    lists[provider] = { status: 'loading', models: [] };
+    render();
+    let r;
+    try { r = await cy.sisaModels(provider); } catch { r = { ok: false }; }
+    lists[provider] = r?.ok ? { status: 'ok', models: r.models || [] } : { status: 'error', models: [], error: r?.error || '목록을 못 가져왔어요.' };
+    render();
+  }
+
+  async function save(pick) {
+    if (busy) return;
+    busy = true;
+    note = '';
+    let r;
+    try { r = await cy.sisaSetModels(pick); } catch { r = { ok: false }; }
+    busy = false;
+    if (r?.ok) {
+      onSisa(r);
+      // 대화 AI·코딩 모델은 시사가 다시 켜질 때 읽는다
+      note = 'code' in pick || r.brainSaved ? '저장함. 시사를 다시 켜면 대화·브리핑에도 적용돼요' : '저장함';
+    } else {
+      note = r?.error || '저장하지 못했어요.';
+    }
+    render();
+  }
+
+  async function saveVoice(patch) {
+    if (busy) return;
+    busy = true;
+    note = '';
+    let r;
+    try { r = await cy.sisaSetVoice(patch); } catch { r = { ok: false }; }
+    busy = false;
+    if (r?.ok) {
+      onSisa(r);
+      if ('persona' in patch) personaDraft = null;
+      if ('canned' in patch) cannedDraft = null;
+      note = '저장함';
+    } else {
+      note = r?.error || '저장하지 못했어요.';
+    }
+    render();
+  }
+
+  function select(rows, value, onchange, disabled) {
+    return h('select', { onchange: (e) => onchange(e.target.value), disabled: !!disabled },
+      rows.map((m) => h('option', { value: m.id, selected: m.id === value, text: m.label ? `${m.id} · ${m.label}` : m.id })));
+  }
+
+  function chatCard(sisa) {
+    const connected = sisa.connected;
+    const active = sisa.provider && sisa.provider !== 'none' && connected.includes(sisa.provider) ? sisa.provider : 'none';
+    const providerRows = [{ id: 'none', label: '안 씀' }, ...connected.map((p) => ({ id: p, label: '' }))];
+    const model = sisa.chatModels?.[active] || 'default';
+    return h('div.card.models-card', null,
+      h('h2', { text: '단순 채팅' }),
+      h('label.model-row', null, h('span', { text: 'AI' }),
+        h('select', {
+          onchange: (e) => {
+            const p = e.target.value;
+            if (p === 'none') save({ chat: 'none' });
+            else { loadList(p); save({ chat: { provider: p, model: sisa.chatModels?.[p] || 'default' } }); }
+          },
+        }, providerRows.map((r) => h('option', { value: r.id, selected: r.id === active, text: r.id === 'none' ? r.label : PROVIDER_TITLE[r.id] })))),
+      active === 'none' ? null : h('label.model-row', null, h('span', { text: '모델' }),
+        select(optionsFor(active, lists[active], model), model, (m) => save({ chat: { provider: active, model: m } }), busy)));
+  }
+
+  function codeCard(sisa) {
+    const canCode = sisa.connected.some((p) => p === 'claudecode' || p === 'claude');
+    const current = sisa.codeModel || 'default';
+    return h('div.card.models-card', null,
+      h('h2', { text: '코딩 작업' }),
+      canCode
+        ? h('label.model-row', null, h('span', { text: '모델' }),
+          select(codeOptions(lists, sisa.connected, current), current, (m) => save({ code: m }), busy))
+        : h('p.muted', { text: 'Claude를 연결하면 고를 수 있습니다' }),
+      sisa.connected.includes('codexcli') ? h('p.muted.small', { text: '코딩은 Claude만 씁니다' }) : null);
+  }
+
+  function listCard(p) {
+    const l = lists[p];
+    return h('div.card.models-card', null,
+      h('div.row', null,
+        h('span.t', { text: PROVIDER_TITLE[p] }),
+        h('span.chip.ok', { text: '연결됨' }),
+        h('span.spacer'),
+        h('button.ghost.small', { type: 'button', text: '새로고침', onclick: () => loadList(p, true) })),
+      !l || l.status === 'loading'
+        ? h('p.muted.small', { text: '목록을 가져오는 중…' })
+        : l.status === 'error'
+          ? h('p.muted.small', { text: `목록을 못 가져왔어요. ${l.error}` })
+          : h('ul.model-list', null, l.models.map((m) => h('li', null, h('code', { text: m.id }), m.label ? h('span.muted.small', { text: ` ${m.label}` }) : null))));
+  }
+
+  // 말투: 대화는 전부 시사(데몬)가 답한다 — 말투·답 모양은 설정 창의 「행동 지침」에 적는다
+  function voiceCard() {
+    return h('div.card.models-card', null,
+      h('h2', { text: '말투' }),
+      h('p.muted.small', null,
+        h('span', { text: '시사의 말투·답 모양은 설정 창의 「행동 지침」에 적어요(예: 답은 짧게, 반말로). ' }),
+        cy.openSettings ? h('button.ghost.small', { type: 'button', text: '설정 열기', onclick: () => cy.openSettings() }) : null));
+  }
+
+  function cannedCard() {
+    const groups = CANNED.map((btn) => {
+      const variants = CANNED_CATALOG.filter((g) => g.button === btn.id);
+      return h('details.voice-group', { open: btn.id === 'today' },
+        h('summary', { text: btn.label }),
+        variants.map((g) => h('div.voice-variant', null,
+          g.hint ? h('div.voice-hint', { text: g.hint }) : null,
+          linesOf(g.key).map((line, i) => {
+            const area = h('textarea.voice-line', {
+              rows: '3', maxlength: '400', 'aria-label': `${btn.label} ${g.hint || ''} ${i + 1}`.trim(),
+              oninput: (e) => setLine(g.key, i, e.target.value),
+            });
+            area.value = line;
+            return area;
+          }))));
+    });
+    return h('div.card.models-card', null,
+      h('h2', { text: '정해진 말' }),
+      ...groups,
+      h('div.voice-acts', null,
+        h('button.ghost', { type: 'button', text: '기본값', disabled: busy, onclick: () => { cannedDraft = Object.fromEntries(CANNED_CATALOG.map((g) => [g.key, [...g.lines]])); render(); } }),
+        h('button.primary', { type: 'button', text: '저장', disabled: busy, onclick: () => saveVoice({ canned: cannedOverrideOf(cannedDraft, getSisa().canned) }) })));
+  }
+
+  function render() {
+    const sisa = getSisa();
+    const connected = sisa.connected || [];
+    const kids = [];
+    if (!connected.length) {
+      kids.push(h('div.card.empty', null,
+        h('p', { text: '연결된 AI 없음' }),
+        h('button.primary', { type: 'button', text: '설치 열기', onclick: gotoSetup })));
+    } else {
+      kids.push(chatCard(sisa), codeCard(sisa));
+    }
+    kids.push(voiceCard(), cannedCard());
+    if (note) kids.push(h('p.muted.small.models-note', { role: 'status', text: note }));
+    if (connected.length) {
+      kids.push(h('h2', { text: '모델 목록' }), ...connected.map(listCard));
+    }
+    section.replaceChildren(...kids.filter(Boolean));
+  }
+
+  return {
+    show() {
+      note = '';
+      personaDraft = null;
+      cannedDraft = null;
+      for (const p of getSisa().connected || []) loadList(p, false);
+      render();
+    },
+    update: render,
+  };
+}

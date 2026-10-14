@@ -1,0 +1,807 @@
+// 렌더러 — 말풍선 그리기, 캐릭터 상태, 클릭 투과 토글, 드래그, 호버 채팅.
+import { BubbleQueue, normalizeBubble, assetUrl, sequence, stickerTtl, clickTarget, cleanMergeQuestion, linkLabel, looksMarkdown, bubbleMd, isListBubble, keepClasses, BUBBLE_PURIFY, isWaitingApproval, approvalButtons, tourButtons } from '../src/bubbles.js';
+import { noBrainBubble } from '../src/brain-state.js';
+import { bubbleAfterAction } from '../src/actions.js';
+import { runningCaption } from '../src/agents.js';
+import DOMPurify from './vendor/purify.js';
+import { Marked } from './vendor/marked.js';
+import { createMarkdown } from '../src/markdown.js';
+import { initialChat, chatReducer, isBusy, summarizeReply, stopTargets, busyCaption } from '../src/chat.js';
+import { createAttachTray } from './attach-tray.js';
+import { hasFiles, filesFromTransfer, ATTACH_ERRORS } from '../src/attachments.js';
+import { CHAR_DIR, STILL_SRCS, VIDEOS, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf } from '../src/character.js';
+
+const cy = window.cy;
+const stack = document.getElementById('stack');
+const wrap = document.getElementById('char-wrap');
+const img = document.getElementById('char');
+
+const closedImg = document.getElementById('char-closed');
+
+// ---- 캐릭터 그림: 눈 뜬 그림(cy-asset://app/character/, ~/.cy-agent/assets) → 예전 character.png → 번들 png → svg ----
+// 눈 감은 그림까지 있으면 깜빡임을 켠다. 두 장 다 미리 디코드해 두고 보이기만 바꿔서 깜빡임(로딩) 없음.
+const probe = (url) => new Promise((ok) => {
+  const im = new Image();
+  im.onload = () => (im.decode ? im.decode().then(() => ok(true), () => ok(true)) : ok(true));
+  im.onerror = () => ok(false);
+  im.src = url;
+});
+let stillIdx = 0;
+img.addEventListener('error', () => { if (++stillIdx < STILL_SRCS.length) img.src = STILL_SRCS[stillIdx]; });
+let haveEyes = false;
+async function loadStill() {
+  const scales = window.devicePixelRatio > 1 ? ['@2x', ''] : [''];
+  for (const sc of scales) {
+    const open = `${CHAR_DIR}/eyes_open${sc}.png`, closed = `${CHAR_DIR}/eyes_closed${sc}.png`;
+    if (!(await probe(open))) continue;
+    const both = await probe(closed);
+    haveEyes = true;
+    stillIdx = 0;
+    img.src = open;
+    if (both) { closedImg.src = closed; wrap.classList.add('blink-ready'); }
+    return true;
+  }
+  if (!img.getAttribute('src')) { stillIdx = 1; img.src = STILL_SRCS[1]; }
+  return false;
+}
+// 그림이 나중에 생길 수도 있다(설치 전에 켜 둔 경우) — 눈 그림을 찾을 때까지 1분마다 다시 본다
+loadStill().then((ok) => {
+  if (ok) return;
+  const t = setInterval(() => loadStill().then((o) => { if (o) clearInterval(t); }), 60e3);
+});
+
+// ---- 깜빡임: 2.5–7초 랜덤 간격, 120–180ms, 가끔 두 번. 동작 줄이기면 드물게·한 번만 ----
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let blinkTimer = null;
+function scheduleBlink() {
+  clearTimeout(blinkTimer);
+  blinkTimer = setTimeout(doBlink, nextBlinkDelay(Math.random, reducedMotion.matches));
+}
+async function doBlink() {
+  if (wrap.classList.contains('blink-ready') && shownView === 'idle' && !document.hidden) {
+    for (const st of blinkPlan(Math.random, reducedMotion.matches)) {
+      wrap.classList.toggle('blink', st.closed);
+      if (st.ms) await sleep(st.ms);
+    }
+  }
+  wrap.classList.remove('blink');
+  scheduleBlink();
+}
+scheduleBlink();
+
+// ---- 활동: 데몬이 스스로 세션을 돌리면 공부 영상, 회의 10분 전엔 춤 영상(우선순위 춤 > 공부 > 정지) ----
+const videos = { studying: document.getElementById('vid-studying'), dancing: document.getElementById('vid-dancing') };
+let act = initialActivity();
+let shownView = 'idle';
+let danceCap = null;
+for (const [k, v] of Object.entries(videos)) {
+  v.muted = true;
+  v.poster = VIDEOS[k].poster;
+  // 첫 장면이 실제로 나올 때 바꿔 끼운다(그 전엔 정지 그림 그대로)
+  v.addEventListener('playing', () => { if (shownView === k) showVideo(k); });
+  v.addEventListener('error', () => {
+    v.dataset.failed = '1';
+    if (shownView === k) showVideo(null); // 영상이 없으면 정지 그림(+기분 애니메이션)으로
+  });
+}
+function showVideo(k) {
+  for (const [name, v] of Object.entries(videos)) {
+    const on = name === k;
+    v.classList.toggle('on', on);
+    if (!on && !v.paused) v.pause();
+  }
+  wrap.classList.toggle('video-on', !!k);
+}
+function startVideo(k) {
+  const v = videos[k];
+  if (!v.getAttribute('src') || v.dataset.failed) { delete v.dataset.failed; v.src = VIDEOS[k].src; }
+  try { v.currentTime = 0; } catch { /* 아직 메타데이터 전 */ }
+  const p = v.play();
+  if (p) p.catch(() => {});
+}
+function applyActivity() {
+  const view = viewOf(act);
+  if (view === shownView) return;
+  shownView = view;
+  wrap.dataset.view = view;
+  wrap.classList.remove('blink');
+  clearTimeout(danceCap);
+  if (view === 'idle') return showVideo(null);
+  if (view === 'dancing') danceCap = setTimeout(() => dispatchActivity({ type: 'danceEnd' }), DANCE_MAX_MS);
+  startVideo(view);
+}
+function dispatchActivity(a) {
+  act = activityReducer(act, a);
+  applyActivity();
+}
+wrap.dataset.view = 'idle';
+
+// ---- 말풍선 ----
+// 한 항목 = (그림 말풍선) + 글 말풍선. 그림이 먼저 뜨고 글은 SEQUENCE_GAP 뒤에.
+const queue = new BubbleQueue();
+const els = new Map(); // id → .item
+const timers = new Map(); // id → timeout
+const current = (id) => queue.items.find((x) => x.id === id);
+
+function schedule(b) {
+  clearTimeout(timers.get(b.id));
+  timers.delete(b.id);
+  if (!b.ttlMs) return;
+  timers.set(b.id, setTimeout(() => {
+    const el = els.get(b.id);
+    // 마우스 올려두거나 추가질문 입력 중이면 조금 더 둔다
+    if (el && (el.matches(':hover') || el.querySelector('.merge-ask:not([hidden])'))) return schedule({ ...b, ttlMs: 3000 });
+    dismiss(b.id);
+  }, b.ttlMs));
+}
+
+function dismiss(id) {
+  clearTimeout(timers.get(id));
+  timers.delete(id);
+  if (queue.remove(id)) render();
+}
+
+function buildEl(b) {
+  const item = document.createElement('div');
+  item.className = 'item';
+  item.dataset.id = b.id;
+  const bubble = document.createElement('div');
+  const text = document.createElement('span');
+  text.className = 'text';
+  const detail = document.createElement('div');
+  detail.className = 'detail';
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const askRow = buildMergeAsk(b.id);
+  bubble.append(text, detail, meta, askRow);
+  bubble.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href]');
+    if (a) { e.preventDefault(); e.stopPropagation(); cy.openLink(a.getAttribute('href')); return; } // 메인이 스킴을 다시 확인
+    if (e.target.closest('button, input')) return;
+    const now = current(b.id) ?? b;
+    const t = clickTarget(now);
+    if (t.type === 'open') cy.openItem(t.section, t.id ?? null);
+    if (!isWaitingApproval(now)) dismiss(b.id); // 승인 말풍선은 결정될 때까지 남긴다
+  });
+  item.append(bubble);
+  // 그림 → 글 순서: 처음 뜰 때만
+  const steps = sequence(b);
+  if (steps.length === 2) {
+    item.classList.add('text-pending');
+    setTimeout(() => { item.classList.remove('text-pending'); requestAnimationFrame(recheckHit); }, steps[1].delay);
+  }
+  fillEl(item, b);
+  return item;
+}
+
+function setSticker(item, b) {
+  let st = item.querySelector('.sticker');
+  if (!b.image) {
+    st?.remove();
+    item._image = null;
+    return;
+  }
+  if (item._image === b.image && st) return;
+  if (!st) {
+    st = document.createElement('img');
+    st.className = 'sticker hit';
+    st.alt = '';
+    st.draggable = false;
+    st.addEventListener('error', () => {
+      st.remove(); // 그림이 없으면(설치 전) 글만
+      if (!current(item.dataset.id)?.text) dismiss(item.dataset.id);
+      requestAnimationFrame(recheckHit);
+    });
+    st.addEventListener('click', () => dismiss(item.dataset.id));
+    st.addEventListener('load', () => requestAnimationFrame(recheckHit));
+    item.prepend(st);
+  } else {
+    st.classList.remove('pop');
+    void st.offsetWidth; // 애니메이션 다시
+    st.classList.add('pop');
+  }
+  item._image = b.image;
+  item.classList.remove('sticker-gone');
+  st.src = assetUrl(b.image);
+  clearTimeout(item._stickerTimer);
+  item._stickerTimer = setTimeout(() => { item.classList.add('sticker-gone'); requestAnimationFrame(recheckHit); }, stickerTtl(b));
+}
+
+function fillEl(item, b) {
+  item._b = b;
+  setSticker(item, b);
+  const bubble = item.querySelector('.bubble') ?? item.lastElementChild;
+  bubble.className = `bubble hit kind-${b.kind}`;
+  bubble.classList.toggle('no-text', !b.text);
+  bubble.classList.toggle('has-detail', !!b.detail);
+  bubble.classList.toggle('clickable', !!b.open);
+  const wide = isListBubble(b);
+  bubble.classList.toggle('wide', wide);
+  setRich(bubble.querySelector('.text'), b.text);
+  setRich(bubble.querySelector('.detail'), b.detail ?? '');
+  const meta = bubble.querySelector('.meta');
+  meta.replaceChildren();
+  meta.classList.remove('tour-bar');
+
+  if (isWaitingApproval(b)) {
+    // 확인 카드(회의 응답 등)·도구 승인(패널 채팅·캐릭터 대화·할 일·Slack 어디서 났든): 누르기 전엔 아무것도 보내지 않는다.
+    // 허용해야 실행되고, 거부하면 모델이 다른 방법을 찾는다. 여러 개면 하나씩 + "+N개 더"
+    // 머지 승인(채팅에서 시킨 PR·수정 작업 PR): ✓ 머지 / ✗ 안 함 / 추가질문 — 패널 채팅의 머지 카드와 같은 결정
+    for (const d of approvalButtons(b)) {
+      const act = b.actions === 'merge' ? () => (d.decision === 'ask' ? openMergeAsk(b.id) : mergeDecide(b.id, d.decision)) : () => actionDecide(b.id, d.decision);
+      const btn = button(d.label, d.primary ? 'primary' : '', act);
+      btn.title = d.title;
+      btn.disabled = !!b.pending || !!d.disabled;
+      meta.append(btn);
+    }
+    const more = queue.waitingMore(b.id);
+    if (more) {
+      const m = document.createElement('span');
+      m.className = 'note muted more-waiting';
+      m.textContent = `+${more}개 더 기다려요`;
+      meta.append(m);
+    }
+  } else if (b.tour) {
+    // 사용법 둘러보기: [다음]/[끝] · [그만 볼래요] — 다음 장면은 main 이 같은 id 로 보낸다
+    meta.classList.add('tour-bar');
+    for (const t of tourButtons(b)) {
+      meta.append(button(t.label, t.primary ? 'primary' : '', () => {
+        cy.tour?.(t.cmd);
+        if (t.cmd === 'stop' || b.tour.step >= b.tour.total) dismiss(b.id);
+      }));
+    }
+  } else if (b.kind === 'proposal' && b.proposalId && !b.decided) {
+    const ok = button('승인', 'primary', () => decide(b, 'approve'));
+    const hold = button('보류', '', () => decide(b, 'hold'));
+    meta.append(ok, hold);
+    if (b.pending) { ok.disabled = true; hold.disabled = true; }
+  }
+  if (b.note) {
+    const n = document.createElement('span');
+    n.className = b.thinking ? 'note muted' : 'note';
+    n.textContent = b.note;
+    meta.append(n);
+  }
+  if (b.link) meta.append(button(linkLabel(b.link), 'link', () => cy.openLink(b.link)));
+  if (b.open) meta.append(button(b.openLabel ?? '패널에서 보기', 'link', () => { cy.openItem(b.open.section, b.open.id ?? null); if (!isWaitingApproval(current(b.id) ?? b)) dismiss(b.id); }));
+  else if (b.panelSection) meta.append(button('패널에서 보기', 'link', () => { cy.openPanel(b.panelSection); dismiss(b.id); }));
+  // 추가질문 입력줄은 머지 말풍선에서만
+  if (!(b.actions === 'merge' && !b.decided)) closeMergeAsk(b.id, false);
+  // 넓은 목록 말풍선이 10줄을 넘으면 흐리게 자르고, 열 곳이 없으면 "패널에서 보기"(개요)
+  if (wide) requestAnimationFrame(() => {
+    const d = bubble.querySelector('.detail');
+    const over = d.scrollHeight > d.clientHeight + 2;
+    bubble.classList.toggle('overflow', over);
+    if (over && !b.open && !b.panelSection && !meta.querySelector('.more')) {
+      const more = button('패널에서 보기', 'link more', () => { cy.openPanel('overview'); dismiss(b.id); });
+      meta.append(more);
+      recheckHit();
+    }
+  });
+}
+
+// ---- 말풍선 글: 마크다운(목록·표·굵게·코드·색·형광펜)이면 안전하게 그리고, 아니면 글자 그대로 ----
+const toHtml = createMarkdown(Marked);
+function setRich(el, src) {
+  if (!looksMarkdown(src)) {
+    el.classList.remove('md');
+    el.textContent = src ?? '';
+    return;
+  }
+  el.classList.add('md');
+  el.innerHTML = DOMPurify.sanitize(toHtml(bubbleMd(src)), BUBBLE_PURIFY);
+  for (const x of el.querySelectorAll('[class]')) {
+    const c = keepClasses(x.getAttribute('class'));
+    if (c) x.setAttribute('class', c); else x.removeAttribute('class');
+  }
+}
+
+function button(label, cls, onClick) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = label;
+  if (cls) btn.className = cls;
+  btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+  return btn;
+}
+
+async function decide(b, action) {
+  queue.update(b.id, { pending: true, note: null });
+  render();
+  let r;
+  try {
+    r = await cy.decide(b.proposalId, action);
+  } catch {
+    r = { ok: false };
+  }
+  if (r?.ok) {
+    const it = queue.update(b.id, {
+      pending: false,
+      decided: true,
+      kind: action === 'approve' ? 'done' : 'info',
+      text: action === 'approve' ? '승인했어요. 진행할게요.' : '보류해둘게요.',
+      ttlMs: 4000,
+    });
+    if (it) schedule(it);
+  } else {
+    queue.update(b.id, { pending: false, note: '전송 실패 — 다시 눌러주세요' });
+  }
+  render();
+}
+
+// ---- 머지 승인: ✓/✗ 는 데몬이 같은 id 로 결과 말풍선(머지하는 중… → 머지했어 🎉)을 보낸다 ----
+async function mergeDecide(id, action) {
+  const b = current(id);
+  if (!b?.proposalId) return;
+  closeMergeAsk(id, true);
+  queue.update(id, { pending: true, note: null });
+  render();
+  let r;
+  try { r = await cy.mergeDecide(b.proposalId, action); } catch { r = { ok: false }; }
+  const now = current(id);
+  if (now && now.actions === 'merge' && now.pending) { // 데몬 말풍선이 아직 안 왔으면 로컬로 마무리
+    if (r?.ok) {
+      queue.update(id, { pending: false, decided: true, kind: action === 'merge' ? 'done' : 'info', text: action === 'merge' ? '머지했어요 🎉 (스이시~사)' : '알겠어요, 머지는 안 할게요. PR은 열어 둘게요', ttlMs: 6000, ...(action === 'merge' ? { image: 'merge_complete' } : {}) });
+      schedule(current(id));
+    } else if (r?.status === 409 || r?.status === 404) {
+      queue.update(id, { pending: false, decided: true, kind: 'info', text: r?.data?.error || '이미 처리됐어요', ttlMs: 6000 });
+      schedule(current(id));
+    } else {
+      queue.update(id, { pending: false, note: '전송 실패 — 다시 눌러 주세요' });
+    }
+  }
+  render();
+}
+
+// ---- 확인 카드: ✓ 실행 / ✗ 취소. 데몬이 같은 id 로 결과 말풍선(보내는 중… → ✅/⚠️)을 보낸다 ----
+async function actionDecide(id, decision) {
+  const b = current(id);
+  if (!b?.actionId || b.pending) return;
+  const perm = b.actions === 'permission';
+  queue.update(id, { pending: true, note: perm ? (decision === 'cancel' ? '거부하는 중…' : '허용하는 중…') : decision === 'confirm' ? '보내는 중…' : null, thinking: true });
+  render();
+  let r;
+  try { r = await cy.actionDecide(b.actionId, decision); } catch { r = { ok: false }; }
+  const now = current(id);
+  if (now && (now.actions === 'action' || now.actions === 'permission') && now.pending) { // 데몬 말풍선이 아직 안 왔으면 로컬로 마무리
+    const st = r?.data?.action?.status;
+    if (r?.ok || r?.status === 409 || r?.status === 404) {
+      const msg = r?.data?.action?.result?.message;
+      const text = st === 'done' ? `✅ ${msg || (perm ? '허용했어요' : '보냈어요')}` : st === 'failed' ? `⚠️ ${msg || '실패했어요'}` : st === 'cancelled' ? (perm ? '✗ 거부했어요 — 실행하지 않았어요' : '✗ 취소했어요 — 보내지 않았어요') : st === 'expired' ? '⌛ 만료됐어요' : (r?.data?.error || '이미 처리됐어요');
+      queue.update(id, { pending: false, decided: true, thinking: false, note: null, kind: st === 'done' ? 'done' : st === 'failed' ? 'error' : 'info', text, detail: undefined, ttlMs: 8000 });
+      schedule(current(id));
+    } else {
+      queue.update(id, { pending: false, thinking: false, note: '전송 실패 — 다시 눌러 주세요' });
+    }
+  }
+  render();
+}
+
+function buildMergeAsk(id) {
+  const row = document.createElement('div');
+  row.className = 'merge-ask';
+  row.hidden = true;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.placeholder = '질문';
+  input.setAttribute('aria-label', '머지 전에 물어보기');
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); input.value = ''; return closeMergeAsk(id, true); }
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    const q = cleanMergeQuestion(input.value);
+    if (!q) return;
+    input.value = '';
+    sendMergeAsk(id, q);
+  });
+  input.addEventListener('blur', () => { if (mergeAskFocused === id && !input.value) closeMergeAsk(id, true); });
+  row.append(input);
+  return row;
+}
+
+let mergeAskFocused = null; // 입력 중인 머지 말풍선 id
+async function openMergeAsk(id) {
+  const item = els.get(id);
+  const row = item?.querySelector('.merge-ask');
+  if (!row) return;
+  hideAsk();
+  row.hidden = false;
+  requestAnimationFrame(recheckHit);
+  const ok = await cy.chatFocus(true).catch(() => false);
+  if (row.hidden) return;
+  row.querySelector('input').focus();
+  mergeAskFocused = ok ? id : null;
+}
+
+function closeMergeAsk(id, releaseFocus) {
+  const row = els.get(id)?.querySelector('.merge-ask');
+  if (!row || row.hidden) return;
+  row.hidden = true;
+  row.querySelector('input').blur();
+  if (mergeAskFocused === id) {
+    mergeAskFocused = null;
+    if (releaseFocus) cy.chatFocus(false).catch(() => {});
+  }
+  requestAnimationFrame(recheckHit);
+}
+
+async function sendMergeAsk(id, q) {
+  const b = current(id);
+  if (!b?.proposalId) return;
+  closeMergeAsk(id, true);
+  queue.update(id, { pending: true, thinking: true, note: '생각 중…' });
+  render();
+  let r;
+  try { r = await cy.mergeAsk(b.proposalId, q); } catch { r = { ok: false }; }
+  const now = current(id);
+  if (!now) return;
+  if (r?.ok && typeof r.data?.reply === 'string') {
+    // 데몬도 같은 id 로 답 말풍선을 보낸다(✓/✗ 유지). 먼저 온 쪽으로 채운다
+    queue.update(id, { pending: false, thinking: false, note: null, text: r.data.reply });
+  } else {
+    queue.update(id, { pending: false, thinking: false, note: r?.data?.error || '못 물어봤어요 — 다시 해 주세요' });
+  }
+  render();
+}
+
+function render() {
+  const vis = queue.visible();
+  const ids = new Set(vis.map((b) => b.id));
+
+  // 빠진 것 페이드아웃 후 제거
+  for (const [id, el] of els) {
+    if (ids.has(id)) continue;
+    els.delete(id);
+    clearTimeout(el._stickerTimer);
+    if (mergeAskFocused === id) { mergeAskFocused = null; cy.chatFocus(false).catch(() => {}); }
+    el.classList.add('leaving');
+    el.addEventListener('transitionend', () => el.remove(), { once: true });
+    setTimeout(() => el.remove(), 500);
+  }
+
+  vis.forEach((b, i) => {
+    let el = els.get(b.id);
+    if (!el) {
+      el = buildEl(b);
+      els.set(b.id, el);
+    } else {
+      fillEl(el, b);
+    }
+    const age = vis.length - 1 - i; // 0 = 최신(머리 쪽)
+    el.classList.remove('newest', 'age-1', 'age-2');
+    el.classList.add(age === 0 ? 'newest' : `age-${Math.min(age, 2)}`);
+    stack.append(el); // 순서 맞추기(이미 있으면 이동)
+  });
+  requestAnimationFrame(recheckHit);
+}
+
+cy.onBubble((raw) => showBubble(raw));
+function showBubble(raw) {
+  const b = normalizeBubble(raw);
+  if (!b) return;
+  queue.add(b);
+  // 큐에서 밀려난 것들 타이머 정리
+  const alive = new Set(queue.items.map((x) => x.id));
+  for (const id of timers.keys()) if (!alive.has(id)) { clearTimeout(timers.get(id)); timers.delete(id); }
+  schedule(b);
+  render();
+}
+
+cy.onClear((p) => { if (p && typeof p.id === 'string') dismiss(p.id); });
+
+// 카드가 다른 곳(패널·팝오버·Slack)에서 결정·만료되면 캐릭터의 승인 말풍선도 결과로 — 다음 카드가 뜬다
+cy.onAction?.((p) => {
+  const u = bubbleAfterAction(p?.action);
+  const b = u && current(u.id);
+  if (!b || b.actionId !== u.actionId || b.decided) return;
+  if (u.waitingOnly && !isWaitingApproval(b)) return; // 머지 말풍선: 데몬이 벌써 결과로 바꿨으면 그대로
+  queue.update(u.id, u.patch);
+  schedule(current(u.id));
+  render();
+});
+
+// ---- 캐릭터 상태 ----
+const MOODS = ['idle', 'thinking', 'working', 'alert'];
+let daemonMood = 'idle'; // 데몬이 정한 기분 — 채팅 끝나면 여기로 돌아감
+function applyMood(m) {
+  if (!MOODS.includes(m)) m = 'idle';
+  for (const x of MOODS) wrap.classList.toggle(`mood-${x}`, x === m);
+}
+function setMood(m) {
+  daemonMood = MOODS.includes(m) ? m : 'idle';
+  if (!isBusy(chat)) applyMood(daemonMood);
+}
+cy.onState((p) => { setMood(p?.mood); dispatchActivity({ type: 'state', activity: p?.activity, runs: p?.runs, danceId: p?.danceId }); });
+
+cy.onConnection(({ connected }) => {
+  wrap.classList.toggle('sleepy', !connected);
+  dispatchActivity({ type: 'connection', connected: !!connected });
+  if (!connected) {
+    setMood('idle');
+    chat = { ...chat, pending: {} }; // 끊기면 진행 중 표시 정리
+    syncChat();
+  }
+});
+
+// ---- 채팅: 생각 중 표시 + 내 질문의 답은 말풍선 ----
+const caption = document.getElementById('caption');
+const captionText = document.getElementById('caption-text');
+const captionStop = document.getElementById('caption-stop');
+// 캡션의 ■ = 이 창에서 보낸(캐릭터 대화) 답 멈추기. 결과는 SSE chat stopped → "멈췄어요" 말풍선
+captionStop.addEventListener('click', () => {
+  const ids = stopTargets(chat).filter((id) => chat.mine.includes(id));
+  for (const id of ids) cy.chatStop?.(id).catch(() => {});
+});
+let chat = initialChat();
+let agentsRunning = 0; // 돌고 있는 서브에이전트 수(메인이 SSE agents 로 셈)
+
+function dispatchChat(action) {
+  chat = chatReducer(chat, action);
+  syncChat();
+}
+
+function syncChat() {
+  const busy = isBusy(chat);
+  applyMood(busy ? 'thinking' : daemonMood);
+  const agentsNote = runningCaption(agentsRunning); // "에이전트 N개 실행 중"(터미널에서 띄운 것도)
+  // 지금 단계(여러 대화가 동시에 답하면 「대화 N개 답하는 중」) · 기다리는 말(같은 대화 차례 + 같은 레포 잠금 — 패널을 닫아 둬도 보이게)
+  caption.hidden = !busy && !agentsNote;
+  if (busy) captionText.textContent = [busyCaption(chat), agentsNote].filter(Boolean).join(' · ');
+  else if (agentsNote) captionText.textContent = agentsNote;
+  captionStop.hidden = !busy || !cy.chatStop || !stopTargets(chat).some((id) => chat.mine.includes(id));
+  const replies = chat.replies;
+  if (replies.length) chat = chatReducer(chat, { type: 'consumed' });
+  for (const r of replies) showReply(r);
+  requestAnimationFrame(recheckHit);
+}
+
+function showReply(r) {
+  const { text, truncated } = summarizeReply(r.text);
+  const b = { id: `chat-${r.chatId}`, text: text || '(빈 답)', kind: r.error ? 'error' : 'info', ttlMs: r.stopped ? 5000 : 20000 };
+  // 호버에서 한 말은 새 대화(스레드) — "패널에서 보기"는 그 대화를 연다
+  if (r.threadId) b.open = { section: 'chat', id: r.threadId };
+  else if (truncated) b.panelSection = 'chat';
+  queue.add(b);
+  schedule(b);
+  render();
+  if (r.show) cy.openPanel(r.show);
+}
+
+cy.onChat((ev) => dispatchChat({ type: 'event', ev }));
+cy.onAgents?.((p) => { agentsRunning = Math.max(0, Number(p?.running) || 0); syncChat(); });
+
+// ids: 먼저 올려 둔 첨부 id(있으면 글 없이도)
+async function sendChat(text, ids = []) {
+  let r;
+  try {
+    r = await (ids.length ? cy.chatSend(text, ids) : cy.chatSend(text));
+  } catch {
+    r = { ok: false };
+  }
+  if (r?.ok && r.chatId) dispatchChat({ type: 'accepted', chatId: r.chatId });
+  else showReply({ chatId: `fail-${Date.now()}`, text: r?.status === 400 && r.data?.error ? `못 보냈어요: ${r.data.error}` : '시사에 연결되지 않아서 못 보냈어요.', error: true });
+}
+
+// ---- 호버 입력창: 캐릭터 위에 잠깐 머물면 뜬다 ----
+const ask = document.getElementById('ask');
+const askInput = document.getElementById('ask-input');
+const LEAVE_HIDE = 1800;
+let hoverTimer = null;
+let leaveTimer = null;
+let askOpen = false;
+let askFocused = false; // 메인이 창을 포커스 가능하게 바꾼 뒤에만 blur 로 닫는다
+let hoverArmed = true; // 닫은 뒤엔 마우스가 캐릭터를 한 번 벗어나야 다시 뜬다
+
+async function showAsk() {
+  if (askOpen) return;
+  askOpen = true;
+  ask.hidden = false;
+  requestAnimationFrame(recheckHit);
+  const ok = await cy.chatFocus(true).catch(() => false);
+  if (!askOpen) return; // 그 사이 닫힘
+  askInput.focus();
+  askFocused = !!ok;
+}
+
+function hideAsk() {
+  clearTimeout(leaveTimer);
+  leaveTimer = null;
+  if (!askOpen) return;
+  askOpen = false;
+  askFocused = false;
+  hoverArmed = false;
+  ask.hidden = true;
+  askInput.blur();
+  cy.chatFocus(false).catch(() => {});
+  requestAnimationFrame(recheckHit);
+}
+
+// 첨부: 📎 · 입력창에 끌어다 놓기(캐릭터에 놓아도 입력창이 열린다) · ⌘V(스크린샷). 붙이자마자 올리고 Enter 로 같이 보낸다
+let picking = false; // 파일 고르는 창이 떠 있는 동안은 창이 포커스를 잃어도 닫지 않는다
+const tray = createAttachTray({
+  tray: document.getElementById('ask-tray'), input: askInput, drop: ask, pick: document.getElementById('ask-attach'),
+  upload: (name, mime, bytes) => (cy.chatAttach ? cy.chatAttach(name, mime, bytes) : Promise.resolve({ ok: false })),
+  onChange: () => { ask.classList.toggle('has-att', tray.has()); requestAnimationFrame(recheckHit); },
+  onError: (msg) => showReply({ chatId: `att-${Date.now()}`, text: msg, error: true }),
+  onPick: (on) => { picking = on; if (!on) cy.chatFocus(true).catch(() => {}); },
+});
+if (!cy.chatAttach) document.getElementById('ask-attach').hidden = true;
+// 📎·✕ 를 눌러도 입력창 포커스를 잃지 않게(잃으면 입력창이 닫힌다)
+ask.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+const charWrapEl = document.getElementById('char-wrap');
+charWrapEl.addEventListener('dragover', (e) => { if (hasFiles(e.dataTransfer)) { e.preventDefault(); charWrapEl.classList.add('att-drop'); } });
+charWrapEl.addEventListener('dragleave', () => charWrapEl.classList.remove('att-drop'));
+charWrapEl.addEventListener('drop', (e) => {
+  charWrapEl.classList.remove('att-drop');
+  if (!hasFiles(e.dataTransfer)) return;
+  e.preventDefault();
+  const { files, folders } = filesFromTransfer(e.dataTransfer);
+  if (brain.ready === false) return noBrain();
+  if (folders) showReply({ chatId: `att-${Date.now()}`, text: ATTACH_ERRORS.folder, error: true });
+  showAsk();
+  tray.addFiles(files);
+});
+
+let askSending = false;
+askInput.addEventListener('keydown', async (e) => {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    askInput.value = '';
+    tray.clear();
+    return hideAsk();
+  }
+  // 한글 조합 중 Enter 는 글자 확정용 — 보내지 않는다
+  if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+  e.preventDefault();
+  const text = askInput.value.trim();
+  if ((!text && !tray.has()) || askSending) return;
+  let ids = [];
+  if (tray.has()) {
+    askSending = true;
+    try {
+      const st = await tray.ready(); // 올리는 중인 건 끝날 때까지
+      if (st.failed) { showReply({ chatId: `att-${Date.now()}`, text: '못 올린 첨부가 있어요 — ✕ 로 빼고 다시 보내 주세요', error: true }); return; }
+      ids = st.ids;
+      tray.take();
+    } finally { askSending = false; }
+  }
+  askInput.value = '';
+  hideAsk();
+  sendChat(text, ids);
+});
+askInput.addEventListener('blur', () => { if (askFocused && !picking) hideAsk(); });
+window.addEventListener('blur', () => { if (askFocused && !picking) hideAsk(); if (mergeAskFocused) closeMergeAsk(mergeAskFocused, true); });
+
+// 호버 판정 — 클릭 투과 중에도 mousemove 는 넘어오니 좌표로 본다
+function updateHover(el) {
+  const onChar = !!el?.closest('#char-wrap');
+  const onAsk = !!el?.closest('#ask, #char-wrap');
+  if (el && !onChar) hoverArmed = true;
+  // 입력창은 클릭으로만 연다(호버로는 안 뜸)
+  if (!onChar && hoverTimer) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+  // 입력 안 했는데 마우스가 떠나면 잠시 뒤 닫는다
+  if (askOpen && !onAsk && !askInput.value && !tray.has() && !picking && !leaveTimer) {
+    leaveTimer = setTimeout(() => { leaveTimer = null; if (!askInput.value && !tray.has() && !picking) hideAsk(); }, LEAVE_HIDE);
+  } else if (onAsk && leaveTimer) {
+    clearTimeout(leaveTimer);
+    leaveTimer = null;
+  }
+}
+
+cy.onVisibility(({ hidden }) => {
+  stack.classList.toggle('hidden', !!hidden);
+  requestAnimationFrame(recheckHit);
+});
+
+// ---- 클릭 투과: 캐릭터/말풍선 위에서만 마우스 받기 ----
+let interactive = false;
+let last = null; // 마지막 마우스 좌표
+let down = null; // 캐릭터 mousedown 위치
+let dragging = false;
+
+function setInteractive(v) {
+  if (v === interactive) return;
+  interactive = v;
+  cy.setInteractive(v);
+}
+
+function recheckHit() {
+  if (dragging || down) return;
+  if (!last) {
+    updateHover(null);
+    return setInteractive(false);
+  }
+  const el = document.elementFromPoint(last.x, last.y);
+  updateHover(el);
+  setInteractive(!!el?.closest('.hit'));
+}
+
+// 눌린 상태로 알았는데 실제로는 버튼이 안 눌려 있으면(메뉴가 mouseup 을 삼킨 경우) 드래그를 풀어 준다
+function resetPress() {
+  if (dragging) cy.dragEnd();
+  down = null;
+  dragging = false;
+}
+
+document.addEventListener('mousemove', (e) => {
+  last = { x: e.clientX, y: e.clientY };
+  if (down && (e.buttons & 1) === 0) resetPress();
+  if (down && !dragging && Math.hypot(e.screenX - down.x, e.screenY - down.y) > 4) {
+    dragging = true;
+    cy.dragStart();
+  }
+  recheckHit();
+});
+document.addEventListener('mouseleave', (e) => {
+  // 포커스가 바뀔 때도 mouseleave 가 오니, 진짜로 캐릭터 밖에서 나간 경우만 호버 재무장
+  if (!wrap.contains(document.elementFromPoint(e.clientX, e.clientY))) hoverArmed = true;
+  last = null;
+  recheckHit();
+});
+
+// ---- 드래그 / 클릭: 왼쪽 한 번은 패널, 두 번은 말 걸기, 오른쪽 클릭은 메뉴 ----
+
+wrap.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || e.ctrlKey) return; // Ctrl+클릭은 macOS 에서 오른쪽 클릭(메뉴) — 드래그로 치지 않는다
+  down = { x: e.screenX, y: e.screenY };
+  clearTimeout(hoverTimer);
+  hoverTimer = null;
+  e.preventDefault();
+});
+
+// 한 번 클릭 = 패널(공부 중이면 세션 창), 더블클릭 = 말 걸기(입력창). 두 번째 클릭이 올 때까지 잠깐 기다렸다가 패널을 연다.
+// 뇌(AI)가 아직 없으면 더블클릭 = 춤 + 연결 안내 말풍선(누르면 설치 단계로)
+const DOUBLE_CLICK_MS = 280;
+let clickTimer = null;
+let brain = { ready: true }; // 모르면 막지 않는다(main 이 GET /status 로 알려 준다)
+cy.brain?.().then((v) => { if (v) brain = v; }).catch(() => {});
+cy.onBrain?.((v) => { if (v) brain = v; if (brain.ready === false && askOpen) hideAsk(); });
+
+let danceOff = null;
+function noBrain() {
+  dispatchActivity({ type: 'localDance', on: true });
+  clearTimeout(danceOff);
+  danceOff = setTimeout(() => dispatchActivity({ type: 'localDance', on: false }), 4500);
+  showBubble(noBrainBubble(brain));
+}
+function talk() {
+  if (brain.ready === false) return noBrain();
+  showAsk();
+}
+
+function onCharacterClick() {
+  if (clickTimer) {
+    clearTimeout(clickTimer);
+    clickTimer = null;
+    talk();
+    return;
+  }
+  clickTimer = setTimeout(() => {
+    clickTimer = null;
+    hideAsk();
+    cy.togglePanel();
+  }, DOUBLE_CLICK_MS);
+}
+
+window.addEventListener('mouseup', (e) => {
+  if (!down) return;
+  const wasDrag = dragging;
+  down = null;
+  dragging = false;
+  if (wasDrag) cy.dragEnd();
+  else if (e.button === 0 && e.target.closest('#char-wrap')) onCharacterClick();
+  recheckHit();
+});
+
+window.addEventListener('blur', resetPress);
+
+wrap.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  resetPress(); // 메뉴가 떠 있는 동안 mouseup 이 안 오므로 누름 상태를 미리 푼다
+  cy.characterMenu();
+});

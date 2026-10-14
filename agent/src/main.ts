@@ -1,0 +1,382 @@
+// 데몬 엔트리포인트: 버스 + Slack + 주기 작업(세션·Slack 수집, 프로필 학습, 브리핑)
+import { installFileLog } from "./log.ts";
+import { loadConfig } from "./config.ts";
+import { Store } from "./store.ts";
+import { Bus } from "./bus.ts";
+import { runs } from "./runs.ts";
+import { modelChoices } from "./models.ts";
+import { Agent } from "./core.ts";
+import { suggestTitle } from "./chat.ts";
+import { briefingDue } from "./briefing-sources.ts";
+import { loadCommands, SlashCommands } from "./commands.ts";
+import { createSlack } from "./slack/app.ts";
+import { TodoCanvas, openDm } from "./slack/canvas.ts";
+import { SlackIngester } from "./ingest/slack.ts";
+import { learnFrom } from "./profile.ts";
+import { runAfterSlackIngest } from "./todo-auto.ts";
+import { checkProgress } from "./todo-progress.ts";
+import { McpHealth, connectorServerUrls, healthNote } from "./mcp-health.ts";
+import { Reactions, realMergeAsk } from "./reactions.ts";
+import { HOME_DIR } from "./config.ts";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { CalendarSync, alertDetail } from "./calendar-sync.ts";
+import { withRun, asRoutine } from "./runs.ts";
+import { KgBackfill } from "./kg/backfill.ts";
+import { refineIncremental } from "./kg/refine.ts";
+import { connectorStatus, connectorsChanged, resolveConnectors } from "./connectors.ts";
+import { phrase, phraseVoice } from "./phrases.ts";
+import { probeGh } from "./gh.ts";
+import { CliSync } from "./cli-sync.ts";
+import { AgentsNotifier, AGENT_LIMITS, agentsForThread, sessionsForThread, threadWorktrees } from "./thread-agents.ts";
+import { worktreeRecords } from "./agent-worktrees.ts";
+import { Settings } from "./settings.ts";
+import { CHECK_IDS, Connections, lastRunOf, type CheckId } from "./connections.ts";
+import { statusOf } from "./status.ts";
+import { featureBrain, NEEDS_CLAUDE_MCP, NEEDS_CODER, withMcpBrain } from "./feature-brain.ts";
+import { mergePr } from "./fixer.ts";
+import { askBtw } from "./btw.ts";
+
+installFileLog();
+const cfg = loadConfig();
+// 커넥터(connectors.ts): 기능별 데이터 원천. 연결 안 된 기능은 조용히 빠진다
+const conns = cfg.connectors;
+for (const c of connectorStatus(conns)) console.log(`[connectors] ${c.label}: ${c.mode}${c.ready ? "" : " (준비 안 됨)"} · ${c.detail}`);
+console.log(`[brain] ${cfg.brain.provider}`);
+{ // 뒤에서 하는 정리(끝난 할 일 판정·진행 확인·지식그래프·프로필 학습)를 누가 돌리나 — 시작할 때 한 줄
+  const fb = featureBrain(cfg);
+  console.log(`[features] 뒤에서 하는 정리: ${fb === "codex" ? "Codex" : fb === "claude-code" ? "Claude Code" : `안 돎 — ${NEEDS_CODER}`}${cfg.brain.provider !== "claude-code" ? ` · ${NEEDS_CLAUDE_MCP}` : ""}`);
+}
+// 읽기 전용 GitHub 도구: 설정이 안 정했으면 gh 로그인 여부로(비동기 — 시작을 막지 않는다)
+if (cfg.github?.enabled === undefined) probeGh({ bin: cfg.github?.bin }).then((ok) => console.log(`[cy-agent] GitHub(gh) 읽기 도구 ${ok ? "켬" : "끔 — gh auth status 실패"}`));
+const store = new Store(cfg.dbPath);
+runs.attach(store.db); // 작업 세션 기록(세션 창)을 cy.db 에
+const bus = new Bus();
+bus.activity.bindRuns(runs); // 돌고 있는 run(대화 제외) → 캐릭터 "공부 중"
+// 회의 10분 전 알림: 오늘·내일 일정(커넥터 calendar: ICS·MCP, 읽기 전용) — 30분마다·깨어날 때 다시 가져온다
+const calendar = new CalendarSync(cfg, store, { wrapRun: (fn) => withRun({ kind: "calendar", title: "캘린더 동기화", model: cfg.models.light }, fn) });
+calendar.onChange = () => bus.dashboardChanged();
+// 터미널 Claude Code 에서 이어 간 대화 불러오기(세션 창 ↻·"Claude Code에서 열기" 뒤 지켜보기). 시작할 땐 아무것도 안 한다
+const cliSync = new CliSync({ runs, db: store.db, store, onThread: (id) => bus.threads({ thread: store.thread(id) }), log: (m) => console.log(m) });
+// 대화 속 서브에이전트·작업 세션 카드: 바뀌면 ≈1초 모아 SSE agents {threadId} → 패널이 다시 가져온다
+new AgentsNotifier(runs, (threadId) => bus.agents(threadId));
+let agent!: Agent;
+const slack = createSlack(cfg, () => agent);
+// 채팅 슬래시 명령 목록: 처음 물을 때 SDK 에서(모델 턴 없이), 10분마다 새로
+const commands = new SlashCommands(() => loadCommands());
+agent = new Agent(cfg, store, bus, slack?.port, { retitle: suggestTitle, commands, mergePr,
+  autoMergeOp: (op, slug) => settings.autoMergeOp(op, slug) }); // 새 대화 제목: 가벼운 모델(답 뒤에 따로) · 자동 머지 레포는 설정 창과 같은 config.json 에
+// 캐릭터 반응(그림 말풍선·진행 보고·머지 승인). 하루 한 번 규칙은 reactions.json 에 남는다
+const reactions = new Reactions(bus, { logPath: join(HOME_DIR, "reactions.json"), lotsThreshold: Number(process.env.CY_LOTS_THRESHOLD) || 8 });
+agent.setReactions(reactions, realMergeAsk(cfg));
+
+const safe = (name: string, fn: () => unknown) => async () => {
+  try { await fn(); } catch (e: any) { console.error(`[cy-agent] ${name} 실패:`, e?.data?.error ?? e?.message ?? e); }
+};
+// 이전 데몬이 답하다 꺼진 턴(배포·재시작)을 닫는다 — 물음만 덩그러니 남지 않게
+safe("close-dangling", () => { const k = agent.closeDanglingTurns(); if (k) console.log(`[chat] 끊긴 대화 ${k}개 닫음`); })();
+
+function askMorningPlan() {
+  const s = agent.dailyPlan().askMorning();
+  if (!s) return;
+  bus.bubble({
+    id: `today:${s.date}`,
+    text: "오늘 할 일을 적어 주세요~ 표에 적으면 돼요 (스이시~사)",
+    kind: "todo",
+    ttlMs: 60e3,
+    open: { section: "today" },
+  });
+  bus.dashboardChanged();
+  bus.openPanel("today");
+}
+bus.onOverlay = () => askMorningPlan();
+
+// 설정 창: 모델·브리핑 출처(바로 반영 + config.json) · 연결 상태(읽기만). KG 상태는 아래에서 kgBackfill 이 생긴 뒤에 붙는다
+// 뇌·이름·레포 폴더를 바꾸면 바로 반영되고(재시작 불필요) 데스크톱에 SSE status 로 알린다
+const settings = new Settings(cfg, { onChange: (keys) => { if (keys.some((k) => k === "brain" || k === "user")) pushStatus(); } });
+let kgStatus: (() => { phase: string; reason?: string; step?: string }) | undefined;
+const connections = new Connections(cfg, { lastRun: lastRunOf((o) => runs.listRuns(o)), kg: () => kgStatus?.() });
+// GET /status: 뇌가 claude-code 인데 로그인 확인 전이면 한 번 확인을 걸고(비동기) 끝나면 SSE status 로 알린다
+const status = () => statusOf(cfg, { claude: () => connections.claudeLoggedIn() });
+let claudeProbe: Promise<void> | undefined;
+const probeClaude = () => (claudeProbe ??= connections.check("claude").then(() => pushStatus()));
+function pushStatus() {
+  if (cfg.brain.provider === "claude-code" && connections.claudeLoggedIn() === undefined) void probeClaude();
+  bus.statusChanged(status());
+}
+
+await bus.listen(cfg.port, {
+  approve: (id) => agent.approve(id),
+  hold: (id) => agent.hold(id),
+  briefing: () => agent.runBriefing(),
+  refresh: () => refreshAll(),
+  dashboard: async () => ({
+    ...(await agent.dashboard()),
+    meetings: calendar.enabled ? calendar.upcoming().map(({ webLink: _w, ...m }) => m) : [],
+    connectors: withMcpBrain(cfg, connectorStatus(conns)), // MCP 연결은 Claude Code 뇌일 때만 읽는다
+  }),
+  todoDone: (id) => agent.todoDone(id),
+  todoAdd: (t) => agent.addTodo(t),
+  todoEdit: (id, patch) => agent.editTodo(id, patch),
+  todoDelete: (id) => agent.deleteTodo(id),
+  todoRestore: (id) => agent.restoreTodo(id),
+  todoPurge: (id) => agent.purgeTodo(id),
+  todoTrashEmpty: () => agent.emptyTrash(),
+  todoRevert: (id) => agent.revertAutoTodo(id),
+  todoDetail: (id) => agent.todoDetail(id),
+  todoLastAsk: (id) => agent.lastAsk(id),
+  todoReorder: (id, priority, beforeId) => agent.reorderTodo(id, priority, beforeId),
+  projectHide: (id) => agent.hideProject(id),
+  projectUnhide: (id) => agent.unhideProject(id),
+  todoAsk: (id, text) => agent.askTodo(id, text),
+  todoApply: (id, ops, rev, rule) => agent.applyAsk(id, ops, rev, rule),
+  todoReject: (id, text, ops, rule) => agent.rejectAsk(id, text, ops, rule),
+  todoRules: () => agent.todoRules(),
+  todoLedger: (day) => agent.todoLedger(day),
+  todoRuleEdit: (id, patch) => agent.editRule(id, patch),
+  todoRuleDelete: (id) => agent.deleteRule(id),
+  chat: (text, opts) => agent.chat(text, opts ?? {}),
+  chatStop: (chatId) => agent.chatStop(chatId),
+  chatNow: (chatId) => agent.chatNow(chatId),
+  chatEdit: (threadId, n, text, o) => agent.chatEdit(threadId, n, text, o),
+  chatEditQueued: (chatId, text) => agent.chatEditQueued(chatId, text),
+  chatQueue: () => agent.chatQueue(),
+  chatThreads: {
+    list: (o) => agent.threads(o),
+    create: (t) => agent.createThread(t),
+    edit: (id, patch) => agent.editThread(id, patch),
+    remove: (id) => agent.deleteThread(id),
+    messages: (id, o) => agent.threadMessages(id, o),
+  },
+  todoExists: (id) => !!agent.getTodo(id),
+  chatHistory: () => agent.chatHistory(50),
+  attachments: {
+    stage: (name, mime, bytes) => agent.stageAttachment(name, mime, bytes),
+    file: (threadId, file) => agent.attachmentPath(threadId, file),
+    open: (p) => { execFile("/usr/bin/open", [p], () => {}); }, // 기본 앱으로(경로는 bus 가 첨부 폴더 안인지 확인한 것)
+    claimRun: (runId, ids) => (runs.getRun(runId, Number.MAX_SAFE_INTEGER) ? agent.claimRunAttachments(runId, ids) : { error: "no such run" }),
+  },
+  todaySave: (items) => {
+    const r = agent.dailyPlan().save(items);
+    if (r.ok) bus.dashboardChanged();
+    return r;
+  },
+  profileFacts: () => agent.memories(),
+  profileRemember: (text, category) => agent.remember(text, category),
+  profileForget: (idOrText) => agent.forgetMemory(idOrText),
+  mergeDecide: (id, decision) => agent.mergeDecide(id, decision),
+  mergeAsk: (id, text) => agent.mergeAsk(id, text),
+  runs,
+  runContinue: (id, text, model) => agent.continueRun(id, text, model),
+  runBtw: (id, text, model, att) => askBtw({ runs, cfg }, id, text, model, att), // /btw 곁질문 — run 에 끼어들지 않음
+  runSync: (id, o) => (o.watch ? cliSync.watch(id) : cliSync.sync(id)),
+  threadSync: (id) => cliSync.syncThread(id),
+  runImport: (sid) => cliSync.importSession(sid),
+  threadAgents: (id) => (store.thread(id) ? agentsForThread(runs, id, (t) => agent.bgAgents.get(t)) : undefined),
+  agentStop: (toolUseId) => agent.bgAgents.stop(toolUseId),
+  threadSessions: (id) => (store.thread(id) ? sessionsForThread(runs, id, (pid) => store.proposal(pid)?.created) : undefined),
+  threadWorktrees: (id) => (store.thread(id) ? threadWorktrees({
+    fixRuns: runs.runsInThread(id, AGENT_LIMITS.runs).filter((r) => r.kind === "fix"),
+    bg: agent.bgAgents.list(id), subs: worktreeRecords.forThread(id),
+    tokensOf: (runId, parent) => runs.tokensOf(runId, parent), askedAt: (pid) => store.proposal(pid)?.created,
+  }) : undefined),
+  models: () => ({ choices: modelChoices(cfg), defaults: { fix: cfg.models.code, chat: cfg.models.general } }),
+  commands: () => commands.list(),
+  repos: () => agent.repos(),
+  newTask: (repo, text) => agent.newTask(repo, text),
+  actions: {
+    list: (o) => agent.listActions(o),
+    get: (id) => agent.getAction(id),
+    confirm: (id, o) => agent.confirmAction(id, o ?? {}),
+    cancel: (id) => agent.cancelAction(id),
+  },
+  permissions: {
+    list: () => agent.listPermissions(),
+    remove: (id) => agent.deletePermission(id),
+  },
+  settings: { get: () => settings.view(), put: (body) => settings.put(body) },
+  guidelines: agent.guidelinesApi(),
+  connections: { ids: CHECK_IDS, list: () => connections.list(), recheck: async (id) => { const r = await connections.recheck(id as CheckId | undefined); bus.statusChanged(status()); return r; } },
+  status: () => {
+    if (connections.claudeLoggedIn() === undefined) void probeClaude(); // 코드 기능(Claude Code)도 이걸로 가른다
+    return status();
+  },
+  // 커넥터는 시작 때 한 번 정한다(캘린더 동기화·Slack 수집·가드가 붙잡고 있다). 마법사가 바꾸면 다시 켜서 반영:
+  // launchd(install.sh, KeepAlive) 아래면 스스로 끄고 launchd 가 다시 켠다. 손으로 띄운 데몬은 바뀜만 알린다
+  connectorsReload: () => {
+    const changed = connectorsChanged(cfg.connectors, resolveConnectors());
+    const restarting = changed && process.env.CY_AGENT_SUPERVISED === "1";
+    if (changed) console.log(`[connectors] config.json 의 연결이 바뀜 — ${restarting ? "다시 시작해요" : "데몬을 다시 켜야 반영돼요"}`);
+    if (restarting) setTimeout(() => process.kill(process.pid, "SIGTERM"), 500);
+    return { changed, restarting };
+  },
+});
+console.log(`[cy-agent] 버스 http://127.0.0.1:${cfg.port}`);
+
+// ── 할 일 캔버스: 데이터가 바뀔 때마다(디바운스·해시로 실제 호출은 변경 시에만)
+const canvas = new TodoCanvas(store, { userId: cfg.slackUserId });
+let dm: Promise<string> | undefined;
+const syncCanvas = () => {
+  if (!slack) return;
+  dm ??= openDm(slack.app.client, cfg.slackUserId!).catch((e) => { dm = undefined; throw e; });
+  dm.then((ch) => canvas.sync(slack.app.client, ch)).catch((e) => console.warn("[canvas]", e?.data?.error ?? e?.message ?? e));
+};
+agent.onChange(syncCanvas);
+
+if (slack) {
+  await slack.app.start();
+  console.log("[cy-agent] Slack Socket Mode 연결");
+  syncCanvas();
+} else {
+  console.log("[cy-agent] Slack 토큰 없음 — 말풍선만 사용 (~/.cy-agent/config.json 참고)");
+}
+
+// ── 주기 작업
+const ingest = safe("ingest", () => { const n = agent.ingest(); if (n) console.log(`[cy-agent] 세션 ${n}개 반영`); });
+
+// 커넥터 MCP 서버(주소가 있는 http 서버만) 도달 상태 — 끊기면 말풍선으로 알리고, 다시 붙으면 바로 훑어본다
+const health = new McpHealth({ urls: () => connectorServerUrls(cfg.connectors) });
+
+// 이벤트 루프 멈춤 감시: 동기 작업이 2초 넘게 데몬을 붙잡으면(패널이 '연결 안 됨'으로 보임) 로그로 남긴다
+let tickAt = Date.now();
+setInterval(() => {
+  const lag = Date.now() - tickAt - 1000;
+  if (lag > 2000) console.warn(`[stall] 데몬이 ${(lag / 1000).toFixed(1)}초 멈췄어요`);
+  tickAt = Date.now();
+}, 1000).unref();
+const brief = asRoutine(safe("briefing", async () => {
+  const h = await health.check().catch(() => health.last);
+  if (h.state !== "ok") console.log("[briefing] 일부 MCP 서버에 연결이 안 돼요 —", healthNote(h)); // 쓸 수 있는 출처로만 브리핑한다
+  await agent.runBriefing();
+})); // 정기 작업(세션 창 "정기 작업" 묶음). 패널 "지금 브리핑"(bus briefing)은 사용자 작업
+// 재시작·재연결 때: 마지막 브리핑이 briefingIntervalMin 안이면 건너뛴다(재시작마다 브리핑 → 같은 할 일이 되살아나던 것)
+const briefIfDue = (why: string) => {
+  if (briefingDue(store.latestBriefing(), cfg.briefingIntervalMin)) return brief();
+  console.log(`[briefing] ${why} — 마지막 브리핑이 ${cfg.briefingIntervalMin}분 안이라 건너뜀`);
+};
+
+// Slack 수집: 커넥터 slack 이 api(사용자 토큰 Web API)일 때만. 이전 사이클이 돌고 있으면 run()이 바로 빠진다
+const slackIngester = new SlackIngester(cfg, store);
+const slackTick = asRoutine(safe("slack-ingest", async () => {
+  if (!slackIngester.transport) return; // slack 연결 안 됨(off·mcp) — 브리핑·채팅이 MCP로 실시간 조회
+  // 진행 보고: 20초 안에 끝나는 평소 사이클은 조용히, 오래 걸리면 시작·결과만
+  const prog = reactions.progress("slack-ingest", "슬랙 훑어보는 중이에요…", { quietMs: 20e3 });
+  const c = await slackIngester.run().catch((e) => { prog.fail("슬랙 훑다가 막혔어요"); throw e; });
+  prog.done(c.messages ? `슬랙 다 봤어요 — 메시지 ${c.messages}개` : undefined);
+  console.log("[slack-ingest]", JSON.stringify(c)); // 건수·비용만
+  await safe("todo-auto", () => runAfterSlackIngest(agent, cfg, store))(); // 끝난 할 일 자동 완료(모델은 15분에 한 번)
+  await safe("slack-todos", () => agent.slackTodosNow())(); // 새 DM·멘션은 바로 할 일로(정기 브리핑을 기다리지 않는다)
+}));
+
+// ↻ 새로고침(패널): 슬랙을 지금 다시 훑고 → 새 DM·멘션을 할 일로 → 브리핑(메일·일정·Jira 등)도 간격 상관없이 지금.
+// 새 할 일은 「할 일 추가했어요」 말풍선(reactions.newTodos)으로 뜬다. 동시에 눌러도 한 번만
+let refreshing: Promise<void> | undefined;
+const refreshAll = () => (refreshing ??= (async () => {
+  bus.bubble({ id: "refresh", text: "슬랙·메일 새로 읽는 중이에요…", kind: "info", ttlMs: 60e3 });
+  const before = new Set(store.openTodos().map((t) => t.id));
+  await slackTick();
+  await agent.runBriefing();
+  if (!store.openTodos().some((t) => !before.has(t.id))) bus.bubble({ id: "refresh", text: "새로 들어온 할 일은 없어요", kind: "info", ttlMs: 6e3 });
+})().finally(() => { refreshing = undefined; }));
+
+// 프로필 학습: 동시에 두 번 돌지 않게. 새 근거가 없으면 모델을 부르지 않는다
+let learning: Promise<unknown> | undefined;
+const learn = (rounds = 1) => asRoutine(safe("profile", async () => {
+  if (learning) return;
+  const prog = reactions.progress("profile", "새로 알게 된 것 정리하는 중이에요…", { quietMs: 15e3 });
+  learning = (async () => {
+    let added = 0;
+    for (let i = 0; i < rounds; i++) {
+      const r = (await learnFrom(cfg, store)) as any;
+      added += Number(r.added) || 0;
+      if (!r.evidence) break;
+    }
+    prog.done(added ? `새로 알게 된 게 ${added}개 있어요` : undefined);
+  })().catch((e) => { prog.done(); throw e; }).finally(() => { learning = undefined; });
+  await learning;
+}));
+
+// 할 일 진행 확인: 작업 세션·작업 run 을 읽고 끝난 일은 자동 완료(되돌릴 수 있음), 하는 중인 일엔 어디까지 됐는지 한 줄.
+// 새 세션·run 이 없으면 모델을 안 부른다. 시작 3분 뒤 한 번, 그다음 progressCheckMin 마다(0 이면 끔)
+const progressTick = asRoutine(safe("todo-progress", async () => {
+  agent.ingest(); // 방금 끝난 세션까지
+  await checkProgress(cfg, store, agent);
+}));
+if ((cfg.progressCheckMin ?? 5) > 0) {
+  setTimeout(progressTick, 3 * 60e3).unref();
+  setInterval(progressTick, (cfg.progressCheckMin ?? 5) * 60e3).unref();
+}
+
+// 확인 카드: 30분 지난 대기는 만료(카드·Slack·말풍선이 바뀐다)
+setInterval(safe("actions-expire", () => agent.expireActions()), 60e3).unref();
+
+// 휴지통에 30일 넘게 있던 할 일은 영구 삭제(시작할 때 + 하루 한 번)
+const purgeTrash = safe("trash", () => { const n = agent.purgeOldTrash(); if (n) console.log(`[cy-agent] 휴지통 오래된 할 일 ${n}개 영구 삭제`); });
+await purgeTrash();
+setInterval(purgeTrash, 24 * 60 * 60e3).unref();
+
+await ingest();
+bus.bubble({ text: phraseVoice("hello", {}, `hello:${new Date().toISOString().slice(0, 10)}`, { mood: "excited" }), kind: "info", ttlMs: 8e3 });
+setInterval(ingest, cfg.ingestIntervalMin * 60e3);
+await health.check().catch(() => {}); // 첫 Slack 수집 전에 연결 상태부터
+slackTick();
+setInterval(slackTick, cfg.slackIngestIntervalMin * 60e3);
+learn(5)(); // 시작 시 밀린 근거 조금 따라잡기
+setInterval(learn(), 60 * 60e3);
+
+// 지식그래프: 매시간 새 청크만 haiku 추출 → 영향받은 엔티티만 sonnet 다듬기(Slack 원문은 정기 수집이 채운다)
+const kgBackfill = new KgBackfill(cfg, store);
+kgStatus = () => kgBackfill.status();
+let kgBusy = false;
+const kgHourly = asRoutine(safe("kg-hourly", async () => {
+  if (kgBusy) return;
+  kgBusy = true;
+  try {
+    await withRun({ kind: "kg", title: "지식그래프 갱신" }, async () => {
+      const inc = await kgBackfill.incremental({ budgetUsd: 1 });
+      const ref = await refineIncremental(cfg, store, { budgetUsd: 0.5 });
+      console.log("[kg-hourly]", JSON.stringify({ chunks: inc.chunks, extractUsd: inc.costUsd, refineUsd: ref.costUsd, stopped: ref.stopped }));
+    });
+  } finally { kgBusy = false; }
+}));
+setInterval(kgHourly, 60 * 60e3);
+
+// 연결 상태가 바뀔 때만 한 번씩 알린다. 다시 연결되면 바로 훑어본다
+let mcpState = "ok";
+const healthTick = asRoutine(safe("mcp-health", async () => {
+  const h = await health.check();
+  const g = h.state;
+  if (g === mcpState) return;
+  const prev = mcpState;
+  mcpState = g;
+  console.log("[mcp-health]", JSON.stringify(h.servers));
+  if (g !== "ok") {
+    bus.bubble({ id: "mcp-health", text: healthNote(h) ?? "MCP 서버에 연결이 안 돼요. 잠시 뒤에 다시 볼게요", kind: "error", ttlMs: 30e3 });
+  } else if (prev !== "ok") {
+    bus.bubble({ id: "mcp-health", text: phrase("mcp_back"), kind: "info", ttlMs: 10e3 });
+    slackTick();
+    briefIfDue("다시 연결됨");
+  }
+}));
+healthTick();
+setInterval(healthTick, 2 * 60e3);
+// 평일 업무시간(9~19시 KST)에만 정기 브리핑
+setInterval(() => {
+  const h = Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul", hour: "numeric", hour12: false }));
+  const d = new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul", weekday: "short" });
+  if (h >= 9 && h < 19 && !["Sat", "Sun"].includes(d)) brief();
+}, cfg.briefingIntervalMin * 60e3);
+setTimeout(() => briefIfDue("시작"), 5e3);
+// 회의 10분 전: 춤 + 말풍선(회의실·온라인 여부, 링크 버튼은 회의 링크, 없으면 캘린더 일정). 회의당 한 번(DB에 남김)
+const stopCalendar = asRoutine(calendar.schedule.bind(calendar))((m, text) => {
+  bus.activity.startDance(8000);
+  const detail = alertDetail(m);
+  bus.bubble({ id: `meeting:${m.id}@${m.start}`, text, kind: "todo", ttlMs: Math.max(60e3, Date.parse(m.start) - Date.now()), link: m.link ?? m.webLink, ...(detail ? { detail } : {}) });
+}, (r) => console.log("[calendar]", JSON.stringify({ meetings: r.meetings, events: r.events, calls: r.calls, errors: r.errors, costUsd: r.costUsd })));
+
+for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, async () => {
+  stopCalendar();
+  await canvas.flush().catch(() => {});
+  bus.close();
+  process.exit(0);
+});
