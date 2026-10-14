@@ -778,8 +778,9 @@ async function quickChip(id) {
   const a = chipAction(id);
   if (!a) return;
   if (a.type === 'open') { cy.openItem(a.section, a.id); dismiss(QUICK_ID); return; }
-  let r;
-  try { r = await cy.localAsk(a.id); } catch { r = { ok: false }; }
+  const ask = async () => { try { return await cy.localAsk(a.id); } catch (e) { return { ok: false, error: e?.message }; } };
+  let r = await ask();
+  if (!r?.ok) { await new Promise((ok) => setTimeout(ok, 800)); r = await ask(); } // 데몬이 잠깐 바빴으면 한 번 더
   showBubble(answerBubble(a.id, r));
   const chips = current(QUICK_ID);
   if (chips) schedule(chips); // 칩은 답을 본 뒤에도 잠깐 더 남긴다

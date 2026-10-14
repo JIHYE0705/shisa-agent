@@ -1196,7 +1196,12 @@ function setupIPC() {
     return { hidden };
   });
   // AI 없이 고르는 질문 칩(quick-ask.js) → 데몬이 정해진 말로 답한다
-  ipcMain.handle('local-ask', (e, id) => (e.sender === win?.webContents && isAskId(id) ? post('/local/ask', { id }) : denied()));
+  ipcMain.handle('local-ask', async (e, id) => {
+    if (e.sender !== win?.webContents || !isAskId(id)) { console.warn('[local-ask] 거절:', e.sender === win?.webContents ? `모르는 id ${id}` : '캐릭터 창이 아님'); return denied(); }
+    const r = await post('/local/ask', { id });
+    if (!r.ok) console.warn('[local-ask] 실패:', id, r.status ?? '', r.error ?? r.data?.error ?? ''); // 칩 답이 「못 가져왔어요」 일 때 까닭
+    return r;
+  });
   // 사용법 둘러보기: 캐릭터 말풍선 [다음]/[그만] · 패널(설치 끝 화면) · 설정 창
   ipcMain.on('tour', (e, cmd) => {
     if (e.sender !== win?.webContents) return;
