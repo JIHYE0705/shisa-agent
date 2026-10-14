@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { phraseLines } from "./phrases.ts";
 import { autoMergeList } from "./auto-merge.ts";
 import { todayReminderOf, type TodayReminder } from "./daily-plan.ts";
+import { isNewStyle, onboardedOf, readSessionsOf } from "./onboarding.ts";
 
 export const HOME_DIR = process.env.CY_AGENT_HOME ?? join(homedir(), ".cy-agent");
 
@@ -41,8 +42,15 @@ export type Config = {
   kgModel: string;
   // 대화 에이전트의 로컬 도구(Bash·Edit/Write·파일 읽기)를 승인 카드 없이 허용(permissions.ts 2-1). 하드 차단은 그대로. 기본 켜짐
   localAutoAllow: boolean;
-  // 자동 수정이 허용된 레포 루트들. 이 밖의 경로는 제안하지도 실행하지도 않는다.
+  // 자동 수정이 허용된 레포 루트들. 이 밖의 경로는 제안하지도 실행하지도 않는다. 대시보드의 git 커밋도 이 폴더에서만 읽는다.
+  // 새 설치(onboarding.ts)는 비어 있음: 사용자가 마법사·설정에서 고른 폴더만
   repoRoots: string[];
+  // 설치 마법사를 마쳤나(onboarding.ts). false 면 모델 작업·작업 기록·git 읽기를 하지 않는다. 예전 설정(키 없음)은 true
+  onboarded?: boolean;
+  // 이 맥의 Claude Code·Codex 작업 기록(claudeProjectsDir·codexSessionsDir)을 읽나. 새 설치는 끔(마법사·설정에서 켠다)
+  readSessions?: boolean;
+  // 커넥터 밖에서 채팅이 더 써도 되는 MCP 서버 이름(~/.claude.json 에 등록한 것, 예: notion). 없으면 커넥터 서버·gh·cy 만(guard.ts)
+  allowMcp?: string[];
   // 내 커밋을 알아보고(대시보드), 자동 수정 커밋에 쓰는 작성자. 기본: CY_AGENT_GIT_NAME/EMAIL > config.gitAuthor > `git config --global user.*`
   gitAuthor: { name: string; email: string };
   // 지식그래프에서 "나"로 볼 이름들(실명·영문명·Slack 표시명 등). 기본 비어 있음
@@ -84,7 +92,8 @@ function safeLabel(raw: string): string {
 
 export function pickBrain(env: NodeJS.ProcessEnv, file: Record<string, unknown>): BrainConfig {
   const rawBrain = (file.brain ?? {}) as { provider?: unknown; geminiApiKey?: unknown; openaiApiKey?: unknown; anthropicApiKey?: unknown };
-  const providerRaw = nonempty(env.CY_AGENT_BRAIN) ?? nonempty(rawBrain.provider) ?? "claude-code";
+  // 새 설치(onboarded 키가 있음)는 마법사에서 고르기 전까지 "아직 안 고름" = local(모델 없음). 예전 설정은 claude-code
+  const providerRaw = nonempty(env.CY_AGENT_BRAIN) ?? nonempty(rawBrain.provider) ?? (isNewStyle(file) ? "local" : "claude-code");
   if (!(BRAIN_PROVIDERS as readonly string[]).includes(providerRaw)) {
     throw new Error(`알 수 없는 brain.provider예요: ${safeLabel(providerRaw)}`);
   }
@@ -203,7 +212,10 @@ export function loadConfig(env = process.env, f: Partial<Config> & Record<string
     todayReminder: todayReminderOf(f.todayReminder),
     kgModel: env.CY_AGENT_KG_MODEL ?? (f.kgModel as string) ?? (env.CY_AGENT_MODEL_LIGHT ?? (f.models as any)?.light ?? "claude-haiku-5-5"),
     localAutoAllow: env.CY_AGENT_LOCAL_ASK === "1" ? false : f.localAutoAllow !== false,
-    repoRoots: (f.repoRoots as string[]) ?? [join(homedir(), "code")],
+    repoRoots: (f.repoRoots as string[]) ?? (isNewStyle(f) ? [] : [join(homedir(), "code")]),
+    onboarded: onboardedOf(f),
+    readSessions: readSessionsOf(f),
+    allowMcp: Array.isArray(f.allowMcp) ? (f.allowMcp as unknown[]).filter((x): x is string => typeof x === "string" && !!x.trim()).map((x) => x.trim()) : [],
     github: githubConfig(env, f.github ?? (f.connectors as any)?.github),
     contextMode: contextModeOf(env.CY_AGENT_CONTEXT_MODE ?? f.contextMode),
     gitAuthor: {

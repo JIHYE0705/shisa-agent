@@ -146,7 +146,7 @@ test("excludeBriefingSources: 뺀 출처는 줄을 빼고 못 박는다 · 안 �
 test("브리핑은 설정의 제외 출처를 따른다(think 가 cfg.briefing.exclude 로 과제 글을 바꾼다)", async () => {
   // brain.think 는 SDK 를 부르니, 같은 규칙을 쓰는지만 소스로 확인 + 실제 변환은 위 시험
   const src = readFileSync(new URL("./brain.ts", import.meta.url), "utf8");
-  assert.match(src, /if \(task\.startsWith\(BRIEFING_HEAD\)\) task = excludeBriefingSources\(task, cfg\.briefing\?\.exclude\)/);
+  assert.match(src, /if \(task\.startsWith\(BRIEFING_HEAD\)\) task = excludeBriefingSources\(task, briefingExcludeOf\(cfg\)\)/);
   const cfg = cfgOf({ briefing: { exclude: ["issues"] } }) as Config;
   assert.doesNotMatch(excludeBriefingSources(BRIEFING_TASK, cfg.briefing!.exclude), /나에게 할당된 열린 이슈/);
 });

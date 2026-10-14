@@ -57,6 +57,9 @@ export type SettingsView = {
   brain: { provider: BrainProvider; model: string; keys: Record<BrainKey, boolean> };
   user: { name?: string };
   repoRoots: string[];
+  // 설치 마법사를 마쳤나 · 이 맥의 Claude Code·Codex 작업 기록을 읽나(onboarding.ts)
+  onboarded: boolean;
+  readSessions: boolean;
   configPath: string;
 };
 export type BrainKey = "gemini" | "openai" | "anthropic";
@@ -70,6 +73,7 @@ export type PhraseView = { key: string; group: string; label: string; vars: stri
 export type SettingsPatch = {
   models?: Partial<Record<ModelRole, string>>; briefing?: { exclude?: string[] }; phrases?: Record<string, string[] | null>; autoMerge?: string[];
   brain?: BrainPatch; user?: { name: string | null }; repoRoots?: string[]; todayReminder?: TodayReminder;
+  onboarded?: boolean; readSessions?: boolean;
 };
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,100}$/;
 export type PutResult = { ok: true; settings: SettingsView; applied: "live"; restartNeeded: false; note?: string } | { ok: false; status: 400 | 500; error: string };
@@ -80,7 +84,7 @@ export class SettingsError extends Error {}
 export function validatePatch(body: unknown, cfg: Pick<Config, "models">): SettingsPatch {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new SettingsError("json object required");
   const b = body as Record<string, unknown>;
-  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
+  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
   const out: SettingsPatch = {};
   if (b.models !== undefined) {
     if (!b.models || typeof b.models !== "object" || Array.isArray(b.models)) throw new SettingsError("models must be an object");
@@ -114,6 +118,11 @@ export function validatePatch(body: unknown, cfg: Pick<Config, "models">): Setti
     if (u.name !== null && typeof u.name !== "string") throw new SettingsError("user.name must be text");
     const name = typeof u.name === "string" ? u.name.replace(/\s+/g, " ").trim() : "";
     out.user = { name: name || null };
+  }
+  for (const k of ["onboarded", "readSessions"] as const) {
+    if (b[k] === undefined) continue;
+    if (typeof b[k] !== "boolean") throw new SettingsError(`${k} must be true or false`);
+    out[k] = b[k] as boolean;
   }
   if (b.repoRoots !== undefined) {
     if (!Array.isArray(b.repoRoots) || b.repoRoots.some((x) => typeof x !== "string" || !x.trim() || !isAbsolute(x.trim()))) throw new SettingsError("repoRoots must list absolute folder paths");
@@ -242,6 +251,8 @@ export function mergeConfigFile(path: string, patch: SettingsPatch): void {
   }
   if (patch.repoRoots) next.repoRoots = patch.repoRoots;
   if (patch.todayReminder) next.todayReminder = patch.todayReminder;
+  if (patch.onboarded !== undefined) next.onboarded = patch.onboarded;
+  if (patch.readSessions !== undefined) next.readSessions = patch.readSessions;
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
@@ -268,6 +279,13 @@ export function excludeBriefingSources(base: string, exclude: readonly string[] 
   const last = out.reduce((k, l, i) => (/^\d+\) /.test(l) ? i : k), 0);
   out.splice(last + 1, 0, `사용자가 브리핑에서 뺀 출처: ${ex.map((s) => s.label).join(", ")} — 이 출처는 도구로 확인하지도, 답에 언급하지도 마.`);
   return out.join("\n");
+}
+
+// 브리핑에서 뺄 출처: 설정 창에서 끈 것 + 작업 기록 읽기를 껐으면 「최근 작업 세션」(onboarding.ts)
+export function briefingExcludeOf(cfg: Pick<Config, "briefing" | "readSessions">): string[] {
+  const ex = [...(cfg.briefing?.exclude ?? [])];
+  if (cfg.readSessions === false && !ex.includes("sessions")) ex.push("sessions");
+  return ex;
 }
 
 export class Settings {
@@ -300,6 +318,8 @@ export class Settings {
       },
       user: c.user?.name ? { name: c.user.name } : {},
       repoRoots: [...(c.repoRoots ?? [])],
+      onboarded: c.onboarded !== false,
+      readSessions: c.readSessions !== false,
       configPath: this.path,
     };
   }
@@ -308,6 +328,7 @@ export class Settings {
   put(body: unknown): PutResult {
     let patch: SettingsPatch;
     try { patch = validatePatch(body, this.cfg); } catch (e: any) { return { ok: false, status: 400, error: String(e?.message ?? e) }; }
+    if (patch.onboarded !== undefined) patch = this.withCurrentDefaults(patch);
     try { mergeConfigFile(this.path, patch); } catch (e: any) { return { ok: false, status: 500, error: String(e?.message ?? e) }; }
     if (patch.models) Object.assign(this.cfg.models, patch.models);
     if (patch.briefing?.exclude) this.cfg.briefing = { ...(this.cfg.briefing ?? {}), exclude: patch.briefing.exclude };
@@ -329,6 +350,8 @@ export class Settings {
     }
     if (patch.user) this.cfg.user = { aliases: this.cfg.user?.aliases ?? [], ...(patch.user.name ? { name: patch.user.name } : {}) };
     if (patch.repoRoots) this.cfg.repoRoots = [...patch.repoRoots];
+    if (patch.onboarded !== undefined) this.cfg.onboarded = patch.onboarded; // main 이 onChange 로 첫 정리를 건다
+    if (patch.readSessions !== undefined) this.cfg.readSessions = patch.readSessions;
     if (patch.todayReminder) this.cfg.todayReminder = { ...patch.todayReminder, times: [...patch.todayReminder.times] }; // main 이 1분마다 cfg 를 읽으니 바로
     this.onChange?.(Object.keys(patch));
     const locked = Object.keys(patch.models ?? {}).filter((r) => !!this.env[MODEL_ENV[r as ModelRole]]);
@@ -336,6 +359,20 @@ export class Settings {
       ok: true, settings: this.view(), applied: "live", restartNeeded: false,
       ...(locked.length ? { note: `${locked.map((r) => MODEL_ENV[r as ModelRole]).join(", ")} 환경변수가 있어서 데몬을 다시 켜면 그 값으로 돌아가요` } : {}),
     };
+  }
+
+  // onboarded 를 처음 적으면 config.json 이 "새 방식"(onboarding.ts)이 되어 빈 칸의 기본값이 바뀐다(작업 기록 끔·레포 폴더 없음·뇌 미선택).
+  // 예전부터 쓰던 사람이 마법사를 다시 마쳐도 그대로 돌게, 지금 쓰는 값을 같이 적는다(정한 값은 그대로)
+  private withCurrentDefaults(patch: SettingsPatch): SettingsPatch {
+    let file: Record<string, unknown> = {};
+    try { file = JSON.parse(readFileSync(this.path, "utf8")) ?? {}; } catch { file = {}; }
+    const out: SettingsPatch = { ...patch };
+    if (out.readSessions === undefined && typeof file.readSessions !== "boolean") out.readSessions = this.cfg.readSessions !== false;
+    if (out.repoRoots === undefined && !Array.isArray(file.repoRoots)) out.repoRoots = [...(this.cfg.repoRoots ?? [])];
+    const fileProvider = (file.brain as { provider?: unknown } | undefined)?.provider;
+    if (!out.brain?.provider && !(typeof fileProvider === "string" && fileProvider.trim()) && !this.env.CY_AGENT_BRAIN?.trim())
+      out.brain = { ...(out.brain ?? {}), provider: this.cfg.brain?.provider ?? "claude-code" };
+    return out;
   }
 
   // 채팅 말로 자동 머지 레포 넣기·빼기(core.ts autoMergeFromModel) — 설정 창과 같은 파일·같은 cfg

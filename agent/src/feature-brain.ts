@@ -13,8 +13,9 @@ export type CodexStat = { costUsd: number; inTokens: number; outTokens: number; 
 export const NEEDS_CODER = "이 기능은 Claude Code·Codex 가 있어야 돌아요";
 export const NEEDS_CLAUDE_MCP = "MCP 연결(메일·이슈·캘린더·Slack)은 Claude Code 뇌일 때만 읽어요";
 
-// 이 기능들을 돌릴 뇌. 없으면 null
-export function featureBrain(cfg: Pick<Config, "brain">, exists: (name: string) => boolean = (n) => commandOnPath(n)): FeatureBrain | null {
+// 이 기능들을 돌릴 뇌. 없으면 null. 설치 마법사를 마치기 전(onboarded false)에도 null: 아무 모델 작업도 하지 않는다(onboarding.ts)
+export function featureBrain(cfg: Pick<Config, "brain" | "onboarded">, exists: (name: string) => boolean = (n) => commandOnPath(n)): FeatureBrain | null {
+  if (cfg.onboarded === false) return null;
   const p = cfg.brain?.provider ?? "claude-code";
   if (p === "claude-code") return "claude-code";
   if (p === "codex") return exists("codex") ? "codex" : null;

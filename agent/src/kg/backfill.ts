@@ -12,10 +12,11 @@ import { join } from "node:path";
 import { HOME_DIR, type Config } from "../config.ts";
 import type { Store } from "../store.ts";
 import { SlackDeepBackfill, type DeepProgress, type SlackDeepDeps, type SlackSurvey } from "../ingest/slack-deep.ts";
-import { buildSlackChunks, ensureChunkTables, rowToChunk, scanSessions, type ChunkRow, type ChunkSource } from "./chunks.ts";
+import { buildSlackChunks, ensureChunkTables, rowToChunk, scanSessions, type ChunkRow, type ScanResult, type ChunkSource } from "./chunks.ts";
 import { stage1, stage1Batches, stage2, stage2Batches, type CallStat, type Verdict } from "./extract.ts";
 import { ensureMergeTables, knownNames, mergeExtraction, Resolver, type MergeResult } from "./merge.ts";
 import { featureBrain, NEEDS_CODER, skipQuietly, type CodexDeps } from "../feature-brain.ts";
+import { sessionsAllowed } from "../onboarding.ts";
 
 export type KgPhase = "idle" | "estimating" | "running" | "paused" | "done" | "error";
 export type KgEstimate = { chunks: number; usd: number; minutes: number };
@@ -308,6 +309,10 @@ export class KgBackfill {
   // ── 견적
   // 추출을 돌릴 뇌(Claude Code·Codex)가 있나
   private brainOk(): boolean { return !!featureBrain(this.cfg, this.deps.codex?.commandExists); }
+  // 작업 기록(세션 파일)은 사용자가 켰을 때만 청크로 만든다(onboarding.ts)
+  private scan() {
+    return sessionsAllowed(this.cfg) ? scanSessions(this.store, this.dirs(), { skipCwdPrefixes: this.skipPrefixes() }) : Promise.resolve<ScanResult>({ files: 0, changed: 0, skipped: 0, chunks: 0, newOrChanged: 0 });
+  }
 
   async estimate(): Promise<EstimateDetail> {
     if (this.active) throw new Error("이미 실행 중");
@@ -320,7 +325,7 @@ export class KgBackfill {
     const spent0 = this.cost();
     try {
       this.setStep("세션 스캔");
-      const scan = await scanSessions(this.store, this.dirs(), { skipCwdPrefixes: this.skipPrefixes() });
+      const scan = await this.scan();
       const db = this.store.db;
       const sess = db.prepare("SELECT count(*) n, coalesce(sum(chars), 0) c FROM kg_chunks WHERE source = 'sessions'").get() as any;
 
@@ -449,7 +454,7 @@ export class KgBackfill {
     this.setPhase("running");
     try {
       this.setStep("세션 스캔");
-      await scanSessions(this.store, this.dirs(), { skipCwdPrefixes: this.skipPrefixes() });
+      await this.scan();
       // Slack 깊은 백필과 세션 추출을 나란히
       const crawl = this.crawlSlack();
       this.setStep("세션 추출");
@@ -516,7 +521,7 @@ export class KgBackfill {
     const now = (this.deps.now ?? Date.now)();
     const minEnd = this.meta("watermark") ?? new Date(now - 864e5).toISOString();
     try {
-      await scanSessions(this.store, this.dirs(), { skipCwdPrefixes: this.skipPrefixes() });
+      await this.scan();
       buildSlackChunks(this.store, { sinceIso: new Date(now - 3 * 864e5).toISOString() });
       const before = Number((this.store.db.prepare("SELECT count(*) n FROM kg_chunks WHERE status = 'pending' AND end >= ?").get(minEnd) as any).n);
       const complete = await this.process({ minEnd }, c0 + (opts.budgetUsd ?? 2), false);
@@ -533,7 +538,7 @@ export class KgBackfill {
     if (!this.brainOk()) throw new Error(NEEDS_CODER);
     const db = this.store.db;
     if (!Number((db.prepare("SELECT count(*) n FROM kg_chunks").get() as any).n)) {
-      await scanSessions(this.store, this.dirs(), { skipCwdPrefixes: this.skipPrefixes() });
+      await this.scan();
       buildSlackChunks(this.store);
     }
     const pickFrom = (source: ChunkSource, k: number) => (db.prepare(`SELECT id FROM kg_chunks WHERE source = ? AND status = 'pending'

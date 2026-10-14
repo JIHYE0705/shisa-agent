@@ -345,6 +345,8 @@ export class CalendarSync {
     const w = this.window();
     const src = this.deps.source;
     if (!src) return { events: 0, meetings: 0, calls: 0, errors: 0, costUsd: 0, skipped: {} };
+    // MCP 캘린더는 모델이 중계한다: 설치 마법사를 마치기 전엔 부르지 않는다(ICS 는 모델 없이 사용자가 붙인 주소만 읽는다)
+    if (this.cfg.onboarded === false && this.cfg.connectors?.calendar?.mode === "mcp") return { events: 0, meetings: 0, calls: 0, errors: 0, costUsd: 0, skipped: {} };
     const r = await (this.deps.wrapRun ? this.deps.wrapRun(() => src(this.cfg, w)) : src(this.cfg, w));
     return this.finish(w, r.events, r.ok, r);
   }

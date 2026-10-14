@@ -33,7 +33,7 @@ import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, w
 import { personaFor } from './src/persona.js';
 import { normStatus, brainView, sameView } from './src/brain-state.js';
 import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
-import { cleanSetupPatch, openSetupAtLaunch } from './src/setup-plan.js';
+import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -91,6 +91,7 @@ function writeConnector(id, url) {
     if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return false;
   } catch (err) {
     if (err?.code !== 'ENOENT') return false;
+    cfg = { ...NEW_DAEMON_CONFIG }; // 데몬보다 먼저 만든 설정 = 새 설치(마법사를 마칠 때까지 아무것도 읽지 않는다)
   }
   const conns = cfg.connectors && typeof cfg.connectors === 'object' ? { ...cfg.connectors } : {};
   if (id === 'gcal' || id === 'outlook') {
@@ -145,6 +146,7 @@ function writeBrainFile(patch) {
     if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return null;
   } catch (err) {
     if (err?.code !== 'ENOENT') return null;
+    cfg = { ...NEW_DAEMON_CONFIG };
   }
   const next = withDaemonBrain(cfg, patch);
   if (JSON.stringify(next) === JSON.stringify(cfg)) return false;
@@ -1105,12 +1107,12 @@ function setupIPC() {
     else nextTour();
   });
   ipcMain.on('start-tour', (e) => { if (fromOurs(e)) startTour(); });
-  // 설치 마법사: 이름·레포 폴더(데몬 설정 user.name·repoRoots — 바로 반영)
+  // 설치 마법사: 이름·레포 폴더·작업 기록 읽기·마법사 마침(데몬 설정 user.name·repoRoots·readSessions·onboarded: 바로 반영)
   ipcMain.handle('setup-load', async (e) => {
     if (!fromOurs(e)) return denied();
     const r = await request('GET', '/settings');
     if (!r.ok) return { ok: false };
-    return { ok: true, name: r.data?.user?.name ?? '', repoRoots: Array.isArray(r.data?.repoRoots) ? r.data.repoRoots : [] };
+    return { ok: true, ...setupView(r.data) };
   });
   ipcMain.handle('setup-save', async (e, patch) => {
     const p = fromOurs(e) ? cleanSetupPatch(patch) : null;
@@ -1118,8 +1120,7 @@ function setupIPC() {
     const r = await request('PUT', '/settings', p);
     if (!r.ok) return { ok: false, error: r.data?.error ?? r.error ?? '저장하지 못했어요' };
     refreshStatus();
-    const st = r.data?.settings;
-    return { ok: true, name: st?.user?.name ?? '', repoRoots: Array.isArray(st?.repoRoots) ? st.repoRoots : [] };
+    return { ok: true, ...setupView(r.data?.settings) };
   });
   ipcMain.handle('pick-folder', async (e) => {
     if (!fromOurs(e)) return denied();

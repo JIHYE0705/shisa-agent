@@ -20,6 +20,8 @@ import { McpHealth, connectorServerUrls, healthNote } from "./mcp-health.ts";
 import { Reactions, realMergeAsk } from "./reactions.ts";
 import { HOME_DIR } from "./config.ts";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { WAIT_SETUP, markFreshInstall, modelWorkAllowed, sessionsAllowed } from "./onboarding.ts";
 import { execFile } from "node:child_process";
 import { CalendarSync, alertDetail } from "./calendar-sync.ts";
 import { withRun, asRoutine } from "./runs.ts";
@@ -39,7 +41,14 @@ import { mergePr } from "./fixer.ts";
 import { askBtw } from "./btw.ts";
 
 installFileLog();
+// 새 설치면 config.json 에 "onboarded": false 를 남긴다: 설치 마법사를 마칠 때까지 아무것도 읽지 않고 모델도 부르지 않는다(onboarding.ts)
+try {
+  if (markFreshInstall(join(HOME_DIR, "config.json"), process.env, existsSync(process.env.CY_AGENT_DB ?? join(HOME_DIR, "cy.db"))))
+    console.log("[onboarding] 새 설치: 설치 마법사를 마칠 때까지 작업 기록·레포를 읽지 않고 모델도 부르지 않아요");
+} catch (e: any) { console.warn("[onboarding] 설정 파일에 표시하지 못했어요:", e?.message ?? e); }
 const cfg = loadConfig();
+if (!modelWorkAllowed(cfg)) console.log("[onboarding] 설치 마법사를 마치기 전: 브리핑·정리 작업은 쉬어요");
+console.log(`[onboarding] 작업 기록(Claude Code·Codex) 읽기: ${sessionsAllowed(cfg) ? "켬" : "끔"} · 레포 폴더 ${cfg.repoRoots.length}개`);
 // 커넥터(connectors.ts): 기능별 데이터 원천. 연결 안 된 기능은 조용히 빠진다
 const conns = cfg.connectors;
 for (const c of connectorStatus(conns)) console.log(`[connectors] ${c.label}: ${c.mode}${c.ready ? "" : " (준비 안 됨)"} · ${c.detail}`);
@@ -97,7 +106,11 @@ setInterval(() => { try { remindToday(false); } catch (e: any) { console.warn("[
 
 // 설정 창: 모델·브리핑 출처(바로 반영 + config.json) · 연결 상태(읽기만). KG 상태는 아래에서 kgBackfill 이 생긴 뒤에 붙는다
 // 뇌·이름·레포 폴더를 바꾸면 바로 반영되고(재시작 불필요) 데스크톱에 SSE status 로 알린다
-const settings = new Settings(cfg, { onChange: (keys) => { if (keys.some((k) => k === "brain" || k === "user")) pushStatus(); } });
+const settings = new Settings(cfg, { onChange: (keys) => {
+  if (keys.some((k) => k === "brain" || k === "user" || k === "onboarded")) pushStatus();
+  if (keys.includes("onboarded") && modelWorkAllowed(cfg)) setTimeout(() => onboardedNow(), 0); // 마법사를 막 마침 → 첫 정리
+  else if (keys.includes("readSessions") && sessionsAllowed(cfg)) setTimeout(() => ingest(), 0);
+} });
 let kgStatus: (() => { phase: string; reason?: string; step?: string }) | undefined;
 const connections = new Connections(cfg, { lastRun: lastRunOf((o) => runs.listRuns(o)), kg: () => kgStatus?.() });
 // GET /status: 뇌가 claude-code 인데 로그인 확인 전이면 한 번 확인을 걸고(비동기) 끝나면 SSE status 로 알린다
@@ -244,6 +257,7 @@ setInterval(() => {
   tickAt = Date.now();
 }, 1000).unref();
 const brief = asRoutine(safe("briefing", async () => {
+  if (!modelWorkAllowed(cfg)) return; // 설치 마법사를 마치기 전(정기 브리핑은 말풍선도 없이 조용히)
   const h = await health.check().catch(() => health.last);
   if (h.state !== "ok") console.log("[briefing] 일부 MCP 서버에 연결이 안 돼요 —", healthNote(h)); // 쓸 수 있는 출처로만 브리핑한다
   await agent.runBriefing();
@@ -257,6 +271,7 @@ const briefIfDue = (why: string) => {
 // Slack 수집: 커넥터 slack 이 api(사용자 토큰 Web API)일 때만. 이전 사이클이 돌고 있으면 run()이 바로 빠진다
 const slackIngester = new SlackIngester(cfg, store);
 const slackTick = asRoutine(safe("slack-ingest", async () => {
+  if (!modelWorkAllowed(cfg)) return; // 설치 마법사를 마치기 전
   if (!slackIngester.transport) return; // slack 연결 안 됨(off·mcp) — 브리핑·채팅이 MCP로 실시간 조회
   // 진행 보고: 20초 안에 끝나는 평소 사이클은 조용히, 오래 걸리면 시작·결과만
   const prog = reactions.progress("slack-ingest", "슬랙 훑어보는 중이에요…", { quietMs: 20e3 });
@@ -271,6 +286,7 @@ const slackTick = asRoutine(safe("slack-ingest", async () => {
 // 새 할 일은 「할 일 추가했어요」 말풍선(reactions.newTodos)으로 뜬다. 동시에 눌러도 한 번만
 let refreshing: Promise<void> | undefined;
 const refreshAll = () => (refreshing ??= (async () => {
+  if (!modelWorkAllowed(cfg)) { bus.bubble({ id: "refresh", text: WAIT_SETUP, kind: "info", ttlMs: 10e3 }); return; }
   bus.bubble({ id: "refresh", text: "슬랙·메일 새로 읽는 중이에요…", kind: "info", ttlMs: 60e3 });
   const before = new Set(store.openTodos().map((t) => t.id));
   await slackTick();
@@ -281,7 +297,7 @@ const refreshAll = () => (refreshing ??= (async () => {
 // 프로필 학습: 동시에 두 번 돌지 않게. 새 근거가 없으면 모델을 부르지 않는다
 let learning: Promise<unknown> | undefined;
 const learn = (rounds = 1) => asRoutine(safe("profile", async () => {
-  if (learning) return;
+  if (learning || !modelWorkAllowed(cfg)) return;
   const prog = reactions.progress("profile", "새로 알게 된 것 정리하는 중이에요…", { quietMs: 15e3 });
   learning = (async () => {
     let added = 0;
@@ -298,6 +314,7 @@ const learn = (rounds = 1) => asRoutine(safe("profile", async () => {
 // 할 일 진행 확인: 작업 세션·작업 run 을 읽고 끝난 일은 자동 완료(되돌릴 수 있음), 하는 중인 일엔 어디까지 됐는지 한 줄.
 // 새 세션·run 이 없으면 모델을 안 부른다. 시작 3분 뒤 한 번, 그다음 progressCheckMin 마다(0 이면 끔)
 const progressTick = asRoutine(safe("todo-progress", async () => {
+  if (!modelWorkAllowed(cfg)) return;
   agent.ingest(); // 방금 끝난 세션까지
   await checkProgress(cfg, store, agent);
 }));
@@ -328,7 +345,7 @@ const kgBackfill = new KgBackfill(cfg, store);
 kgStatus = () => kgBackfill.status();
 let kgBusy = false;
 const kgHourly = asRoutine(safe("kg-hourly", async () => {
-  if (kgBusy) return;
+  if (kgBusy || !modelWorkAllowed(cfg)) return;
   kgBusy = true;
   try {
     await withRun({ kind: "kg", title: "지식그래프 갱신" }, async () => {
@@ -372,6 +389,16 @@ const stopCalendar = asRoutine(calendar.schedule.bind(calendar))((m, text) => {
   const detail = alertDetail(m);
   bus.bubble({ id: `meeting:${m.id}@${m.start}`, text, kind: "todo", ttlMs: Math.max(60e3, Date.parse(m.start) - Date.now()), link: m.link ?? m.webLink, ...(detail ? { detail } : {}) });
 }, (r) => console.log("[calendar]", JSON.stringify({ meetings: r.meetings, events: r.events, calls: r.calls, errors: r.errors, costUsd: r.costUsd })));
+
+// 설치 마법사를 막 마쳤을 때(PUT /settings onboarded: true): 시작할 때 하던 첫 정리를 지금 한 번
+function onboardedNow() {
+  console.log(`[onboarding] 설치 마법사를 마침: 작업 기록 ${sessionsAllowed(cfg) ? "읽기 켬" : "읽기 끔"} · 레포 폴더 ${cfg.repoRoots.length}개 · 뇌 ${cfg.brain.provider}`);
+  void ingest();
+  slackTick();
+  learn(5)();
+  briefIfDue("설치 마법사를 마침");
+  if (calendar.enabled) calendar.sync().catch(() => {});
+}
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, async () => {
   stopCalendar();

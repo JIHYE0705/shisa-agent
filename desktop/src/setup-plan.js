@@ -46,13 +46,14 @@ export function agentFrom({ done = {}, connected = [] } = {}) {
 }
 
 // 끝 화면 요약: 무엇이 됐고 무엇을 나중에 할 수 있나
-export function setupSummary({ brain = {}, done = {}, repos = [], name = '' } = {}) {
+export function setupSummary({ brain = {}, done = {}, repos = [], name = '', readSessions = false } = {}) {
   return [
     { id: 'name', label: '이름', ok: !!name, text: name ? `${name} 님` : '나중에' },
     { id: 'brain', label: '뇌(대화 AI)', ok: brain.ready === true && !brain.local, text: brain.ready === true && !brain.local ? (brain.label || '연결됨') : brain.local ? 'AI 없이 쓰기 (나중에 설정에서 연결할 수 있어요)' : '나중에 설정에서 연결' },
     { id: 'calendar', label: '캘린더', ok: !!(done.gcal || done.outlook), text: done.gcal || done.outlook ? '연결함' : '나중에' },
     { id: 'slack', label: 'Slack', ok: !!done.slack, text: done.slack ? '연결함' : '나중에' },
     { id: 'repos', label: '레포 폴더', ok: repos.length > 0, text: repos.length ? repos.join(', ') : '나중에' },
+    { id: 'sessions', label: '작업 기록', ok: readSessions === true, text: readSessions === true ? 'Claude Code·Codex 작업 기록을 읽어요' : '읽지 않아요 (설정에서 켤 수 있어요)' },
   ];
 }
 
@@ -65,10 +66,33 @@ export function openSetupAtLaunch({ firstRun = false, env = {} } = {}) {
 
 export const okFolder = (p) => typeof p === 'string' && /^\//.test(p.trim()) && !/[\0\n]/.test(p);
 
-// 마법사가 데몬 설정에 쓰는 것만: { user: { name } } · { repoRoots: [절대 경로] }. 모양이 아니면 null
+// 데몬보다 앱이 먼저 config.json 을 만들 때(새 설치): 마법사를 마칠 때까지 데몬은 아무것도 읽지 않고 모델도 부르지 않는다
+export const NEW_DAEMON_CONFIG = Object.freeze({ onboarded: false });
+
+// GET /settings → 마법사가 쓰는 것만. 작업 기록 읽기는 데몬이 정한 값(새 설치는 꺼짐)
+export function setupView(st) {
+  return {
+    name: st?.user?.name ?? '',
+    repoRoots: Array.isArray(st?.repoRoots) ? st.repoRoots : [],
+    readSessions: st?.readSessions === true,
+    onboarded: st?.onboarded !== false,
+  };
+}
+
+// 마법사가 데몬 설정에 쓰는 것만: { user: { name } } · { repoRoots: [절대 경로] } · { readSessions: 참/거짓 } · { onboarded: true }(마침·건너뜀).
+// 모양이 아니면 null. onboarded 는 마치는 것만: 마법사가 되돌리지는 않는다
+const SETUP_KEYS = ['user', 'repoRoots', 'readSessions', 'onboarded'];
 export function cleanSetupPatch(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
   const out = {};
+  if ('readSessions' in p) {
+    if (typeof p.readSessions !== 'boolean') return null;
+    out.readSessions = p.readSessions;
+  }
+  if ('onboarded' in p) {
+    if (p.onboarded !== true) return null;
+    out.onboarded = true;
+  }
   if ('user' in p) {
     const n = p.user?.name;
     if (n !== null && typeof n !== 'string') return null;
@@ -78,5 +102,5 @@ export function cleanSetupPatch(p) {
     if (!Array.isArray(p.repoRoots) || !p.repoRoots.every(okFolder)) return null;
     out.repoRoots = p.repoRoots.map((x) => x.trim());
   }
-  return Object.keys(out).length && Object.keys(p).every((k) => k === 'user' || k === 'repoRoots') ? out : null;
+  return Object.keys(out).length && Object.keys(p).every((k) => SETUP_KEYS.includes(k)) ? out : null;
 }

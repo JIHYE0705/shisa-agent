@@ -17,6 +17,7 @@ import { listRules, rulesContext } from "./todo-rules.ts";
 import { MEMORY_DAYS, memoryLine, removedRecently } from "./todo-ledger.ts";
 import { meetingsContext } from "./actions.ts";
 import { buildDashboard, dashboardSummary, type Dashboard } from "./dashboard.ts";
+import { sessionsAllowed } from "./onboarding.ts";
 
 export { CTX_SERVER, CTX_TOOL_NAMES };
 export type ContextMode = "tools" | "inline";
@@ -107,6 +108,7 @@ export type CtxDeps = { now?: () => Date; dashboard?: () => Promise<Dashboard> }
 export type TodoStatus = "open" | "backlog" | "done" | "history" | "all";
 export const KG_KINDS = ENTITY_TYPES;
 
+const SESSIONS_OFF = "사용자가 작업 기록(Claude Code·Codex) 읽기를 꺼 두었다. 세션 내용은 보지 않는다";
 export function ctxHandlers(cfg: Config, store: Store, deps: CtxDeps = {}) {
   const now = () => deps.now?.() ?? new Date();
   const dashboard = () => (deps.dashboard ?? (() => buildDashboard(cfg, store, { now: now() })))();
@@ -172,6 +174,7 @@ export function ctxHandlers(cfg: Config, store: Store, deps: CtxDeps = {}) {
       return out(`할 일 (${st}${q ? `, "${clip(q, 30)}"` : ""})`, sec.join("\n"));
     }),
     sessions_recent: (a: { project?: string; hours?: number }) => guard("최근 작업 세션", () => {
+      if (!sessionsAllowed(cfg)) return out("최근 작업 세션", SESSIONS_OFF);
       const hours = Math.min(Math.max(a.hours ?? 48, 1), 24 * 14);
       const ss = recentSessions(store, { now: now(), hours, project: a.project, limit: 40 });
       const by = new Map<string, Node[]>();
@@ -184,6 +187,7 @@ export function ctxHandlers(cfg: Config, store: Store, deps: CtxDeps = {}) {
       return out(`최근 ${hours}시간 작업 세션${a.project ? ` ("${clip(a.project, 30)}")` : ""} — 전문은 session_get(id)`, lines.join("\n"));
     }),
     session_get: (a: { id: string }) => guard("작업 세션", () => {
+      if (!sessionsAllowed(cfg)) return out("작업 세션", SESSIONS_OFF);
       const raw = String(a.id ?? "").trim();
       const n = store.node(raw) ?? store.node(`session:${raw}`);
       if (!n || n.kind !== "session") return out("작업 세션", `세션 "${clip(raw, 60)}" 없음 — sessions_recent 의 id 를 써라`, true);

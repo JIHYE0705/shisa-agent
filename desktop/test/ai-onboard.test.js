@@ -271,3 +271,25 @@ test('뇌 고르기: AI 없이 쓰기가 다른 뇌와 같은 카드로 있고, 
   for (const c of BRAIN_CHOICES) assert.doesNotMatch(`${c.title} ${c.blurb}`, /—/);
   assert.doesNotMatch(SISA_SAY.brain, /—/);
 });
+
+test('작업 기록 읽기 동의 문구: 무엇을 읽는지·끌 수 있는지 밝히고, 긴 줄표를 쓰지 않는다', async () => {
+  const { SESSIONS_CONSENT, hubItem, SISA_SAY } = await import('../src/ai-onboard.js');
+  assert.match(SESSIONS_CONSENT.title, /Claude Code·Codex 작업 기록/);
+  assert.match(SESSIONS_CONSENT.blurb, /~\/\.claude\/projects/);
+  assert.match(SESSIONS_CONSENT.warn, /켜지 않으면 읽지 않고/);
+  assert.match(hubItem('repos').blurb, /적은 폴더만 읽고/);
+  assert.match(SISA_SAY.extras, /아무것도 읽지 않아요/);
+  for (const t of [SESSIONS_CONSENT.title, SESSIONS_CONSENT.blurb, SESSIONS_CONSENT.warn, hubItem('repos').blurb, SISA_SAY.extras]) assert.doesNotMatch(t, /—/);
+});
+
+test('마법사: 작업 기록 체크박스는 저장된 값(처음엔 꺼짐)으로 그리고, 다 했어요·건너뛰기는 마침을 데몬에 알린다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const view = readFileSync(new URL('../renderer/setup-view.js', import.meta.url), 'utf8');
+  assert.match(view, /sessionsConsent\(readSessions, onToggleSessions\)/);
+  assert.match(view, /cb\.checked = !!on/);
+  const panel = readFileSync(new URL('../renderer/panel.js', import.meta.url), 'utf8');
+  assert.match(panel, /let setupReadSessions = false/);
+  assert.match(panel, /onFinishExtras: async \(\) => \{\n\s+await saveSetupSettings\(\{ onboarded: true \}\)/);
+  assert.match(panel, /onSkipSetup: async \(\) => \{\n\s+await saveSetupSettings\(\{ onboarded: true \}\)/);
+  assert.match(panel, /saveSetupSettings\(\{ readSessions: !!on \}\)/);
+});

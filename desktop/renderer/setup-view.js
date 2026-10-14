@@ -1,6 +1,6 @@
 // 설치: 한 화면에 할 일 한 줄씩. 토큰은 이 화면 메모리에만 있고 저장하지 않는다.
 import { AGENTS, FEATURES, agentSteps, buildWalk, featureTitle } from '../src/setup-flow.js';
-import { SISA_SAY, providerById, connectSteps, slotCheck, BRAIN_CHOICES, EXTRAS, hubItem } from '../src/ai-onboard.js';
+import { SISA_SAY, providerById, connectSteps, slotCheck, BRAIN_CHOICES, EXTRAS, SESSIONS_CONSENT, hubItem } from '../src/ai-onboard.js';
 import { setupSummary, okFolder } from '../src/setup-plan.js';
 
 const slotValues = new Map();
@@ -287,7 +287,7 @@ function pickButton(on, title, blurb, onclick, linked, note) {
 
 // 1) 이름 — 비워 두고 넘어가도 된다
 let nameDraft = null;
-function nameView({ name, onName }) {
+function nameView({ name, onName, onSkipSetup }) {
   if (nameDraft === null) nameDraft = name || '';
   const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: '예: 길동', 'aria-label': '이름', value: nameDraft });
   input.addEventListener('input', () => { nameDraft = input.value; });
@@ -300,6 +300,7 @@ function nameView({ name, onName }) {
     identity: '부를 이름을 적어 주세요. 브리핑이나 대화에서 이 이름으로 불러요.',
     extra: h('div.setup-fields', null, h('label', null, h('span', { text: '이름' }), input)),
     nav: h('div.setup-bar', null,
+      onSkipSetup ? h('button.ghost', { type: 'button', text: '설치는 나중에 할게요', title: '아무것도 연결하거나 읽지 않고 시작해요. 이 탭에서 언제든 이어서 할 수 있어요', onclick: onSkipSetup }) : null,
       h('span.spacer'),
       h('button.ghost', { type: 'button', text: '건너뛰기', onclick: () => onName('') }),
       h('button.primary', { type: 'button', text: '다음', onclick: () => onName(nameDraft.trim()) })),
@@ -328,7 +329,18 @@ function brainPickView({ detected = {}, connected = [], current = '', onPick, on
 
 // 3) 더 연결하기(선택) — 캘린더 ICS · Slack · 레포 폴더
 let repoDraft = '';
-function extrasView({ done = {}, repos = [], coder = true, onOpen, onAddRepo, onPickFolder, onRemoveRepo, onFinish, onBack }) {
+// 작업 기록 읽기: 체크해야만 읽는다(처음엔 꺼짐)
+function sessionsConsent(on, onToggle) {
+  const cb = h('input', { type: 'checkbox', 'aria-describedby': 'consent-sessions-blurb' });
+  cb.checked = !!on;
+  cb.addEventListener('change', () => onToggle?.(cb.checked));
+  return h('div.setup-folder.setup-consent', null,
+    h('label.setup-check', null, cb, h('span.setup-pick-title', { text: SESSIONS_CONSENT.title })),
+    h('p.setup-blurb', { id: 'consent-sessions-blurb', text: SESSIONS_CONSENT.blurb }),
+    h('p.setup-blurb', { text: SESSIONS_CONSENT.warn }));
+}
+
+function extrasView({ done = {}, repos = [], coder = true, readSessions = false, onOpen, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish, onBack }) {
   const items = EXTRAS.filter((id) => id !== 'repos').map(hubItem).filter(Boolean);
   const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: '/Users/나/code', 'aria-label': '레포 폴더', value: repoDraft });
   input.addEventListener('input', () => { repoDraft = input.value; });
@@ -343,12 +355,13 @@ function extrasView({ done = {}, repos = [], coder = true, onOpen, onAddRepo, on
       h('div.setup-picks', null, items.map((item) => pickButton(false, done[item.id] ? `${item.title} · 연결됨` : item.title, item.blurb, () => onOpen(item.id), !!done[item.id]))),
       h('div.setup-folder', null,
         h('span.setup-pick-title', { text: repos.length ? `${repo.title} · ${repos.length}개` : repo.title }),
-        h('p.setup-blurb', { text: coder ? repo.blurb : `${repo.blurb} (지금은 Claude Code 가 없어서 적어만 둬요)` }),
+        h('p.setup-blurb', { text: coder ? repo.blurb : `${repo.blurb} (지금은 Claude Code 가 없어서 커밋만 보여 줘요)` }),
         repos.length ? h('ul.setup-repos', null, repos.map((r) => h('li', null, h('code', { text: r }), h('button.ghost.small', { type: 'button', text: '빼기', onclick: () => onRemoveRepo(r) })))) : null,
         h('div.setup-fields.row', null, input,
           onPickFolder ? h('button.ghost', { type: 'button', text: '폴더 고르기…', onclick: onPickFolder }) : null,
           h('button.ghost', { type: 'button', text: '추가', onclick: add })),
-        repoDraft && !okFolder(repoDraft) ? h('p.setup-gate', null, ...richNodes('**/** 로 시작하는 폴더 경로를 적어 주세요.')) : null)),
+        repoDraft && !okFolder(repoDraft) ? h('p.setup-gate', null, ...richNodes('**/** 로 시작하는 폴더 경로를 적어 주세요.')) : null),
+      sessionsConsent(readSessions, onToggleSessions)),
     nav: h('div.setup-bar', null,
       h('button.ghost', { type: 'button', text: '이전', onclick: onBack }),
       h('span.spacer'),
@@ -357,8 +370,8 @@ function extrasView({ done = {}, repos = [], coder = true, onOpen, onAddRepo, on
 }
 
 // 4) 끝 — 된 것 요약 + 사용법 둘러보기
-function doneView({ brain, done, repos, name, onTour, onClose, onBack }) {
-  const rows = setupSummary({ brain, done, repos, name });
+function doneView({ brain, done, repos, name, readSessions, onTour, onClose, onBack }) {
+  const rows = setupSummary({ brain, done, repos, name, readSessions });
   return screen({
     say: SISA_SAY.done,
     title: name ? `${name} 님, 준비됐어요` : '준비됐어요',
@@ -423,12 +436,12 @@ export function renderSetup(root, state) {
     phase, agent, picked, cursor, choices, link, keyStatus, done, connectAgent, connected,
     onAgent, onToggle, onContinue, onChoose, onCopy, onList, onPrev, onBack, onSkip, onNext, onStart, onDone,
     onCheckKey, onKeyNext, onOpen, login,
-    name, detected, current, repos, brain, coder,
-    onName, onPickBrain, onSkipBrain, onOpenExtra, onAddRepo, onPickFolder, onRemoveRepo, onFinishExtras, onTour, onClose,
+    name, detected, current, repos, brain, coder, readSessions,
+    onName, onPickBrain, onSkipBrain, onOpenExtra, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onSkipSetup, onFinishExtras, onTour, onClose,
   } = state;
 
   if (phase === 'name') {
-    root.replaceChildren(nameView({ name, onName }));
+    root.replaceChildren(nameView({ name, onName, onSkipSetup }));
     return;
   }
   nameDraft = null;
@@ -448,11 +461,11 @@ export function renderSetup(root, state) {
     return;
   }
   if (phase === 'extras') {
-    root.replaceChildren(extrasView({ done, repos, coder, onOpen: onOpenExtra, onAddRepo, onPickFolder, onRemoveRepo, onFinish: onFinishExtras, onBack }));
+    root.replaceChildren(extrasView({ done, repos, coder, readSessions, onOpen: onOpenExtra, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish: onFinishExtras, onBack }));
     return;
   }
   if (phase === 'done') {
-    root.replaceChildren(doneView({ brain, done, repos, name, onTour, onClose, onBack }));
+    root.replaceChildren(doneView({ brain, done, repos, name, readSessions, onTour, onClose, onBack }));
     return;
   }
 

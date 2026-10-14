@@ -43,6 +43,7 @@ import { addAgentWorktree, agentBranch, finishAgentWorktree, isolationSource, wo
 import { runBackgroundAgent } from "./chat.ts";
 import { AttachmentStore, type Attachment } from "./attachments.ts";
 import { Guidelines, applyGuidelineOp, guidelinesApi, setGuidelineStore, type GuidelineCtx, type GuidelinesApi } from "./guidelines.ts";
+import { WAIT_SETUP, modelWorkAllowed, sessionsAllowed } from "./onboarding.ts";
 
 export type Posted = { channel: string; ts: string; permalink?: string };
 // 팝오버 마지막 문답(GET /todos/:id/thread/last). ops·preview·rev·rule 은 아직 ✓ 할 수 있을 때만(outcome pending)
@@ -441,12 +442,19 @@ export class Agent {
     };
   }
 
+  // 작업 기록(세션) 읽기: 마법사를 마치고 사용자가 켰을 때만(onboarding.ts)
   ingest(): number {
+    if (!sessionsAllowed(this.cfg)) return 0;
     return ingestSessions(this.store, { claude: this.cfg.claudeProjectsDir, codex: this.cfg.codexSessionsDir }, { skipCwdPrefix: HOME_DIR });
   }
 
   // 동시에 두 번 돌지 않게 진행 중이면 그걸 돌려준다
+  // 설치 마법사를 마치기 전엔 돌지 않는다(말풍선으로 알리기만)
   runBriefing(): Promise<void> {
+    if (!modelWorkAllowed(this.cfg)) {
+      this.bus.bubble({ id: "wait-setup", text: WAIT_SETUP, kind: "info", ttlMs: 10e3 });
+      return Promise.resolve();
+    }
     this.briefing ??= this.doBriefing().finally(() => { this.briefing = undefined; });
     return this.briefing;
   }
@@ -456,6 +464,7 @@ export class Agent {
   // 동시에 두 번 돌지 않게 진행 중이면 그걸 돌려준다. 반환: 새로 생긴 할 일 수(백로그 P4 빼고)
   private slackTodosRun?: Promise<number>;
   slackTodosNow(): Promise<number> {
+    if (!modelWorkAllowed(this.cfg)) return Promise.resolve(0);
     this.slackTodosRun ??= this.doSlackTodos().finally(() => { this.slackTodosRun = undefined; });
     return this.slackTodosRun;
   }

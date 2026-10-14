@@ -3,7 +3,7 @@
 import {
   groupRows, pendingChecks, mergeRows, toggleExclude, dotClass, metaText, STATE_LABEL,
   phraseGroups, phraseText, phraseDefaultText, phraseCustom, phraseSaveValue, phraseProblem,
-  repoSlugFrom, autoMergeNext, needsSetupHint,
+  repoSlugFrom, autoMergeNext, needsSetupHint, localReadView,
   REMINDER_DEFAULT, REMINDER_HOURS, cleanReminder, parseTimes, reminderSummary,
 } from '../src/settings.js';
 import { mountGuidelines } from '../src/guidelines.js';
@@ -120,6 +120,29 @@ function renderSources() {
     lab.append(cb, document.createTextNode(s.label));
     box.append(lab);
   }
+}
+
+// ---- 이 맥에서 읽는 것(작업 기록·레포 폴더) ----
+function renderLocal() {
+  const box = $('local-read');
+  box.replaceChildren();
+  if (!settings) return;
+  const v = localReadView(settings);
+  const lab = el('label', `toggle${v.sessions ? '' : ' off'}`);
+  const cb = el('input');
+  cb.type = 'checkbox';
+  cb.checked = v.sessions;
+  cb.title = 'Claude Code·Codex 대화 기록(~/.claude/projects, ~/.codex/sessions)을 읽어서 최근 프로젝트와 할 일 진행을 정리해요';
+  cb.addEventListener('change', async () => {
+    cb.disabled = true;
+    const ok = await save({ readSessions: cb.checked });
+    cb.disabled = false;
+    if (!ok) cb.checked = !cb.checked;
+    renderLocal();
+  });
+  lab.append(cb, document.createTextNode('내 Claude Code·Codex 작업 기록 읽기'));
+  box.append(lab);
+  $('local-repos').textContent = v.reposText;
 }
 
 // ---- 오늘 할 일 알림 ----
@@ -336,7 +359,7 @@ async function load() {
   if (k && typeof k === 'object' && typeof k.claude === 'boolean') caps = { claude: k.claude, codex: k.codex === true };
   if (!s?.ok || !c?.ok) banner('시사에 연결되지 않았어요. 시사가 켜져 있는지 확인해 주세요.');
   else banner(null);
-  if (s?.ok) { settings = s.data; renderModels(); renderSources(); renderReminder(); renderAutoMerge(); renderPhrases(); }
+  if (s?.ok) { settings = s.data; renderModels(); renderSources(); renderLocal(); renderReminder(); renderAutoMerge(); renderPhrases(); }
   if (c?.ok) {
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];
     renderRows();
@@ -348,6 +371,7 @@ const guidelines = mountGuidelines(document, cy, flash); // 행동 지침(src/gu
 guidelines.load();
 $('check-all').addEventListener('click', checkAll);
 $('open-models').addEventListener('click', () => cy.openPanel('models'));
+$('open-repos')?.addEventListener('click', () => cy.openPanel('setup'));
 $('open-setup')?.addEventListener('click', () => cy.openPanel('setup'));
 $('start-tour')?.addEventListener('click', () => cy.startTour?.());
 // 창으로 돌아오면(브라우저에서 연결하고 온 뒤 등) 싼 확인만 새로

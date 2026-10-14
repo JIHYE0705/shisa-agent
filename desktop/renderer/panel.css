@@ -1327,6 +1327,9 @@ body.has-undo #sec-todos, body.has-undo #sec-today { padding-bottom: 64px; }
 /* 설치 마법사: 레포 폴더 · 끝 화면 요약 */
 .setup-folder { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
 .setup-folder .setup-blurb { margin: 4px 0 8px; }
+.setup-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.setup-check input { width: 16px; height: 16px; margin: 0; flex: none; }
+.setup-consent .setup-blurb:last-child { margin-bottom: 0; }
 .setup-fields.row { flex-direction: row; align-items: center; }
 .setup-fields.row input { flex: 1; min-width: 0; }
 .setup-repos { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }

@@ -24,6 +24,7 @@ import { phrase } from "./phrases.ts";
 import { attachmentInput, attachmentRef, type Attachment, type AttachmentStore } from "./attachments.ts";
 import { autoMergeConsent, textMergeConsent } from "./auto-merge.ts";
 import { parsePrRef } from "./merge-request.ts";
+import { sessionsAllowed } from "./onboarding.ts";
 
 export type { PanelSection };
 export type ChatReply = { reply_md: string; bubble: string; show: PanelSection | null; proposals: Thought["proposals"]; todo_ops?: TodoOp[]; plan_ops?: PlanOp[]; memory_ops?: MemoryOp[]; rule?: unknown; guideline?: unknown; actions?: unknown[]; merges?: MergeAsk[]; auto_merge?: AutoMergeAsk[] };
@@ -259,7 +260,7 @@ export function chatPrompt(cfg: Config, store: Store, history: ChatTurn[], text:
     : `${t.role === "user" ? "사용자" : "cy"}${t.todoId ? ` (할 일 "${t.todoTitle ?? t.todoId}"에 대해)` : ""}: ${t.text.slice(0, 1200)}${refs(t)}`);
   const guidelines = guidelinesFor(store, "chat"); // 사용자가 정한 행동 지침(guidelines.ts) — 맥락 넣는 법과 상관없이 늘
   const head = inlineContext(cfg)
-    ? [buildContext(store, new Date(), { selfId: cfg.slackUserId, query: focus ? `${focus.title} ${text}` : text }), "", ...(guidelines ? [guidelines, ""] : []), summary ?? "", "", ...(meeting(store) ? [meeting(store), ""] : [])]
+    ? [buildContext(store, new Date(), { selfId: cfg.slackUserId, query: focus ? `${focus.title} ${text}` : text, sessions: sessionsAllowed(cfg) }), "", ...(guidelines ? [guidelines, ""] : []), summary ?? "", "", ...(meeting(store) ? [meeting(store), ""] : [])]
     : [contextHeader(cfg, { ...(thread ? { thread } : {}), ...(focus ? { focus } : {}), ...(guidelines ? { guidelines } : {}) }), ""];
   return [
     ...head,

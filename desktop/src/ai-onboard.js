@@ -88,6 +88,13 @@ export const BRAIN_CHOICES = [
 // 「더 연결하기」(선택): 캘린더 ICS · Slack · 레포 폴더
 export const EXTRAS = ['gcal', 'outlook', 'slack', 'repos'];
 
+// 「더 연결하기」의 작업 기록 읽기(선택, 처음엔 꺼짐). 켜야만 데몬이 이 맥의 세션 기록을 읽는다
+export const SESSIONS_CONSENT = {
+  title: '내 Claude Code·Codex 작업 기록 읽기',
+  blurb: '이 맥에 남은 Claude Code·Codex 대화 기록(~/.claude/projects, ~/.codex/sessions)을 읽어서 최근 프로젝트와 할 일 진행을 정리해요.',
+  warn: '기록에는 다른 프로젝트 내용이나 대화 중에 붙여 넣은 메시지도 들어 있을 수 있어요. 켜지 않으면 읽지 않고, 설정에서 언제든 끌 수 있어요.',
+};
+
 export function providerById(id) {
   return AI_PROVIDERS.find((p) => p.id === id) ?? null;
 }
@@ -118,7 +125,7 @@ export const HUB = [
   { id: 'outlook', title: 'Outlook 캘린더', blurb: '내 일정을 시사가 읽습니다. 회사가 일정 게시를 막았으면 쓸 수 없습니다.', kind: 'done' },
   { id: 'slack', title: 'Slack', blurb: '슬랙 글을 시사가 읽습니다. 슬랙 공식 로그인만 쓰고 쿠키는 복사하지 않습니다. 회사처럼 관리자 승인이 필요한 곳은 막힐 수 있습니다. Claude Code가 먼저 필요합니다.', kind: 'done', needsAgent: 'claude' },
   { id: 'jira', title: 'Jira', blurb: '나한테 온 이슈를 시사가 읽습니다. 브라우저 로그인만 합니다. Claude Code가 먼저 필요합니다.', kind: 'done', needsAgent: 'claude' },
-  { id: 'repos', title: '레포 폴더', blurb: '코드를 고치게 할 레포가 모인 폴더(예: 홈의 code 폴더)를 알려 주세요. Claude Code 가 있을 때 써요.', kind: 'folder' },
+  { id: 'repos', title: '레포 폴더', blurb: '코드를 고치게 할 레포가 모인 폴더(예: 홈의 code 폴더)를 알려 주세요. 적은 폴더만 읽고, 그 안 레포의 내 커밋을 개요에 보여 줘요. 코드 고치기는 Claude Code 가 있을 때 돼요.', kind: 'folder' },
   { id: 'github', title: 'GitHub', blurb: 'GitHub에 로그인해 두면, 시사가 고친 코드를 변경 요청으로 올릴 수 있습니다. Claude Code나 Codex가 먼저 필요합니다.', kind: 'done', needsAgent: true },
 ];
 
@@ -151,7 +158,7 @@ export function aiProvidersFor(planId) {
 export const SISA_SAY = {
   name: '안녕하세요, 저는 **시사**예요.\n뭐라고 불러 드릴까요?',
   brain: '**AI**를 연결하면 저랑 자유롭게 이야기할 수 있어요.\nAI 없이도 할 일, 오늘 할 일 표, 회의 알림은 **그대로** 돼요.\n이 맥에서 찾은 게 있으면 바로 고르면 돼요.',
-  extras: '더 연결하고 싶은 게 있으면 **골라** 주세요.\n전부 **선택**이에요. 건너뛰어도 돼요.',
+  extras: '더 연결하고 싶은 게 있으면 **골라** 주세요.\n전부 **선택**이에요. 건너뛰어도 돼요.\n고른 것 말고는 **아무것도 읽지 않아요**.',
   done: '준비 끝! 🎉\n어떻게 쓰는지 **짧게** 보여 드릴까요?',
   welcome: '안녕하세요, **시사**예요.\n어떻게 쓸지 **하나만** 골라 주세요.\n나중에 언제든 바꿀 수 있어요.',
   calendar: '좋아요. **일정만** 볼게요.\n결제는 필요 없어요.\n일정 **주소 하나**만 붙여 주세요.',

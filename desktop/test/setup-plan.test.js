@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  NEW_DAEMON_CONFIG, setupView, cleanSetupPatch,
   SETUP_PHASES, SETUP_FLOW_VERSION, isSetupPhase, phaseAfterBrain, backPhase, restorePhase, agentFrom, setupSummary, okFolder, openSetupAtLaunch, NO_AI,
 } from '../src/setup-plan.js';
 
@@ -46,7 +47,7 @@ test('코딩 도구: 연결 끝낸 것 또는 시사 AI 로 쓰는 것', () => {
 
 test('끝 화면 요약: 된 것과 나중에 할 것', () => {
   const s = setupSummary({ brain: { ready: true, label: 'Gemini' }, done: { gcal: true }, repos: ['/Users/me/code'], name: '홍길동' });
-  assert.deepEqual(s.map((x) => [x.id, x.ok]), [['name', true], ['brain', true], ['calendar', true], ['slack', false], ['repos', true]]);
+  assert.deepEqual(s.map((x) => [x.id, x.ok]), [['name', true], ['brain', true], ['calendar', true], ['slack', false], ['repos', true], ['sessions', false]]);
   assert.equal(s[1].text, 'Gemini');
   const none = setupSummary({ brain: { ready: true, local: true } });
   assert.equal(none.every((x) => !x.ok), true, '로컬 뇌는 연결로 치지 않는다');
@@ -81,4 +82,32 @@ test('AI 없이 쓰기: 건너뛰기가 아니라 로컬 뇌로 정하고 다음
   assert.match(s[1].text, /AI 없이 쓰기/);
   assert.match(s[1].text, /설정/);
   assert.doesNotMatch(setupSummary({})[1].text, /—/);
+});
+
+test('작업 기록 읽기 동의: 처음엔 꺼짐, 켜야 끝 화면에 읽는다고 나온다', () => {
+  assert.deepEqual(setupView({}), { name: '', repoRoots: [], readSessions: false, onboarded: true });
+  assert.equal(setupView({ readSessions: true, onboarded: false }).readSessions, true);
+  assert.equal(setupView({ onboarded: false }).onboarded, false);
+  assert.equal(setupView(undefined).readSessions, false);
+  const off = setupSummary({}).find((x) => x.id === 'sessions');
+  assert.equal(off.ok, false);
+  assert.match(off.text, /읽지 않아요/);
+  const on = setupSummary({ readSessions: true }).find((x) => x.id === 'sessions');
+  assert.equal(on.ok, true);
+  for (const r of [...setupSummary({}), ...setupSummary({ readSessions: true })]) assert.doesNotMatch(r.text, /—/);
+});
+
+test('cleanSetupPatch: 작업 기록 읽기(참/거짓)와 마법사 마침(true 만)', () => {
+  assert.deepEqual(cleanSetupPatch({ readSessions: true }), { readSessions: true });
+  assert.deepEqual(cleanSetupPatch({ readSessions: false }), { readSessions: false });
+  assert.deepEqual(cleanSetupPatch({ onboarded: true }), { onboarded: true });
+  assert.deepEqual(cleanSetupPatch({ onboarded: true, readSessions: false, repoRoots: ['/a'] }), { onboarded: true, readSessions: false, repoRoots: ['/a'] });
+  for (const bad of [{ readSessions: 'yes' }, { onboarded: false }, { onboarded: 'true' }, { onboarded: true, brain: {} }]) {
+    assert.equal(cleanSetupPatch(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('앱이 데몬보다 먼저 만드는 config.json 은 새 설치 표시(onboarded: false)', () => {
+  assert.deepEqual({ ...NEW_DAEMON_CONFIG }, { onboarded: false });
+  assert.equal(Object.isFrozen(NEW_DAEMON_CONFIG), true);
 });

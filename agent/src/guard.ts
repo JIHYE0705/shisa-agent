@@ -41,3 +41,35 @@ export function isReadOnlyCall(toolName: string, input: unknown, conns: Connecto
   }
   return deny(`${toolName} 사용 불가`);
 }
+
+// ── MCP 서버 격리 ────────────────────────────────────────────────
+// 브리핑·채팅 모델은 커넥터(config.json connectors)로 연결한 MCP 서버와 시사가 붙인 읽기 전용 서버(gh·cy)만 쓴다.
+// ~/.claude.json 에 등록된 그 밖의 서버(다른 일에 쓰려고 등록한 것)·claude.ai 커넥터는 읽기 도구여도 막는다.
+
+// 서버 이름이 도구 이름 안에서 바뀌는 모양(Claude Code 는 글자·숫자·_·- 밖의 글자를 _ 로 바꾼다)
+export const mcpNameOf = (server: string) => server.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+// 쓸 수 있는 MCP 서버: 커넥터가 mcp 로 쓰는 서버 + extra(gh·cy)
+export function allowedMcpServers(conns: Connectors = CONNECTORS, extra: string[] = [GH_SERVER, CTX_SERVER]): string[] {
+  const out = new Set<string>(extra);
+  for (const cap of CAPABILITIES) { const c = conns[cap]; if (c.mode === "mcp") out.add(c.server); }
+  return [...out];
+}
+
+// 이 호출이 허용된 서버의 것인가. MCP 가 아닌 도구는 여기서 따지지 않는다(다른 훅이 본다)
+export function mcpServerVerdict(toolName: string, input: unknown, allowed: readonly string[]): Verdict {
+  const names = allowed.map(mcpNameOf);
+  if (toolName === "ListMcpResourcesTool" || toolName === "ReadMcpResourceTool") {
+    const s = (input as { server?: unknown } | null)?.server;
+    return typeof s === "string" && names.includes(mcpNameOf(s)) ? { allow: true } : { allow: false, reason: "커넥터로 연결하지 않은 MCP 서버의 리소스는 읽지 않아요" };
+  }
+  if (!toolName.startsWith("mcp__")) return { allow: true };
+  if (names.some((n) => toolName.startsWith(`mcp__${n}__`))) return { allow: true };
+  return { allow: false, reason: `${toolName} 은(는) 커넥터로 연결하지 않은 MCP 서버의 도구라 쓰지 않아요` };
+}
+
+// 모델에 아예 안 보이게 할 서버(disallowedTools 의 "mcp__<서버>" 규칙): 등록된 서버 중 허용 목록에 없는 것
+export function hiddenMcpRules(allowed: readonly string[], registered: readonly string[]): string[] {
+  const ok = new Set(allowed.map(mcpNameOf));
+  return [...new Set(registered.map(mcpNameOf))].filter((n) => n && !ok.has(n)).map((n) => `mcp__${n}`);
+}

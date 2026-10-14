@@ -94,6 +94,7 @@ try { section = normalizeSection(localStorage.getItem('section')) ?? 'overview';
 let setupPhase = 'name'; // name·brain·ai-key·extras·connect·done (setup-plan.js — 키·토큰은 저장하지 않는다)
 let setupName = ''; // 데몬 설정 user.name
 let setupRepos = []; // 데몬 설정 repoRoots
+let setupReadSessions = false; // 데몬 설정 readSessions(이 맥의 Claude Code·Codex 작업 기록 읽기: 새 설치는 꺼짐)
 let detected = { claude: null, codex: null }; // 이 맥에서 찾은 Claude Code·Codex(로그인까지)
 // 뇌(말 거는 AI) 연결 상태 — main 이 GET /status 로 알려 준다(brain-state.js brainView). 모르면 막지 않는다
 let brain = { ready: true, known: false, connected: [] };
@@ -158,6 +159,7 @@ async function loadSetupSettings() {
   if (!r?.ok) return;
   setupName = r.name || '';
   setupRepos = Array.isArray(r.repoRoots) ? r.repoRoots : [];
+  setupReadSessions = r.readSessions === true;
   setupKey = '';
   if (section === 'setup') renderSetupView(false);
 }
@@ -167,6 +169,7 @@ async function saveSetupSettings(patch) {
   if (r?.ok) {
     if (typeof r.name === 'string') setupName = r.name;
     if (Array.isArray(r.repoRoots)) setupRepos = r.repoRoots;
+    if (typeof r.readSessions === 'boolean') setupReadSessions = r.readSessions;
   }
   return !!r?.ok;
 }
@@ -476,7 +479,7 @@ function renderSetupView(resetScroll) {
     return;
   }
   clampSetupCursor();
-  const key = `${setupPhase}|${setupName}|${setupRepos.join(',')}|${JSON.stringify(detected)}|${JSON.stringify(brain)}|${(sisa.connected || []).join(',')}|${setupAgent}|${setupLink}|${setupCursor}|${keyStatus}|${JSON.stringify(sisa.done)}|${setupPicked.join(',')}|${JSON.stringify(setupChoices)}|${agentLoginState.loggedIn}|${agentLoginState.installed}`;
+  const key = `${setupPhase}|${setupName}|${setupRepos.join(',')}|${setupReadSessions}|${JSON.stringify(detected)}|${JSON.stringify(brain)}|${(sisa.connected || []).join(',')}|${setupAgent}|${setupLink}|${setupCursor}|${keyStatus}|${JSON.stringify(sisa.done)}|${setupPicked.join(',')}|${JSON.stringify(setupChoices)}|${agentLoginState.loggedIn}|${agentLoginState.installed}`;
   if (!resetScroll && key === setupKey && $('sec-setup').childElementCount) {
     watchAgentLogin();
     return;
@@ -500,6 +503,7 @@ function renderSetupView(resetScroll) {
     detected,
     current: sisa.provider,
     repos: setupRepos,
+    readSessions: setupReadSessions,
     brain,
     coder: hasCoder(),
     onName: async (name) => {
@@ -599,7 +603,20 @@ function renderSetupView(resetScroll) {
       await saveSetupSettings({ repoRoots: setupRepos.filter((x) => x !== dir) });
       redraw(false);
     },
-    onFinishExtras: () => {
+    onToggleSessions: async (on) => {
+      await saveSetupSettings({ readSessions: !!on });
+      redraw(false);
+    },
+    // 마법사를 마치지 않고 넘어가기: 아무것도 읽지 않은 채로 시작(설정·이 탭에서 언제든 다시)
+    onSkipSetup: async () => {
+      await saveSetupSettings({ onboarded: true });
+      try { localStorage.setItem('setupDone', '1'); } catch { /* 무시 */ }
+      setupPhase = 'done';
+      saveSetup();
+      goto('overview');
+    },
+    onFinishExtras: async () => {
+      await saveSetupSettings({ onboarded: true }); // 이제부터 데몬이 고른 것만 읽고 정리를 시작한다
       try { localStorage.setItem('setupDone', '1'); } catch { /* 무시 */ }
       setupPhase = 'done';
       saveSetup();

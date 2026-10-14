@@ -193,3 +193,22 @@ test('오늘 할 일 알림: 저장 본문 거르기 · 시각 읽기 · 한 줄
   const html = readFileSync(new URL('../renderer/settings.html', import.meta.url), 'utf8');
   for (const id of ['rem-mode', 'rem-every', 'rem-times', 'rem-times-save', 'rem-summary']) assert.match(html, new RegExp(`id="${id}"`));
 });
+
+test('이 맥에서 읽는 것: 작업 기록 읽기는 켜고 끄기만, 레포 폴더는 고른 것만 보여 준다', async () => {
+  const { localReadView } = await import('../src/settings.js');
+  assert.deepEqual(sanitizeSettingsPatch({ readSessions: true }), { readSessions: true });
+  assert.deepEqual(sanitizeSettingsPatch({ readSessions: false }), { readSessions: false });
+  assert.equal(sanitizeSettingsPatch({ readSessions: 'on' }), null);
+  assert.equal(sanitizeSettingsPatch({ onboarded: true }), null); // 마법사 마침은 설정 창이 아니라 마법사가
+  const none = localReadView({ readSessions: false, repoRoots: [] });
+  assert.equal(none.sessions, false);
+  assert.match(none.reposText, /읽지 않아요/);
+  const some = localReadView({ readSessions: true, repoRoots: ['/r/a'] });
+  assert.equal(some.sessions, true);
+  assert.match(some.reposText, /\/r\/a/);
+  assert.equal(localReadView(undefined).sessions, false);
+  const html = readFileSync(new URL('../renderer/settings.html', import.meta.url), 'utf8');
+  assert.match(html, /id="local-read"/);
+  assert.match(html, /id="open-repos"/);
+  for (const t of [none.reposText, some.reposText]) assert.doesNotMatch(t, /—/);
+});

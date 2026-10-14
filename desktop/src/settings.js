@@ -30,7 +30,12 @@ export const PHRASE_MAX_LINES = 10; // 데몬(agent/src/phrases.ts)과 같은 �
 export function sanitizeSettingsPatch(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
   const out = {};
-  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder') return null;
+  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions') return null;
+  // 이 맥의 Claude Code·Codex 작업 기록 읽기(켜고 끄기만)
+  if (p.readSessions !== undefined) {
+    if (typeof p.readSessions !== 'boolean') return null;
+    out.readSessions = p.readSessions;
+  }
   if (p.models !== undefined) {
     if (!p.models || typeof p.models !== 'object' || Array.isArray(p.models)) return null;
     const m = {};
@@ -144,6 +149,15 @@ export function phraseProblem(p, text) {
 export const PANEL_TARGETS = ['setup', 'models'];
 export const okPanelTarget = (s) => typeof s === 'string' && PANEL_TARGETS.includes(s);
 // 줄에 [설치 안내]를 붙일까: 써야 하는데 안 되는 것만(안 씀·정상·모름은 아님)
+// 「이 맥에서 읽는 것」 카드: 작업 기록 읽기 켬/끔 + 레포 폴더(고른 폴더만 읽는다)
+export function localReadView(st) {
+  const repos = Array.isArray(st?.repoRoots) ? st.repoRoots.filter((x) => typeof x === 'string') : [];
+  return {
+    sessions: st?.readSessions === true,
+    repos,
+    reposText: repos.length ? `레포 폴더 ${repos.length}개: ${repos.join(', ')}` : '레포 폴더: 고른 폴더가 없어서 커밋을 읽지 않아요',
+  };
+}
 export const needsSetupHint = (row) => row?.state === 'error' || row?.state === 'warn';
 
 export const DOT = { ok: 'ok', warn: 'warn', error: 'err', off: 'off', unknown: 'unknown' };

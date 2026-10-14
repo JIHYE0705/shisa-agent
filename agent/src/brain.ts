@@ -13,8 +13,10 @@ export type AskRun = { kind: RunKind; title: string; ref?: string }; // ref: 관
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { HOME_DIR, type Config } from "./config.ts";
-import { excludeBriefingSources } from "./settings.ts";
-import { isReadOnlyCall } from "./guard.ts";
+import { briefingExcludeOf, excludeBriefingSources } from "./settings.ts";
+import { allowedMcpServers, hiddenMcpRules, isReadOnlyCall, mcpNameOf, mcpServerVerdict } from "./guard.ts";
+import { registeredMcpServerNames } from "./mcp.ts";
+import { sessionsAllowed } from "./onboarding.ts";
 import { CONNECTORS, brainAllowedTools, mcpTool, type Connectors } from "./connectors.ts";
 import { CODE_TOOLS, isCodeReadCall, insideRoots } from "./code-read.ts";
 import { loadInstructions } from "./instructions.ts";
@@ -139,10 +141,11 @@ export const INTERACTIVE_SYSTEM = BASE(WRITE_RULE); // 대화형(쓰기는 승�
 // 지식그래프에서 최근 맥락을 뽑아 프롬프트에 넣을 텍스트로 만든다(큰 맥락 블록).
 // 브리핑은 늘 이걸 쓴다(열린 할 일 전부·세션·Slack 미답을 한 번에 훑어 정리하는 게 일이라). 채팅·Slack DM 은
 // cfg.contextMode = "inline" 일 때만 — 기본(tools)은 작은 머리말 + 맥락 도구(ctx-tools.ts)
-export function buildContext(store: Store, now = new Date(), opts: { selfId?: string; query?: string } = {}): string {
+// sessions: false 면 작업 세션을 넣지 않는다(작업 기록 읽기를 끈 사람: onboarding.ts)
+export function buildContext(store: Store, now = new Date(), opts: { selfId?: string; query?: string; sessions?: boolean } = {}): string {
   const since = new Date(now.getTime() - 48 * 3600e3).toISOString();
   const hidden = store.hiddenProjects(); // 패널에서 숨긴 프로젝트의 세션은 뺀다
-  const sessions = store.nodesSince("session", since, 60).filter((s) => !store.isHiddenPath(String(s.props.cwd ?? ""), hidden)).slice(0, 40);
+  const sessions = (opts.sessions === false ? [] : store.nodesSince("session", since, 60)).filter((s) => !store.isHiddenPath(String(s.props.cwd ?? ""), hidden)).slice(0, 40);
   const byProject = new Map<string, typeof sessions>();
   for (const s of sessions) {
     const p = (s.props.cwd as string) ?? "(unknown)";
@@ -224,6 +227,31 @@ const readOnlyHook = (conns: Connectors = CONNECTORS): HookCallback => async (in
     : { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: v.reason } };
 };
 
+// MCP 서버 격리(guard.ts mcpServerVerdict): 커넥터로 연결한 서버·gh·cy 밖의 MCP 도구는 훅·canUseTool 에서 먼저 막는다.
+// settingSources ["user"] 라 ~/.claude.json 의 서버가 다 붙지만, 여기서 막혀 읽기 도구여도 쓰지 못한다(서브에이전트 안의 호출도 같은 훅)
+const mcpDeny = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse" as const, permissionDecision: "deny" as const, permissionDecisionReason: reason } });
+export function gateMcpHook(inner: HookCallback, allowed: readonly string[]): HookCallback {
+  return async (input, id, o) => {
+    if (input.hook_event_name === "PreToolUse") {
+      const v = mcpServerVerdict(input.tool_name, input.tool_input, allowed);
+      if (!v.allow) return mcpDeny(v.reason);
+    }
+    return inner(input, id, o);
+  };
+}
+export function gateMcpCan(inner: CanUseTool, allowed: readonly string[]): CanUseTool {
+  return async (name, input, o) => {
+    const v = mcpServerVerdict(name, input, allowed);
+    return v.allow ? inner(name, input, o) : { behavior: "deny", message: v.reason };
+  };
+}
+
+// SDK 에 넘길 환경: 허용 목록 밖 서버를 모델에 안 보이게(disallowedTools "mcp__<서버>") + claude.ai 커넥터 끄기(커넥터로 고른 게 아니면)
+export function mcpIsolation(allowed: readonly string[], registered: readonly string[] = registeredMcpServerNames()): { hidden: string[]; env: Record<string, string> } {
+  const claudeAi = allowed.some((s) => mcpNameOf(s).startsWith("claude_ai_"));
+  return { hidden: hiddenMcpRules(allowed, registered), env: claudeAi ? {} : { ENABLE_CLAUDEAI_MCP_SERVERS: "false" } };
+}
+
 // claude-code 가 아닌 뇌(local·gemini·openai·codex)에 넘기는 사실(할 일 목록 등)
 export type BrainFacts = { now?: Date; open?: LocalTodo[]; done?: LocalTodo[] };
 
@@ -246,7 +274,7 @@ export async function think(
 ): Promise<Thought> {
   const run = opts.run ?? (task.startsWith(BRIEFING_HEAD) ? { kind: "briefing", title: "정기 브리핑" } : { kind: "other", title: task.split("\n")[0].slice(0, 80) });
   const tools = opts.context === "tools";
-  if (task.startsWith(BRIEFING_HEAD)) task = excludeBriefingSources(task, cfg.briefing?.exclude); // 설정 창에서 뺀 출처는 브리핑에서 빼기(연결 상태로 만든 과제 글 위에)
+  if (task.startsWith(BRIEFING_HEAD)) task = excludeBriefingSources(task, briefingExcludeOf(cfg)); // 설정 창에서 뺀 출처는 브리핑에서 빼기(연결 상태로 만든 과제 글 위에)
   // 사용자가 정한 행동 지침(guidelines.ts): 브리핑은 briefing, 사용자가 직접 말한 요청(Slack DM)은 chat 범위. 그 밖의 정기 작업엔 없음
   const prompt = thinkPrompt(cfg, store, task, { tools, scope: run.kind === "briefing" ? "briefing" : opts.interactive ? "chat" : undefined });
   return ask<Thought>(cfg, prompt, opts.todoOps ? REQUEST_SCHEMA : SCHEMA, onStep, {
@@ -261,7 +289,7 @@ export function thinkPrompt(cfg: Config, store: Store, task: string, o: { tools?
   const guidelines = o.scope ? guidelinesFor(store, o.scope) : "";
   const head = o.tools
     ? contextHeader(cfg, { ...(o.now ? { now: o.now } : {}), ...(guidelines ? { guidelines } : {}) })
-    : `${buildContext(store, o.now ?? new Date(), { selfId: cfg.slackUserId })}${guidelines ? `\n\n${guidelines}` : ""}`;
+    : `${buildContext(store, o.now ?? new Date(), { selfId: cfg.slackUserId, sessions: sessionsAllowed(cfg) })}${guidelines ? `\n\n${guidelines}` : ""}`;
   return `${head}\n\n## 지금 할 일\n${task}`;
 }
 
@@ -369,6 +397,7 @@ export function toolOptions(cfg: Config, opts: AskOpts, onWait?: (w: PermWait) =
   const code = tools && opts.code?.roots.length ? opts.code : undefined;
   const cwd = askCwd(cfg, opts);
   const gh = tools && ghEnabled(cfg); // 읽기 전용 GitHub(gh CLI) 인프로세스 MCP
+  const mcpAllow = allowedMcpServers(conns, [GH_SERVER, CTX_SERVER, ...(cfg.allowMcp ?? [])]); // 커넥터 서버 + gh + cy + 사용자가 config.json allowMcp 에 적은 것만(그 밖의 MCP 서버는 훅에서 막는다)
   const ctx = tools && !!opts.ctx; // 맥락 도구(읽기 전용 인프로세스 MCP "cy") — 대화형이면 훅이 읽기로 보고 묻지 않고 허용
   if (tools && opts.interactive) {
     // 대화형: 내장 도구 전부(서브에이전트 Agent 포함 — 포그라운드·내장 종류만, subagents.ts) + 훅이 하드 차단·읽기 허용·규칙 허용,
@@ -392,8 +421,9 @@ export function toolOptions(cfg: Config, opts: AskOpts, onWait?: (w: PermWait) =
       subagents: true,
       isolation,
       permissionMode: "default" as const,
-      hook: broker ? broker.hook(pctx, opts.interactive.origin) : readOnlyHookFor(undefined, conns),
-      canUseTool: broker ? broker.canUseTool(opts.interactive.origin, pctx, onWait) : undefined,
+      hook: gateMcpHook(broker ? broker.hook(pctx, opts.interactive.origin) : readOnlyHookFor(undefined, conns), mcpAllow),
+      canUseTool: broker ? gateMcpCan(broker.canUseTool(opts.interactive.origin, pctx, onWait), mcpAllow) : undefined,
+      mcpAllow,
       interactive: true,
     };
   }
@@ -406,9 +436,10 @@ export function toolOptions(cfg: Config, opts: AskOpts, onWait?: (w: PermWait) =
     ctx,
     hint: gh ? GH_HINT : "", // 시스템 프롬프트에 덧붙임
     disallowedTools: ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Agent", "WebFetch", "WebSearch", ...(code ? [] : CODE_TOOLS)],
-    hook: code ? readOnlyHookFor({ roots: code.roots, cwd }, conns) : readOnlyHook(conns),
+    hook: gateMcpHook(code ? readOnlyHookFor({ roots: code.roots, cwd }, conns) : readOnlyHook(conns), mcpAllow),
     permissionMode: "dontAsk" as const,
     canUseTool: undefined,
+    mcpAllow,
     subagents: false,
     isolation: undefined,
     interactive: false,
@@ -430,6 +461,7 @@ async function askRun<T>(
   const canUseTool = abort && t.canUseTool ? withAbort(t.canUseTool, abort.signal) : t.canUseTool;
   t.isolation?.setLog((ev) => run.log(ev), run.id);
   mkdirSync(join(HOME_DIR, "brain"), { recursive: true });
+  const iso = t.settingSources.length ? mcpIsolation(t.mcpAllow) : { hidden: [], env: {} }; // 사용자 MCP 설정을 읽을 때만
   const q = query({
     prompt: promptInput(prompt, opts.blocks),
     options: {
@@ -444,9 +476,10 @@ async function askRun<T>(
       permissionMode: t.permissionMode,
       ...(canUseTool ? { canUseTool } : {}),
       ...(abort ? { abortController: abort } : {}),
-      ...(t.subagents ? { ...SUBAGENT_SDK_OPTIONS, env: subagentEnv() } : {}),
+      ...(t.subagents ? SUBAGENT_SDK_OPTIONS : {}),
+      ...(t.subagents || Object.keys(iso.env).length ? { env: { ...(t.subagents ? subagentEnv() : process.env), ...iso.env } } : {}),
       allowedTools: t.allowedTools,
-      disallowedTools: t.disallowedTools,
+      disallowedTools: [...t.disallowedTools, ...iso.hidden],
       // 대화형 훅은 같은 레포 잠금을 기다리느라 오래 걸릴 수 있다(permissions.ts LOCK_WAIT_MS) — 시간 제한을 그보다 길게
       hooks: {
         PreToolUse: [{ hooks: [t.hook], ...(t.interactive ? { timeout: HOOK_TIMEOUT_S } : {}) }],

@@ -66,6 +66,7 @@ type Bubble = {
 - `briefing{exclude,sources}`, `phrases[]`, `autoMerge[]`
 - `brain{provider,model,keys{gemini,openai,anthropic: boolean}}`
 - `user{name?}`, `repoRoots[]`, `configPath`
+- `onboarded`(설치 마법사를 마쳤나), `readSessions`(이 맥의 Claude Code·Codex 작업 기록을 읽나)
 
 `PUT` 본문(전부 선택, 모르는 키는 400):
 
@@ -77,13 +78,16 @@ type Bubble = {
   "autoMerge": ["owner/name"],
   "brain": { "provider": "gemini", "keys": { "gemini": "…" | null }, "model": "gemini-2.5-flash" | null },
   "user": { "name": "길동" | null },
-  "repoRoots": ["/Users/me/code"]                         // 절대 경로만
+  "repoRoots": ["/Users/me/code"],                        // 절대 경로만
+  "readSessions": true,                                   // 작업 기록 읽기 켜고 끄기
+  "onboarded": true                                       // 설치 마법사를 마침(마법사가 보낸다)
 }
 ```
 
 - 결과는 200 `{ ok, settings, applied: "live", restartNeeded: false }`다.
 - `config.json`에 원자적으로 합쳐 쓰고 메모리 설정도 바로 바꾼다. 데몬을 다시 켤 필요가 없다.
 - 뇌가 바뀌면 SSE `status`를 보낸다.
+- `onboarded`가 `false`인 동안(새 설치)은 브리핑·Slack 할 일·할 일 자동 완료·진행 확인·지식그래프·프로필 학습을 돌리지 않고 작업 기록·git 도 읽지 않는다. `true`가 되면 그때 첫 정리를 한 번 한다. 처음 `true`를 적을 때 빈 칸(`readSessions`·`repoRoots`·`brain.provider`)은 지금 쓰는 값으로 같이 적는다.
 - 커넥터(`connectors`)는 여기서 바꾸지 않는다. 파일을 고친 뒤 데몬을 다시 켜야 한다.
 
 ### `GET /connections` · `POST /connections/check { id? }`

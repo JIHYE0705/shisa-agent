@@ -210,12 +210,15 @@ cd ~/shisa-agent && ./ops/uninstall.sh
 
 | 키 | 환경변수 | 기본값 | 설명 |
 |---|---|---|---|
-| `brain.provider` | `CY_AGENT_BRAIN` | `claude-code` | 뇌. `claude-code` · `codex` · `gemini` · `openai` · `anthropic`(Claude API 키) · `local`(뇌 없음) |
+| `onboarded` |  | 새 설치는 `false` | 설치 마법사를 마쳤는지. `false`인 동안은 브리핑·정리 작업(모델)을 하나도 돌리지 않고, 작업 기록과 레포도 읽지 않습니다. 마법사의 「다 했어요」나 「설치는 나중에 할게요」를 누르면 `true`가 됩니다. 이 키가 없는 예전 설정은 마친 것으로 봅니다 |
+| `readSessions` |  | 새 설치는 `false` | 이 맥의 Claude Code·Codex 작업 기록(`~/.claude/projects`, `~/.codex/sessions`)을 읽을지. 마법사의 「더 연결하기」나 설정 창 「이 맥에서 읽는 것」에서 켜고 끕니다. 예전 설정은 `true` |
+| `brain.provider` | `CY_AGENT_BRAIN` | 새 설치는 `local`(아직 안 고름), 예전 설정은 `claude-code` | 뇌. `claude-code` · `codex` · `gemini` · `openai` · `anthropic`(Claude API 키) · `local`(뇌 없음) |
 | `brain.geminiApiKey` | `CY_AGENT_GEMINI_API_KEY` / `GEMINI_API_KEY` |  | Gemini 키 |
 | `brain.openaiApiKey` | `CY_AGENT_OPENAI_API_KEY` / `OPENAI_API_KEY` |  | OpenAI 키 |
 | `brain.anthropicApiKey` | `CY_AGENT_ANTHROPIC_API_KEY` |  | Claude API 키. `ANTHROPIC_API_KEY`는 Claude Code도 쓰는 이름이라 일부러 읽지 않습니다 |
 | `user.name` / `user.aliases` | `CY_AGENT_USER_NAME` | git `user.name` | 부를 이름 / 지식그래프에서 "나"로 볼 다른 이름들. 비워 두면 git 이름을 부르고, git 이름·이메일 아이디·맥 계정 이름도 "나"로 봅니다 |
-| `repoRoots` |  | `["~/code"]` | 코드를 고쳐도 되는 레포 폴더. 이 밖은 건드리지 않습니다 |
+| `repoRoots` |  | 새 설치는 `[]`, 예전 설정은 `["~/code"]` | 코드를 고쳐도 되는 레포 폴더. 개요의 내 커밋도 이 폴더에서만 읽습니다. 이 밖은 건드리지 않습니다 |
+| `allowMcp` |  | `[]` | 커넥터 밖에서 채팅이 더 써도 되는 MCP 서버 이름(예: `["notion"]`). 여기 없는 서버는 Claude Code에 등록돼 있어도 브리핑·채팅에서 쓰지 않습니다 |
 | `connectors.<기능>` | `CY_AGENT_SLACK_USER_TOKEN`, `CY_AGENT_CALENDAR_ICS_URL` | 전부 off | 위 [연결](#연결) 참고 |
 | `slackBotToken` / `slackAppToken` / `slackUserId` | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_USER_ID` |  | (선택) Slack 봇 DM·할 일 캔버스. [slack.md](docs/connect/slack.md) |
 | `models.quick` / `.general` / `.code` / `.light` | `CY_AGENT_MODEL_QUICK` / `_GENERAL` / `_CODE` / `_LIGHT` | Sonnet / Sonnet / Opus / Haiku | 더블클릭 대화 / 브리핑·채팅 / 코드 고치기 / 가벼운 일 (Claude Code일 때) |

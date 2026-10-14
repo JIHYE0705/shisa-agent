@@ -30,3 +30,13 @@ export function serverOptions(name: string, url?: string):
     ? { settingSources: [], strictMcpConfig: true, mcpServers: { [name]: server } }
     : { settingSources: ["user"] };
 }
+
+// ~/.claude.json 에 등록된 MCP 서버 이름 전부(사용자 범위 + 폴더별 로컬 범위). 브리핑·채팅에서 숨길 서버를 고를 때 쓴다
+export function registeredMcpServerNames(path = join(homedir(), ".claude.json")): string[] {
+  try {
+    const j = JSON.parse(readFileSync(path, "utf8"));
+    const out = new Set<string>(Object.keys(j?.mcpServers ?? {}));
+    for (const p of Object.values((j?.projects ?? {}) as Record<string, any>)) for (const k of Object.keys(p?.mcpServers ?? {})) out.add(k);
+    return [...out];
+  } catch { return []; }
+}

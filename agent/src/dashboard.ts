@@ -7,6 +7,7 @@ import type { Store, Node, ProposalStatus, Todo, TodoDoneBy } from "./store.ts";
 import { gitActivity, type Commit, type RepoActivity } from "./git.ts";
 import { listRules, ruleSummary } from "./todo-rules.ts";
 import { DailyPlanService, type DailyPlan } from "./daily-plan.ts";
+import { gitAllowed, sessionsAllowed } from "./onboarding.ts";
 
 export type DashProject = {
   name: string; path: string; lastActive: string; sessions24h: number;
@@ -55,12 +56,13 @@ export function isNoisePath(path: string): boolean {
 
 export async function buildDashboard(cfg: Config, store: Store, deps: DashboardDeps = {}): Promise<Dashboard> {
   const now = deps.now ?? new Date();
-  const repos = await (deps.git ?? ((c) => gitActivity(c)))(cfg).catch(() => [] as RepoActivity[]);
+  // git 커밋은 사용자가 고른 레포 폴더에서만, 작업 기록(세션)은 켰을 때만(onboarding.ts)
+  const repos = gitAllowed(cfg) ? await (deps.git ?? ((c) => gitActivity(c)))(cfg).catch(() => [] as RepoActivity[]) : [];
   return {
     generatedAt: now.toISOString(),
     briefing: store.latestBriefing(),
     commitsToday: repos.reduce((n, r) => n + r.commitsToday.length, 0),
-    projects: projects(store, repos, now),
+    projects: projects(store, repos, now, sessionsAllowed(cfg)),
     todos: store.openTodos().map(dashTodo),
     recentDone: store.recentlyDone(new Date(now.getTime() - 3 * DAY).toISOString(), 10)
       .map((t) => ({ ...dashTodo(t), doneAt: t.updated ?? t.created })),
@@ -89,7 +91,7 @@ function dashTodo(t: Todo): DashTodo {
 }
 
 // 세션 cwd가 레포 하위 폴더·워크트리여도 그 레포 하나로 묶는다(가장 긴 경로 우선)
-function projects(store: Store, repos: RepoActivity[], now: Date): DashProject[] {
+function projects(store: Store, repos: RepoActivity[], now: Date, withSessions = true): DashProject[] {
   const since = now.getTime() - 7 * DAY;
   const byLen = [...repos].sort((a, b) => b.path.length - a.path.length);
   const groups = new Map<string, { repo?: RepoActivity; sessions: Node[] }>();
@@ -99,7 +101,7 @@ function projects(store: Store, repos: RepoActivity[], now: Date): DashProject[]
     if (!groups.has(key)) groups.set(key, { repo, sessions: [] });
     return groups.get(key)!;
   };
-  for (const p of store.nodesSince("project", new Date(since).toISOString(), 200)) {
+  for (const p of withSessions ? store.nodesSince("project", new Date(since).toISOString(), 200) : []) {
     const path = (p.props.path as string) ?? p.id.replace(/^project:/, "");
     if (isNoisePath(path)) continue;
     group(path).sessions.push(...store.inbound(p.id, "in").filter((s) => Date.parse(s.updated) >= since));

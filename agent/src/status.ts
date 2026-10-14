@@ -9,6 +9,7 @@ import { brainKeyReady, commandOnPath } from "./providers.ts";
 import { CAPABILITIES, CONNECTORS, connectorStatus, type Capability } from "./connectors.ts";
 import { BRAIN_LABEL } from "./connections.ts";
 import { NEEDS_CODER, featureBrain, type FeatureBrain } from "./feature-brain.ts";
+import { WAIT_SETUP } from "./onboarding.ts";
 
 export type BrainStatus = {
   provider: string;
@@ -31,6 +32,7 @@ export type Status = {
   // needs: 이 연결을 읽으려면 뇌가 Claude Code 여야 함(지금 뇌로는 안 읽음 → ready=false)
   connectors: { cap: Capability; label: string; mode: string; ready: boolean; needs?: "claude-code" }[];
   user: { name?: string };
+  onboarded: boolean; // 설치 마법사를 마쳤나(onboarding.ts): false 면 뒤에서 도는 일·작업 기록 읽기를 쉰다
 };
 
 export type StatusDeps = {
@@ -41,7 +43,7 @@ export type StatusDeps = {
 
 const KEY_LABEL: Record<string, string> = { gemini: "Gemini", openai: "OpenAI", anthropic: "Claude" };
 
-export function statusOf(cfg: Pick<Config, "brain" | "connectors" | "user">, deps: StatusDeps = {}): Status {
+export function statusOf(cfg: Pick<Config, "brain" | "connectors" | "user" | "onboarded">, deps: StatusDeps = {}): Status {
   const env = deps.env ?? process.env;
   const provider = cfg.brain?.provider ?? "claude-code";
   const claude = deps.claude?.();
@@ -62,7 +64,7 @@ export function statusOf(cfg: Pick<Config, "brain" | "connectors" | "user">, dep
   const background: Features["background"] = by === "claude-code"
     ? { by, ready: claude === undefined ? null : claude, detail: claude === false ? "Claude Code 로그인이 필요해요" : "Claude Code 로 돌아요" }
     : by === "codex" ? { by, ready: true, detail: "Codex 로 돌아요" }
-    : { by: null, ready: false, detail: provider === "codex" ? "Codex 를 찾을 수 없어요" : NEEDS_CODER };
+    : { by: null, ready: false, detail: cfg.onboarded === false ? WAIT_SETUP : provider === "codex" ? "Codex 를 찾을 수 없어요" : NEEDS_CODER };
   const mcp = provider === "claude-code";
   return {
     brain: { provider, label, ready, local, detail },
@@ -75,5 +77,6 @@ export function statusOf(cfg: Pick<Config, "brain" | "connectors" | "user">, dep
       return { cap, label: x.label, mode: x.mode, ready: x.mode !== "off" && x.ready && !needs, ...(needs ? { needs: "claude-code" as const } : {}) };
     }),
     user: cfg.user?.name ? { name: cfg.user.name } : {},
+    onboarded: cfg.onboarded !== false,
   };
 }
