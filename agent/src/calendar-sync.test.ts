@@ -120,13 +120,13 @@ test("extractLocation: 회의실 이름 — 비면 없음, 여러 곳, Teams 자
 test("alertText: 회의실·온라인(Teams) — 둘 다, 하나만, 없음, 긴 장소는 detail 로", () => {
   const base: Meeting = { id: "x", subject: "주간 회의", start: "2026-10-08T04:00:00.000Z", end: "2026-10-08T05:00:00.000Z" };
   const teams = "https://teams.microsoft.com/l/meetup-join/abc";
-  assert.equal(alertText(base), "회의 10분 전이에요! 〈주간 회의〉 13:00");
-  assert.equal(alertText({ ...base, location: "Room_A(8P)" }), "회의 10분 전이에요! 〈주간 회의〉 13:00 — 📍 Room_A(8P)");
-  assert.equal(alertText({ ...base, link: teams }), "회의 10분 전이에요! 〈주간 회의〉 13:00 — 온라인(Teams)");
-  assert.equal(alertText({ ...base, location: "Room_A(8P)", link: teams }), "회의 10분 전이에요! 〈주간 회의〉 13:00 — 📍 Room_A(8P) · 온라인(Teams)");
-  assert.equal(alertText({ ...base, link: "https://zoom.us/j/1" }), "회의 10분 전이에요! 〈주간 회의〉 13:00 — 온라인");
+  assert.equal(alertText(base), "일정 10분 전이에요! 〈주간 회의〉 13:00");
+  assert.equal(alertText({ ...base, location: "Room_A(8P)" }), "일정 10분 전이에요! 〈주간 회의〉 13:00 · 📍 Room_A(8P)");
+  assert.equal(alertText({ ...base, link: teams }), "일정 10분 전이에요! 〈주간 회의〉 13:00 · 온라인(Teams)");
+  assert.equal(alertText({ ...base, location: "Room_A(8P)", link: teams }), "일정 10분 전이에요! 〈주간 회의〉 13:00 · 📍 Room_A(8P) · 온라인(Teams)");
+  assert.equal(alertText({ ...base, link: "https://zoom.us/j/1" }), "일정 10분 전이에요! 〈주간 회의〉 13:00 · 온라인");
   // Outlook 웹 링크만 있으면 온라인이라고 하지 않는다
-  assert.equal(alertText({ ...base, webLink: "https://outlook.office365.com/owa/?path=/calendar/item" }), "회의 10분 전이에요! 〈주간 회의〉 13:00");
+  assert.equal(alertText({ ...base, webLink: "https://outlook.office365.com/owa/?path=/calendar/item" }), "일정 10분 전이에요! 〈주간 회의〉 13:00");
   assert.equal(onlineLabel(undefined), undefined);
   assert.equal(onlineLabel("not a url"), undefined);
   const long = "Room_A(8P), Room_B(8P), Room_C_Big(20P)";
@@ -151,7 +151,7 @@ test("planAlerts: 10분 전, 창 안에서 켜지면 바로, 시작했으면 안
   assert.deepEqual(planAlerts(ms, at("13:00"), none).fire.map((x) => x.id), []);
   assert.notEqual(alertKey(ms[0]), alertKey({ ...ms[0], start: new Date(at("13:30")).toISOString() }));
   assert.equal(kstHHMM(ms[0].start), "13:00");
-  assert.equal(alertText(ms[0]), "회의 10분 전이에요! 〈a〉 13:00");
+  assert.equal(alertText(ms[0]), "일정 10분 전이에요! 〈a〉 13:00");
   assert.equal(alertText({ ...ms[0], subject: "가".repeat(60) }).includes("…"), true);
 });
 
@@ -218,7 +218,7 @@ test("CalendarSync.schedule: T-10 에 한 번 울림, 재시작해도 다시 안
   await h.advance(19 * 60e3);
   assert.deepEqual(fired, []);
   await h.advance(60e3 + 10); // 12:50
-  assert.deepEqual(fired, ["회의 10분 전이에요! 〈[Office] 과제 현황 공유〉 13:00 — 📍 Conference Room A · 온라인(Teams)"]); // 회의실은 DB 를 거쳐 온다
+  assert.deepEqual(fired, ["일정 10분 전이에요! 〈[Office] 과제 현황 공유〉 13:00 · 📍 Conference Room A · 온라인(Teams)"]); // 회의실은 DB 를 거쳐 온다
   await h.advance(5 * 60e3);
   assert.equal(fired.length, 1);
   stop();
@@ -254,5 +254,5 @@ test("CalendarSync: 예전 meetings 표(location 칸 없음)에 칸을 더하고
   const cal = new CalendarSync({ models: { light: "x" } } as Config, store, { now: () => new Date("2026-10-08T03:00:00Z") });
   const [m] = cal.upcoming();
   assert.equal(m.location, undefined);
-  assert.equal(alertText(m), "회의 10분 전이에요! 〈옛 회의〉 13:00");
+  assert.equal(alertText(m), "일정 10분 전이에요! 〈옛 회의〉 13:00");
 });

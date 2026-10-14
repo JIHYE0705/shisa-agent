@@ -20,7 +20,7 @@ export const PHRASES = [
   { key: "lots", group: "할 일", label: "할 일이 많을 때(앞부분)", vars: ["n"], default: ["오늘 할 일이 많네요… 급한 것만 {n}개예요.", "으아, 할 일이 많아요… 급한 것만 {n}개예요.", "오늘 좀 바쁘겠어요… 급한 것만 {n}개예요."] },
   { key: "lots_briefing", group: "할 일", label: "할 일이 많을 때 — 브리핑 뒤 꼬리", vars: [], default: ["하나씩 같이 해 봐요 (비장한 시사)"] },
   // 회의
-  { key: "meeting_alert", group: "회의", label: "회의 10분 전({where} = ' — 📍 회의실 · 온라인', 없으면 빈칸)", vars: ["title", "time", "where"], default: ["회의 10분 전이에요! 〈{title}〉 {time}{where}"] },
+  { key: "meeting_alert", group: "일정", label: "일정 10분 전({where} = ' · 📍 장소 · 온라인', 없으면 빈칸)", vars: ["title", "time", "where"], default: ["일정 10분 전이에요! 〈{title}〉 {time}{where}"] },
   // 코드 작업
   { key: "proposal_ask", group: "코드 작업", label: "시킨 작업 물어보기", vars: ["title"], default: ["이거 할까요? {title}"] },
   { key: "proposal_ask_fix", group: "코드 작업", label: "고칠 거리 제안", vars: ["title"], default: ["이거 고쳐도 될까요? {title}"] },

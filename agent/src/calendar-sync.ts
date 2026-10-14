@@ -1,5 +1,5 @@
 // 오늘·내일 회의를 가져와 로컬에 두고(원천은 커넥터 calendar 모드: api=ICS 주소, mcp=사용자 캘린더 MCP),
-// 회의 10분 전에 캐릭터가 춤추며 알려 준다(말풍선 "회의 10분 전이에요! 〈제목〉 HH:MM — 📍 회의실 · 온라인", 누르면 회의 링크).
+// 회의 10분 전에 캐릭터가 춤추며 알려 준다(말풍선 "일정 10분 전이에요! 〈제목〉 HH:MM · 📍 회의실 · 온라인", 누르면 회의 링크).
 //
 // api(ICS): ics.ts 가 코드로 읽는다(모델 없음). mcp: 경량 모델이 매핑된 일정 도구를 한 번 부르고 구조화 출력으로 돌려준다.
 // 장소: location 이름(여러 곳이면 ", "). 장소 칸에 링크(Zoom 등)를 적은 일정은 온라인 링크로 본다.
@@ -156,10 +156,10 @@ export function onlineLabel(link?: string): string | undefined {
   try { return /(^|\.)teams\.(microsoft|live)\.com$/.test(new URL(link).hostname) ? "온라인(Teams)" : "온라인"; } catch { return undefined; }
 }
 
-// 말풍선 한 줄: "회의 10분 전이에요! 〈제목〉 13:00 — 📍 회의실 · 온라인(Teams)". 장소·링크가 없으면 그 부분만 뺀다(문구는 설정 창 meeting_alert)
+// 말풍선 한 줄: "일정 10분 전이에요! 〈제목〉 13:00 · 📍 회의실 · 온라인(Teams)". 장소·링크가 없으면 그 부분만 뺀다(문구는 설정 창 meeting_alert)
 export function alertText(m: Meeting): string {
   const where = [m.location ? `📍 ${clip(m.location, LOCATION_MAX)}` : "", onlineLabel(m.link) ?? ""].filter(Boolean).join(" · ");
-  return phrase("meeting_alert", { title: clip(m.subject, 40), time: kstHHMM(m.start), where: where ? ` — ${where}` : "" });
+  return phrase("meeting_alert", { title: clip(m.subject, 40), time: kstHHMM(m.start), where: where ? ` · ${where}` : "" });
 }
 
 // 장소가 길어 한 줄에서 잘렸으면 전체를 detail 로(아니면 없음)

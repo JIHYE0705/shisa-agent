@@ -456,7 +456,7 @@ function demoSettings() {
     briefing: { exclude: ['mail'], sources: [{ id: 'mail', label: '메일' }, { id: 'calendar', label: '일정' }, { id: 'slack', label: 'Slack' }, { id: 'issues', label: '이슈' }, { id: 'sessions', label: '최근 작업 세션' }] },
     phrases: [
       { key: 'greet', group: '인사', label: '아침 인사', vars: [], default: ['좋은 아침이에요!'], value: null },
-      { key: 'meeting', group: '알림', label: '회의 10분 전', vars: ['title', 'time'], default: ['회의 10분 전이에요! 〈{title}〉 {time}'], value: null },
+      { key: 'meeting', group: '알림', label: '일정 10분 전', vars: ['title', 'time'], default: ['일정 10분 전이에요! 〈{title}〉 {time}'], value: null },
     ],
     autoMerge: ['example-team/notes-app'],
     brain: { provider: 'claude-code', model: 'claude-sonnet-5-5', keys: { gemini: false, openai: false, anthropic: false } },

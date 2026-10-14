@@ -63,7 +63,7 @@ test("고친 문구가 실제 말풍선에: 새 할 일·머지·회의 알림",
     r.offerMerge({ id: "p1", title: "버튼", prUrl: "https://github.com/o/r/pull/1" });
     await r.decideMerge("p1", "decline", "overlay");
     assert.equal(bubbles.at(-1).text, "오케이, 머지 안 해요");
-    assert.equal(alertText({ id: "m", subject: "주간 회의", start: "2026-10-13T04:00:00Z", end: "2026-10-13T05:00:00Z", location: "Room_1" }), "⏰ 13:00 주간 회의 — 📍 Room_1");
+    assert.equal(alertText({ id: "m", subject: "주간 회의", start: "2026-10-13T04:00:00Z", end: "2026-10-13T05:00:00Z", location: "Room_1" }), "⏰ 13:00 주간 회의 · 📍 Room_1");
   } finally {
     setPhrases({});
   }

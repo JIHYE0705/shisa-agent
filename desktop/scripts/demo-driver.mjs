@@ -1019,7 +1019,7 @@ const SCENES = {
     const m = (await d.get('/dashboard')).meetings?.[0];
     await d.activity('dancing');
     const hhmm = m ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(m.start)) : '15:00';
-    await d.bubble({ id: 'demo:meeting', text: `회의 10분 전이에요! 〈${m?.subject ?? '디자인 싱크'}〉 ${hhmm} — 📍 ${m?.location ?? '회의실 A'} · 온라인 (들뜬 시사)`, kind: 'todo', ttlMs: d.ttl(14000), link: m?.link ?? 'https://teams.microsoft.com/l/meetup-join/demo' });
+    await d.bubble({ id: 'demo:meeting', text: `일정 10분 전이에요! 〈${m?.subject ?? '디자인 싱크'}〉 ${hhmm} · 📍 ${m?.location ?? '회의실 A'} · 온라인 (들뜬 시사)`, kind: 'todo', ttlMs: d.ttl(14000), link: m?.link ?? 'https://teams.microsoft.com/l/meetup-join/demo' });
     await d.wait(3000);
     await d.snap('meeting-dance');
     await d.wait(9000);

@@ -651,9 +651,9 @@ const server = http.createServer(async (req, res) => {
   if (p === '/fake/meeting') {
     const m = fakeMeetings()[0];
     setActivity('dancing');
-    // 데몬 alertText 와 같은 모양: "— 📍 회의실 · 온라인"(없는 부분은 뺀다)
+    // 데몬 alertText 와 같은 모양: "· 📍 회의실 · 온라인"(없는 부분은 뺀다)
     const where = [m.location ? `📍 ${m.location}` : '', m.link ? '온라인' : ''].filter(Boolean).join(' · ');
-    emit('bubble', { id: `meeting:${m.id}@${m.start}`, text: `회의 10분 전이에요! 〈${m.subject}〉 ${kstHHMM(new Date(m.start))}${where ? ` — ${where}` : ''}`, kind: 'todo', ttlMs: 60e3, link: m.link });
+    emit('bubble', { id: `meeting:${m.id}@${m.start}`, text: `일정 10분 전이에요! 〈${m.subject}〉 ${kstHHMM(new Date(m.start))}${where ? ` · ${where}` : ''}`, kind: 'todo', ttlMs: 60e3, link: m.link });
     return json(res, 200, { ok: true });
   }
 
