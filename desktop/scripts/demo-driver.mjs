@@ -25,7 +25,7 @@ export const BEATS = [
   { id: 'run', title: '스스로 작업 — 공부 영상·진행 보고·작업 세션 창', est: 44 },
   { id: 'merge', title: '머지 승인 — 추가질문 → ✓ → 머지 완료', est: 30 },
   { id: 'settings', title: '설정 창 — 모델·브리핑 출처·문구·연결 상태', est: 16 },
-  { id: 'meeting', title: '회의 10분 전 — 춤', est: 14 },
+  { id: 'meeting', title: '일정 10분 전 · 춤', est: 14 },
   { id: 'day', title: '하루 진행 — 절반·제안 승인·오류·여유·다 끝', est: 34 },
   { id: 'outro', title: '마무리 — 작별·연결 끊김·다시 연결', est: 24 },
 ];
@@ -1015,7 +1015,7 @@ const SCENES = {
 
   async meeting(d) {
     await d.clearAll();
-    d.cue('회의 10분 전 — 춤 영상 + 회의실 + 온라인 참가');
+    d.cue('일정 10분 전 · 춤 영상 + 회의실 + 온라인 참가');
     const m = (await d.get('/dashboard')).meetings?.[0];
     await d.activity('dancing');
     const hhmm = m ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(m.start)) : '15:00';

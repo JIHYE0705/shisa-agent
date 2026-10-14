@@ -253,3 +253,39 @@ test("Settings: 오늘 할 일 알림: 기본은 아침 한 번, 고치면 파�
   assert.equal(s.put({ todayReminder: { times: ["9시"] } }).ok, false);
   assert.equal(cfg.todayReminder?.mode, "off", "잘못된 값은 아무것도 안 바꾼다");
 });
+
+test("Settings: 일정 알림: 기본 10분 전, 여러 번·끔, 파일·메모리에 바로, 잘못된 값은 400", () => {
+  const dir = tmp();
+  const p = join(dir, "config.json");
+  writeFileSync(p, JSON.stringify({ slackBotToken: "xoxb-keep" }));
+  const cfg = cfgOf();
+  assert.deepEqual(cfg.calendarAlert, { minutesBefore: [10] });
+  const changed: string[][] = [];
+  const s = new Settings(cfg, { path: p, env: {}, onChange: (k) => changed.push(k) });
+  assert.deepEqual(s.view().calendarAlert, { minutesBefore: [10] });
+  const r = s.put({ calendarAlert: { minutesBefore: [5, 15, 5] } });
+  assert.equal(r.ok, true);
+  if (r.ok) assert.deepEqual(r.settings.calendarAlert, { minutesBefore: [15, 5] });
+  assert.deepEqual(cfg.calendarAlert, { minutesBefore: [15, 5] });
+  assert.deepEqual(changed.at(-1), ["calendarAlert"]);
+  const file = JSON.parse(readFileSync(p, "utf8"));
+  assert.deepEqual(file.calendarAlert, { minutesBefore: [15, 5] });
+  assert.equal(file.slackBotToken, "xoxb-keep");
+  assert.deepEqual(cfgOf(file).calendarAlert, cfg.calendarAlert, "다시 켜도 같은 값");
+  // 끔: 빈 목록도 그대로 남는다(기본으로 돌아가지 않게)
+  assert.equal(s.put({ calendarAlert: { minutesBefore: [] } }).ok, true);
+  assert.deepEqual(cfg.calendarAlert, { minutesBefore: [] });
+  assert.deepEqual(cfgOf(JSON.parse(readFileSync(p, "utf8"))).calendarAlert, { minutesBefore: [] });
+  for (const bad of [{ minutesBefore: [0] }, { minutesBefore: [121] }, { minutesBefore: [2.5] }, { minutesBefore: ["10"] }, { minutesBefore: [1, 2, 3, 4] }, { minutes: [10] }, { minutesBefore: 10 }, [10], null]) {
+    const e = s.put({ calendarAlert: bad });
+    assert.equal(e.ok, false, JSON.stringify(bad));
+    if (!e.ok) assert.equal(e.status, 400);
+  }
+  assert.deepEqual(cfg.calendarAlert, { minutesBefore: [] }, "잘못된 값은 아무것도 안 바꾼다");
+});
+
+test("config: calendarAlert 읽기, 이상한 값은 빼고 모양이 틀리면 기본", () => {
+  assert.deepEqual(cfgOf({ calendarAlert: { minutesBefore: [30, "x", 0, 5, 5] } }).calendarAlert, { minutesBefore: [30, 5] });
+  assert.deepEqual(cfgOf({ calendarAlert: "loud" }).calendarAlert, { minutesBefore: [10] });
+  assert.deepEqual(cfgOf({ calendarAlert: { minutesBefore: [] } }).calendarAlert, { minutesBefore: [] });
+});

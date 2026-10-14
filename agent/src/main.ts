@@ -63,7 +63,7 @@ const store = new Store(cfg.dbPath);
 runs.attach(store.db); // 작업 세션 기록(세션 창)을 cy.db 에
 const bus = new Bus();
 bus.activity.bindRuns(runs); // 돌고 있는 run(대화 제외) → 캐릭터 "공부 중"
-// 회의 10분 전 알림: 오늘·내일 일정(커넥터 calendar: ICS·MCP, 읽기 전용) — 30분마다·깨어날 때 다시 가져온다
+// 일정 알림(설정 calendarAlert, 기본 10분 전): 오늘·내일 일정(커넥터 calendar: ICS·MCP, 읽기 전용). 30분마다·깨어날 때 다시 가져온다
 const calendar = new CalendarSync(cfg, store, { wrapRun: (fn) => withRun({ kind: "calendar", title: "캘린더 동기화", model: cfg.models.light }, fn) });
 calendar.onChange = () => bus.dashboardChanged();
 // 터미널 Claude Code 에서 이어 간 대화 불러오기(세션 창 ↻·"Claude Code에서 열기" 뒤 지켜보기). 시작할 땐 아무것도 안 한다
@@ -110,6 +110,7 @@ const settings = new Settings(cfg, { onChange: (keys) => {
   if (keys.some((k) => k === "brain" || k === "user" || k === "onboarded")) pushStatus();
   if (keys.includes("onboarded") && modelWorkAllowed(cfg)) setTimeout(() => onboardedNow(), 0); // 마법사를 막 마침 → 첫 정리
   else if (keys.includes("readSessions") && sessionsAllowed(cfg)) setTimeout(() => ingest(), 0);
+  if (keys.includes("calendarAlert")) calendar.check(); // 알림 시각을 바로 다시 잡는다
 } });
 let kgStatus: (() => { phase: string; reason?: string; step?: string }) | undefined;
 const connections = new Connections(cfg, { lastRun: lastRunOf((o) => runs.listRuns(o)), kg: () => kgStatus?.() });
@@ -383,11 +384,11 @@ setInterval(() => {
   if (h >= 9 && h < 19 && !["Sat", "Sun"].includes(d)) brief();
 }, cfg.briefingIntervalMin * 60e3);
 setTimeout(() => briefIfDue("시작"), 5e3);
-// 회의 10분 전: 춤 + 말풍선(회의실·온라인 여부, 링크 버튼은 회의 링크, 없으면 캘린더 일정). 회의당 한 번(DB에 남김)
-const stopCalendar = asRoutine(calendar.schedule.bind(calendar))((m, text) => {
+// 일정 N분 전(설정 calendarAlert): 춤 + 말풍선(회의실·온라인 여부, 링크 버튼은 회의 링크, 없으면 캘린더 일정). 일정·분마다 한 번(DB에 남김)
+const stopCalendar = asRoutine(calendar.schedule.bind(calendar))((m, text, mins) => {
   bus.activity.startDance(8000);
   const detail = alertDetail(m);
-  bus.bubble({ id: `meeting:${m.id}@${m.start}`, text, kind: "todo", ttlMs: Math.max(60e3, Date.parse(m.start) - Date.now()), link: m.link ?? m.webLink, ...(detail ? { detail } : {}) });
+  bus.bubble({ id: `meeting:${m.id}@${m.start}#${mins}`, text, kind: "todo", ttlMs: Math.max(60e3, Date.parse(m.start) - Date.now()), link: m.link ?? m.webLink, ...(detail ? { detail } : {}) });
 }, (r) => console.log("[calendar]", JSON.stringify({ meetings: r.meetings, events: r.events, calls: r.calls, errors: r.errors, costUsd: r.costUsd })));
 
 // 설치 마법사를 막 마쳤을 때(PUT /settings onboarded: true): 시작할 때 하던 첫 정리를 지금 한 번

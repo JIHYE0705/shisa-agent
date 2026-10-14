@@ -76,7 +76,7 @@ test('사용법 둘러보기: 3~5 장면, 연결된 것에 맞춰 문구가 바�
   assert.deepEqual(on.map((s) => s.step), on.map((_, i) => i + 1));
   assert.match(on[0].text, /두 번/);
   assert.ok(on.some((s) => s.section === 'todos') && on.some((s) => s.section === 'chat') && on.some((s) => s.section === 'today'));
-  assert.match(on.find((s) => s.id === 'today').text, /회의 10분 전엔/);
+  assert.match(on.find((s) => s.id === 'today').text, /일정 10분 전엔/);
   assert.match(on.find((s) => s.id === 'settings').text, /슬랙을 연결하면/);
   const off = tourSteps(brainView({}));
   assert.match(off[0].text, /뇌\(AI\)를 연결하면/);

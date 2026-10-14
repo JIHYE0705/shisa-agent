@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PHRASES, phrase, phraseVoice, setPhrases, customPhrase, unknownVars, fillVars, phraseLines } from "./phrases.ts";
+import { PHRASES, phrase, phraseVoice, setPhrases, customPhrase, unknownVars, fillVars, phraseLines, phraseDef } from "./phrases.ts";
+import { validatePhrases } from "./settings.ts";
 import { voice } from "./voice.ts";
 import { Reactions } from "./reactions.ts";
 import { alertText } from "./calendar-sync.ts";
@@ -67,4 +68,20 @@ test("고친 문구가 실제 말풍선에: 새 할 일·머지·회의 알림",
   } finally {
     setPhrases({});
   }
+});
+
+test("일정 알림 문구: {mins} 는 실제 분, {mins} 없는 예전 고친 문구도 그대로 뜬다", () => {
+  const m = { id: "m", subject: "주간 회의", start: "2026-10-13T04:00:00Z", end: "2026-10-13T05:00:00Z" };
+  assert.equal(alertText(m, 15), "일정 15분 전이에요! 〈주간 회의〉 13:00");
+  assert.equal(alertText(m), "일정 10분 전이에요! 〈주간 회의〉 13:00");
+  assert.deepEqual(validatePhrases({ meeting_alert: "{mins}분 뒤 {title}" }), { meeting_alert: ["{mins}분 뒤 {title}"] });
+  setPhrases({ meeting_alert: ["회의 10분 전이에요! 〈{title}〉 {time}{where}"] });
+  try {
+    assert.equal(alertText({ ...m, location: "Room_1" }, 5), "회의 10분 전이에요! 〈주간 회의〉 13:00 · 📍 Room_1");
+    setPhrases({ meeting_alert: ["{mins}분 남았어요: {title}"] });
+    assert.equal(alertText(m, 5), "5분 남았어요: 주간 회의");
+  } finally {
+    setPhrases({});
+  }
+  assert.equal(phraseDef("meeting_alert")?.label.startsWith("일정 알림"), true);
 });

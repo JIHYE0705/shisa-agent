@@ -1,4 +1,4 @@
-// 설정 창의 순수 로직 — 모델·브리핑 출처·문구·자동 머지 레포 저장 본문 검증, 문구 묶기·검사, 연결 상태 줄 묶기·표시 글.
+// 설정 창의 순수 로직: 모델·브리핑 출처·문구·자동 머지 레포·오늘 할 일 알림·일정 알림 저장 본문 검증, 문구 묶기·검사, 연결 상태 줄 묶기·표시 글.
 // 데몬 GET/PUT /settings, GET /connections, POST /connections/check (docs/contract.md "설정 창").
 
 export const CHECK_IDS = ['net', 'claude', 'services', 'gh', 'local'];
@@ -30,7 +30,7 @@ export const PHRASE_MAX_LINES = 10; // 데몬(agent/src/phrases.ts)과 같은 �
 export function sanitizeSettingsPatch(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
   const out = {};
-  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions') return null;
+  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert') return null;
   // 이 맥의 Claude Code·Codex 작업 기록 읽기(켜고 끄기만)
   if (p.readSessions !== undefined) {
     if (typeof p.readSessions !== 'boolean') return null;
@@ -73,7 +73,53 @@ export function sanitizeSettingsPatch(p) {
     if (!r) return null;
     out.todayReminder = r;
   }
+  // 일정 알림: { minutesBefore: [분…] } ([] = 끔)
+  if (p.calendarAlert !== undefined) {
+    const c = cleanCalendarAlert(p.calendarAlert);
+    if (!c) return null;
+    out.calendarAlert = c;
+  }
   return Object.keys(out).length ? out : null;
+}
+
+// ---- 일정 알림(GET /settings calendarAlert) ----
+// 데몬 agent/src/calendar-alert.ts 와 같은 규칙: 1~120분 정수, 세 개까지, 큰 것부터. [] = 알림 끔
+export const ALERT_DEFAULT = { minutesBefore: [10] };
+export const ALERT_PRESETS = [5, 10, 15, 30];
+export const ALERT_MIN = 1;
+export const ALERT_MAX = 120;
+export const ALERT_MAX_COUNT = 3;
+const okAlertMin = (x) => typeof x === 'number' && Number.isInteger(x) && x >= ALERT_MIN && x <= ALERT_MAX;
+const sortMins = (xs) => [...new Set(xs)].sort((a, b) => b - a);
+export function cleanCalendarAlert(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  if (Object.keys(v).some((k) => k !== 'minutesBefore')) return null;
+  const xs = v.minutesBefore;
+  if (!Array.isArray(xs) || !xs.every(okAlertMin)) return null;
+  const out = sortMins(xs);
+  return out.length > ALERT_MAX_COUNT ? null : { minutesBefore: out };
+}
+// 칩을 켜고 끄기 → 새 목록. 세 개가 넘으면 { error }
+export function alertMinutesNext(list, mins, on) {
+  const cur = Array.isArray(list) ? list.filter(okAlertMin) : [];
+  const next = on ? sortMins([...cur, mins]) : cur.filter((x) => x !== mins);
+  if (next.length > ALERT_MAX_COUNT) return { error: `알림은 ${ALERT_MAX_COUNT}개까지 고를 수 있어요. 하나를 먼저 꺼 주세요` };
+  return { minutesBefore: sortMins(next) };
+}
+// 직접 적은 분 → 숫자. 못 읽으면 { error }
+export function parseAlertMinutes(text) {
+  const t = String(text ?? '').trim().replace(/\s*분(\s*전)?$/, '');
+  const n = /^\d{1,3}$/.test(t) ? Number(t) : NaN;
+  if (!okAlertMin(n)) return { error: `${ALERT_MIN}~${ALERT_MAX} 사이 숫자(분)로 적어 주세요` };
+  return { mins: n };
+}
+// 칩으로 보일 분들: 기본 넷 + 지금 고른 것 중 그 밖의 것
+export const alertChoices = (list) => sortMins([...ALERT_PRESETS, ...(Array.isArray(list) ? list.filter(okAlertMin) : [])]).reverse();
+// 지금 설정을 한 줄로
+export function calendarAlertSummary(c) {
+  const xs = (cleanCalendarAlert(c ?? ALERT_DEFAULT) ?? ALERT_DEFAULT).minutesBefore;
+  if (!xs.length) return '일정 알림을 껐어요. 일정은 그대로 가져와 브리핑·오늘 일정에 보여요.';
+  return `일정 ${xs.map((x) => `${x}분`).join(', ')} 전에 춤추며 알려요.${xs.length > 1 ? ' 일정마다 그때그때 한 번씩이에요.' : ''}`;
 }
 
 // ---- 오늘 할 일 알림(GET /settings todayReminder) ----

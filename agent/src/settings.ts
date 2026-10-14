@@ -3,6 +3,7 @@
 // GET /settings 로 보여 주고, PUT /settings 로 메모리의 cfg 를 바로 바꾸고(데몬 재시작 불필요) ~/.cy-agent/config.json 에 합쳐 쓴다.
 // config.json 의 다른 키(토큰·repoRoots…)는 그대로 둔다. 쓰기는 임시 파일 → rename(원자적). 파일이 깨져 있으면 덮어쓰지 않는다.
 import { todayReminderOf, validateTodayReminder, type TodayReminder } from "./daily-plan.ts";
+import { calendarAlertOf, validateCalendarAlert, type CalendarAlertConfig } from "./calendar-alert.ts";
 import { readFileSync, renameSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isAbsolute } from "node:path";
@@ -53,6 +54,7 @@ export type SettingsView = {
   phrases: PhraseView[];
   autoMerge: string[]; // ✓ 없이 머지까지 하는 레포(owner/name)
   todayReminder: TodayReminder; // 오늘 할 일 알림(auto: 아침 + N시간마다·지정 시각 / off)
+  calendarAlert: CalendarAlertConfig; // 일정 알림: 몇 분 전에 알릴지([] = 끔)
   // 뇌: 키는 절대 내보내지 않는다 — 있나 없나만
   brain: { provider: BrainProvider; model: string; keys: Record<BrainKey, boolean> };
   user: { name?: string };
@@ -74,6 +76,7 @@ export type SettingsPatch = {
   models?: Partial<Record<ModelRole, string>>; briefing?: { exclude?: string[] }; phrases?: Record<string, string[] | null>; autoMerge?: string[];
   brain?: BrainPatch; user?: { name: string | null }; repoRoots?: string[]; todayReminder?: TodayReminder;
   onboarded?: boolean; readSessions?: boolean;
+  calendarAlert?: CalendarAlertConfig;
 };
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,100}$/;
 export type PutResult = { ok: true; settings: SettingsView; applied: "live"; restartNeeded: false; note?: string } | { ok: false; status: 400 | 500; error: string };
@@ -84,7 +87,7 @@ export class SettingsError extends Error {}
 export function validatePatch(body: unknown, cfg: Pick<Config, "models">): SettingsPatch {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new SettingsError("json object required");
   const b = body as Record<string, unknown>;
-  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
+  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions", "calendarAlert"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
   const out: SettingsPatch = {};
   if (b.models !== undefined) {
     if (!b.models || typeof b.models !== "object" || Array.isArray(b.models)) throw new SettingsError("models must be an object");
@@ -111,6 +114,9 @@ export function validatePatch(body: unknown, cfg: Pick<Config, "models">): Setti
   if (b.brain !== undefined) out.brain = validateBrain(b.brain);
   if (b.todayReminder !== undefined) {
     try { out.todayReminder = validateTodayReminder(b.todayReminder); } catch (e: any) { throw new SettingsError(String(e?.message ?? e)); }
+  }
+  if (b.calendarAlert !== undefined) {
+    try { out.calendarAlert = validateCalendarAlert(b.calendarAlert); } catch (e: any) { throw new SettingsError(String(e?.message ?? e)); }
   }
   if (b.user !== undefined) {
     const u = b.user as Record<string, unknown>;
@@ -253,6 +259,7 @@ export function mergeConfigFile(path: string, patch: SettingsPatch): void {
   if (patch.todayReminder) next.todayReminder = patch.todayReminder;
   if (patch.onboarded !== undefined) next.onboarded = patch.onboarded;
   if (patch.readSessions !== undefined) next.readSessions = patch.readSessions;
+  if (patch.calendarAlert) next.calendarAlert = patch.calendarAlert; // [] 도 그대로 쓴다(끔)
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
@@ -312,6 +319,7 @@ export class Settings {
       phrases: PHRASES.map((p) => ({ key: p.key, group: p.group, label: p.label, vars: [...p.vars], default: [...p.default], value: c.phrases?.[p.key]?.length ? [...c.phrases[p.key]] : null })),
       autoMerge: [...(c.autoMerge ?? [])],
       todayReminder: todayReminderOf(c.todayReminder),
+      calendarAlert: calendarAlertOf(c.calendarAlert),
       brain: {
         provider: c.brain?.provider ?? "claude-code", model: c.models.general,
         keys: { gemini: !!c.brain?.geminiApiKey, openai: !!c.brain?.openaiApiKey, anthropic: !!c.brain?.anthropicApiKey },
@@ -353,6 +361,7 @@ export class Settings {
     if (patch.onboarded !== undefined) this.cfg.onboarded = patch.onboarded; // main 이 onChange 로 첫 정리를 건다
     if (patch.readSessions !== undefined) this.cfg.readSessions = patch.readSessions;
     if (patch.todayReminder) this.cfg.todayReminder = { ...patch.todayReminder, times: [...patch.todayReminder.times] }; // main 이 1분마다 cfg 를 읽으니 바로
+    if (patch.calendarAlert) this.cfg.calendarAlert = { minutesBefore: [...patch.calendarAlert.minutesBefore] }; // CalendarSync 가 확인할 때마다 cfg 를 읽으니 바로
     this.onChange?.(Object.keys(patch));
     const locked = Object.keys(patch.models ?? {}).filter((r) => !!this.env[MODEL_ENV[r as ModelRole]]);
     return {

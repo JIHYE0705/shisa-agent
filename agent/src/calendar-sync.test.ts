@@ -136,23 +136,50 @@ test("alertText: 회의실·온라인(Teams) — 둘 다, 하나만, 없음, 긴
   assert.equal(alertDetail(base), undefined);
 });
 
-test("planAlerts: 10분 전, 창 안에서 켜지면 바로, 시작했으면 안 울림, 한 번만", () => {
-  const m = (id: string, hhmm: string): Meeting => ({ id, subject: id, start: `2026-10-08T${hhmm}:00+09:00`.replace(/^(.*)$/, (s) => new Date(s).toISOString()), end: new Date(Date.parse(`2026-10-08T${hhmm}:00+09:00`) + 3600e3).toISOString() });
+test("planAlerts: 10분 전, 창 안에서 켜지면 바로(남은 분으로), 시작했으면 안 울림, 한 번만", () => {
+  const m = (id: string, hhmm: string): Meeting => ({ id, subject: id, start: new Date(`2026-10-08T${hhmm}:00+09:00`).toISOString(), end: new Date(Date.parse(`2026-10-08T${hhmm}:00+09:00`) + 3600e3).toISOString() });
   const ms = [m("a", "13:00"), m("b", "15:00"), m("c", "09:00")];
   const at = (hhmm: string) => Date.parse(`2026-10-08T${hhmm}:00+09:00`);
-  const none = () => false;
+  const none = () => undefined;
+  const ids = (p: { fire: { meeting: Meeting; mins: number }[] }) => p.fire.map((x) => `${x.meeting.id}:${x.mins}`);
   assert.deepEqual(planAlerts(ms, at("12:00"), none), { fire: [], nextAt: at("12:50") });
-  assert.deepEqual(planAlerts(ms, at("12:50"), none).fire.map((x) => x.id), ["a"]);
+  assert.deepEqual(ids(planAlerts(ms, at("12:50"), none)), ["a:10"]);
   const p = planAlerts(ms, at("12:55"), none);
-  assert.deepEqual(p.fire.map((x) => x.id), ["a"]);
+  assert.deepEqual(ids(p), ["a:5"], "늦게 켜졌으면 남은 분으로 말한다");
   assert.equal(p.nextAt, at("14:50"));
-  const done = new Set([alertKey(ms[0])]);
-  assert.deepEqual(planAlerts(ms, at("12:56"), (k) => done.has(k)).fire, []);
-  assert.deepEqual(planAlerts(ms, at("13:00"), none).fire.map((x) => x.id), []);
-  assert.notEqual(alertKey(ms[0]), alertKey({ ...ms[0], start: new Date(at("13:30")).toISOString() }));
+  assert.deepEqual(planAlerts(ms, at("12:56"), (x) => (x.id === "a" ? 5 : undefined)).fire, []);
+  assert.deepEqual(planAlerts(ms, at("13:00"), none).fire, []);
+  assert.notEqual(alertKey(ms[0], 10), alertKey({ ...ms[0], start: new Date(at("13:30")).toISOString() }, 10));
+  assert.equal(alertKey(ms[0]), `a@${ms[0].start}`);
+  assert.equal(alertKey(ms[0], 5), `a@${ms[0].start}#5`);
   assert.equal(kstHHMM(ms[0].start), "13:00");
   assert.equal(alertText(ms[0]), "일정 10분 전이에요! 〈a〉 13:00");
+  assert.equal(alertText(ms[0], 5), "일정 5분 전이에요! 〈a〉 13:00");
   assert.equal(alertText({ ...ms[0], subject: "가".repeat(60) }).includes("…"), true);
+});
+
+test("planAlerts: 여러 번([15, 5]), 끔([]), 설정을 바꿔도 이미 지난 건 다시 안 울림", () => {
+  const start = Date.parse("2026-10-08T13:00:00+09:00");
+  const a: Meeting = { id: "a", subject: "a", start: new Date(start).toISOString(), end: new Date(start + 3600e3).toISOString() };
+  const min = (n: number) => start - n * 60e3;
+  const none = () => undefined;
+  const fires = (now: number, fired: number | undefined, leads: number[]) => planAlerts([a], now, () => fired, leads);
+  // 15분 전·5분 전
+  assert.deepEqual(fires(min(30), undefined, [15, 5]), { fire: [], nextAt: min(15) });
+  assert.deepEqual(fires(min(15), undefined, [15, 5]).fire.map((x) => x.mins), [15]);
+  assert.deepEqual(fires(min(14), 15, [15, 5]), { fire: [], nextAt: min(5) });
+  assert.deepEqual(fires(min(5), 15, [15, 5]).fire.map((x) => x.mins), [5]);
+  assert.deepEqual(fires(min(4), 5, [15, 5]), { fire: [] });
+  // 둘 다 지난 뒤 켜지면 가까운 것 하나만
+  assert.deepEqual(fires(min(3), undefined, [15, 5]).fire.map((x) => x.mins), [3]);
+  // 끔
+  assert.deepEqual(planAlerts([a], min(10), none, []), { fire: [] });
+  // 10분 전에 울린 뒤 15분으로 바꿔도 다시 안 울림, 5분으로 바꾸면 5분 전에 한 번 더
+  assert.deepEqual(fires(min(8), 10, [15]), { fire: [] });
+  assert.deepEqual(fires(min(8), 10, [5]), { fire: [], nextAt: min(5) });
+  assert.deepEqual(fires(min(5), 10, [5]).fire.map((x) => x.mins), [5]);
+  // 기본값은 10분 전
+  assert.deepEqual(planAlerts([a], min(10), none).fire.map((x) => x.mins), [10]);
 });
 
 function eventsOf(data: unknown): CalEvent[] {
@@ -160,13 +187,13 @@ function eventsOf(data: unknown): CalEvent[] {
   return "error" in p ? [] : p.events;
 }
 
-function harness(nowIso: string, pages: unknown[] = [SAMPLE]) {
+function harness(nowIso: string, pages: unknown[] = [SAMPLE], cfg = { models: { light: "x" } } as Config) {
   const store = new Store(join(mkdtempSync(join(tmpdir(), "cal-")), "t.db"));
   let now = Date.parse(nowIso);
   const timers: { at: number; fn: () => void; id: number }[] = [];
   let seq = 0;
   let run = 0;
-  const cal = new CalendarSync({ models: { light: "x" } } as Config, store, {
+  const cal = new CalendarSync(cfg, store, {
     now: () => new Date(now),
     setTimer: (fn, ms) => { const t = { at: now + ms, fn, id: ++seq }; timers.push(t); return t.id as any; },
     clearTimer: (id: any) => { const i = timers.findIndex((t) => t.id === id); if (i >= 0) timers.splice(i, 1); },
@@ -237,6 +264,58 @@ test("CalendarSync.schedule: T-10 에 한 번 울림, 재시작해도 다시 안
   assert.equal(fired3.length, 1);
   await h3.advance(4 * 60e3);
   assert.equal(fired3.length, 1);
+});
+
+test("CalendarSync.schedule: 설정 calendarAlert 대로(여러 번·끔), 바꾸면 바로, 이미 울린 건 다시 안 울림", async () => {
+  // 회의는 13:00 KST(04:00Z). 12:30 에 켬
+  const cfg = { models: { light: "x" }, calendarAlert: { minutesBefore: [15, 5] } } as Config;
+  const h = harness("2026-10-08T03:30:00Z", [SAMPLE], cfg);
+  const fired: [string, number][] = [];
+  h.cal.schedule((_m, text, mins) => fired.push([text, mins]));
+  await h.advance(10);
+  await h.advance(15 * 60e3); // 12:45
+  assert.deepEqual(fired.map((x) => x[1]), [15]);
+  assert.match(fired[0][0], /^일정 15분 전이에요! 〈\[Office\] 과제 현황 공유〉 13:00/);
+  // 12:48 에 20분·15분으로 바꿔도 이미 지난 것(15분 전에 알림)이라 다시 안 울린다
+  await h.advance(3 * 60e3);
+  cfg.calendarAlert = { minutesBefore: [20, 15] };
+  h.cal.check();
+  await h.advance(60e3);
+  assert.deepEqual(fired.map((x) => x[1]), [15]);
+  // 12:49 에 10분으로 바꾸면 아직 안 울린 새 시각이라 12:50 에 한 번
+  cfg.calendarAlert = { minutesBefore: [10] };
+  h.cal.check();
+  await h.advance(60e3);
+  await h.advance(9 * 60e3);
+  assert.deepEqual(fired.map((x) => x[1]), [15, 10]);
+
+  // 끔: 일정은 가져오지만 울리지 않는다
+  const off = { models: { light: "x" }, calendarAlert: { minutesBefore: [] } } as unknown as Config;
+  const h2 = harness("2026-10-08T03:30:00Z", [SAMPLE], off);
+  const fired2: number[] = [];
+  h2.cal.schedule((_m, _t, mins) => fired2.push(mins));
+  await h2.advance(25 * 60e3);
+  assert.deepEqual(fired2, []);
+  assert.equal(h2.cal.upcoming().length, 1);
+  // 12:55 에 다시 켜면(5분 전으로) 그 자리에서 바로 한 번
+  off.calendarAlert = { minutesBefore: [5] };
+  h2.cal.check();
+  assert.deepEqual(fired2, [5]);
+});
+
+test("CalendarSync: 예전 알림 기록(id@start, 분 없음)은 10분 전에 알린 것으로 본다", async () => {
+  const h = harness("2026-10-08T03:52:00Z");
+  await h.cal.sync();
+  const [m] = h.cal.upcoming();
+  h.store.db.prepare("INSERT INTO meeting_alerts (key, at) VALUES (?, ?)").run(alertKey(m), "2026-10-08T03:50:00Z");
+  assert.equal(h.cal.firedMins(m), 10);
+  const fired: number[] = [];
+  h.cal.schedule((_m, _t, mins) => fired.push(mins));
+  await h.advance(10);
+  assert.deepEqual(fired, [], "업데이트 직후 같은 알림이 또 울리지 않는다");
+  h.store.db.prepare("INSERT INTO meeting_alerts (key, at) VALUES (?, ?)").run(alertKey(m, 3), "2026-10-08T03:57:00Z");
+  assert.equal(h.cal.firedMins(m), 3);
+  assert.equal(h.cal.firedMins({ ...m, id: "other" }), undefined);
 });
 
 test("CalendarSync: 가져오기가 실패하면 저장된 회의를 지우지 않는다", async () => {

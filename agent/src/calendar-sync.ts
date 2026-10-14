@@ -1,5 +1,6 @@
 // 오늘·내일 회의를 가져와 로컬에 두고(원천은 커넥터 calendar 모드: api=ICS 주소, mcp=사용자 캘린더 MCP),
-// 회의 10분 전에 캐릭터가 춤추며 알려 준다(말풍선 "일정 10분 전이에요! 〈제목〉 HH:MM · 📍 회의실 · 온라인", 누르면 회의 링크).
+// 일정 N분 전에 캐릭터가 춤추며 알려 준다(말풍선 "일정 10분 전이에요! 〈제목〉 HH:MM · 📍 회의실 · 온라인", 누르면 회의 링크).
+// 몇 분 전에 알릴지는 설정 calendarAlert(calendar-alert.ts, 기본 10분 전 한 번, 여러 번·끔도 된다).
 //
 // api(ICS): ics.ts 가 코드로 읽는다(모델 없음). mcp: 경량 모델이 매핑된 일정 도구를 한 번 부르고 구조화 출력으로 돌려준다.
 // 장소: location 이름(여러 곳이면 ", "). 장소 칸에 링크(Zoom 등)를 적은 일정은 온라인 링크로 본다.
@@ -13,8 +14,8 @@ import { addDays, kstDate } from "./calendar.ts";
 import { CONNECTORS, isWriteName, mcpTool, type Conn } from "./connectors.ts";
 import { eventsInWindow, fetchIcsText, type FetchText } from "./ics.ts";
 import { phrase } from "./phrases.ts";
+import { calendarAlertOf } from "./calendar-alert.ts";
 
-export const LEAD_MS = 10 * 60e3;         // 회의 10분 전
 export const SYNC_EVERY_MS = 30 * 60e3;   // 30분마다 다시 가져온다
 export const DANCE_MS = 8000;
 
@@ -128,18 +129,25 @@ export function toMeetings(events: CalEvent[]): Meeting[] {
 
 // ── 알림 계획(순수) ────────────────────────────────────────────
 
-export const alertKey = (m: Pick<Meeting, "id" | "start">) => `${m.id}@${m.start}`; // 시간이 바뀌면 다시 알린다
+// 알림 기록 키: 일정·시작 시각·알린 분(시간이 바뀌면 다시 알린다). 예전(한 번만 알리던 때) 키는 "id@start" = 10분 전에 알린 것으로 본다
+export const alertKey = (m: Pick<Meeting, "id" | "start">, mins?: number) => mins === undefined ? `${m.id}@${m.start}` : `${m.id}@${m.start}#${mins}`;
+export type AlertFire = { meeting: Meeting; mins: number }; // mins: 말풍선에 쓸 분(남은 시간, 설정한 분보다 크지 않다)
 
-// 지금 울릴 것과 다음에 볼 시각. 데몬이 회의 10분 전~시작 사이에 켜졌으면 바로 한 번 울린다. 시작한 회의는 안 울린다
-export function planAlerts(meetings: Meeting[], nowMs: number, alerted: (key: string) => boolean, leadMs = LEAD_MS): { fire: Meeting[]; nextAt?: number } {
-  const fire: Meeting[] = [];
+// 지금 울릴 것과 다음에 볼 시각. leads: 설정한 분들(calendarAlert.minutesBefore, [] = 끔).
+// fired(m): 이 일정에 이미 알린 가장 작은 분(없으면 undefined). 그보다 작은 분만 남은 알림이다(설정을 바꿔도 이미 지난 건 다시 안 울린다).
+// 데몬이 창 안에서 켜졌으면 지난 것 중 가장 가까운 하나만 바로 울린다. 시작한 일정은 안 울린다
+export function planAlerts(meetings: Meeting[], nowMs: number, fired: (m: Meeting) => number | undefined, leads: number[] = [10]): { fire: AlertFire[]; nextAt?: number } {
+  const fire: AlertFire[] = [];
   let nextAt: number | undefined;
   for (const m of meetings) {
     const start = Date.parse(m.start);
-    if (!(start > nowMs) || alerted(alertKey(m))) continue;
-    const at = start - leadMs;
-    if (nowMs >= at) fire.push(m);
-    else nextAt = Math.min(nextAt ?? Infinity, at);
+    if (!(start > nowMs) || !leads.length) continue;
+    const last = fired(m);
+    const left = leads.filter((l) => last === undefined || l < last);
+    const due = left.filter((l) => nowMs >= start - l * 60e3);
+    if (due.length) fire.push({ meeting: m, mins: Math.min(Math.min(...due), Math.max(1, Math.ceil((start - nowMs) / 60e3))) });
+    const lower = due.length ? Math.min(...due) : Infinity;
+    for (const l of left) if (l < lower && nowMs < start - l * 60e3) nextAt = Math.min(nextAt ?? Infinity, start - l * 60e3);
   }
   return nextAt === undefined ? { fire } : { fire, nextAt };
 }
@@ -156,10 +164,11 @@ export function onlineLabel(link?: string): string | undefined {
   try { return /(^|\.)teams\.(microsoft|live)\.com$/.test(new URL(link).hostname) ? "온라인(Teams)" : "온라인"; } catch { return undefined; }
 }
 
-// 말풍선 한 줄: "일정 10분 전이에요! 〈제목〉 13:00 · 📍 회의실 · 온라인(Teams)". 장소·링크가 없으면 그 부분만 뺀다(문구는 설정 창 meeting_alert)
-export function alertText(m: Meeting): string {
+// 말풍선 한 줄: "일정 10분 전이에요! 〈제목〉 13:00 · 📍 회의실 · 온라인(Teams)". 장소·링크가 없으면 그 부분만 뺀다(문구는 설정 창 meeting_alert).
+// mins: 몇 분 전({mins}). 사용자가 고친 문구에 {mins} 가 없으면 그 글 그대로
+export function alertText(m: Meeting, mins = 10): string {
   const where = [m.location ? `📍 ${clip(m.location, LOCATION_MAX)}` : "", onlineLabel(m.link) ?? ""].filter(Boolean).join(" · ");
-  return phrase("meeting_alert", { title: clip(m.subject, 40), time: kstHHMM(m.start), where: where ? ` · ${where}` : "" });
+  return phrase("meeting_alert", { mins, title: clip(m.subject, 40), time: kstHHMM(m.start), where: where ? ` · ${where}` : "" });
 }
 
 // 장소가 길어 한 줄에서 잘렸으면 전체를 detail 로(아니면 없음)
@@ -294,7 +303,7 @@ export type CalendarDeps = {
   wrapRun?: <T>(fn: () => Promise<T>) => Promise<T>; // 실행 기록(runs)·활동 표시로 감싸기
   source?: CalendarSource | null; // 원천(커넥터). 안 주면 cfg.connectors.calendar. null = 끔
 };
-export type CalendarAlert = (m: Meeting, text: string) => void;
+export type CalendarAlert = (m: Meeting, text: string, mins: number) => void;
 export type CalendarSyncResult = { events: number; meetings: number; calls: number; errors: number; costUsd: number; skipped: Record<string, number> };
 
 export class CalendarSync {
@@ -389,6 +398,13 @@ export class CalendarSync {
   alerted(key: string): boolean {
     return !!this.store.db.prepare("SELECT 1 FROM meeting_alerts WHERE key = ?").get(key);
   }
+  // 이 일정에 이미 알린 가장 작은 분(예전 키 "id@start" 는 10분). 없으면 undefined
+  firedMins(m: Pick<Meeting, "id" | "start">): number | undefined {
+    const base = alertKey(m);
+    const rows = this.store.db.prepare("SELECT key FROM meeting_alerts WHERE key = ? OR substr(key, 1, ?) = ?").all(base, base.length + 1, `${base}#`) as { key: string }[];
+    const mins = rows.map((r) => (r.key === base ? 10 : Number(r.key.slice(base.length + 1)))).filter((n) => Number.isFinite(n));
+    return mins.length ? Math.min(...mins) : undefined;
+  }
   private markAlerted(key: string) {
     this.store.db.prepare("INSERT OR IGNORE INTO meeting_alerts (key, at) VALUES (?, ?)").run(key, this.deps.now().toISOString());
   }
@@ -396,14 +412,17 @@ export class CalendarSync {
   private onAlert?: CalendarAlert;
   private onSync?: (r: CalendarSyncResult) => void;
 
-  // 울릴 게 있으면 울리고(회의당 한 번, DB에 남김), 다음 확인을 예약한다
+  // 설정한 분들(cfg.calendarAlert, 설정 창이 메모리 cfg 를 바로 바꾸니 매번 읽는다)
+  get leads(): number[] { return calendarAlertOf(this.cfg.calendarAlert).minutesBefore; }
+
+  // 울릴 게 있으면 울리고(일정·분마다 한 번, DB에 남김), 다음 확인을 예약한다
   check() {
     if (!this.onAlert) return;
     const now = this.deps.now().getTime();
-    const plan = planAlerts(this.upcoming(new Date(now)), now, (k) => this.alerted(k));
-    for (const m of plan.fire) {
-      this.markAlerted(alertKey(m)); // 먼저 남긴다 — 알림이 실패해도 두 번 울리지 않게
-      try { this.onAlert(m, alertText(m)); } catch (e: any) { console.warn("[calendar] 알림 실패:", e?.message ?? e); }
+    const plan = planAlerts(this.upcoming(new Date(now)), now, (m) => this.firedMins(m), this.leads);
+    for (const { meeting: m, mins } of plan.fire) {
+      this.markAlerted(alertKey(m, mins)); // 먼저 남긴다. 알림이 실패해도 두 번 울리지 않게
+      try { this.onAlert(m, alertText(m, mins), mins); } catch (e: any) { console.warn("[calendar] 알림 실패:", e?.message ?? e); }
     }
     this.arm(plan.nextAt);
   }
@@ -435,7 +454,7 @@ export class CalendarSync {
     this.onAlert = onAlert;
     this.onSync = onSync;
     this.stopped = false;
-    this.check(); // 저장된 회의로 바로(데몬 재시작 직후에도 10분 창 안이면 울린다)
+    this.check(); // 저장된 회의로 바로(데몬 재시작 직후에도 알림 창 안이면 울린다)
     this.sync().then((r) => onSync?.(r)).catch((e) => console.warn("[calendar] 동기화 실패:", e?.message ?? e));
     return () => { this.stopped = true; if (this.timer) this.deps.clearTimer(this.timer); };
   }

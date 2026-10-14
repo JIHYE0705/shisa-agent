@@ -39,7 +39,7 @@ type Bubble = {
 ```
 
 - `studying`: 데몬이 스스로 돌리는 세션(run)이 있을 때다(사용자 대화 `chat` 제외).
-- `dancing`: 회의 10분 전 알림 때 8초 동안이다.
+- `dancing`: 일정 알림(기본 10분 전, 설정 `calendarAlert`) 때 8초 동안이다.
 
 ## 상태·설정
 
@@ -64,6 +64,7 @@ type Bubble = {
 `GET` 응답은 아래 값을 준다.
 - `models{quick,general,code,light}`, `modelRoles`, `modelOptions`, `envLocked`
 - `briefing{exclude,sources}`, `phrases[]`, `autoMerge[]`
+- `todayReminder{mode,everyHours,times}`, `calendarAlert{minutesBefore[]}`
 - `brain{provider,model,keys{gemini,openai,anthropic: boolean}}`
 - `user{name?}`, `repoRoots[]`, `configPath`
 - `onboarded`(설치 마법사를 마쳤나), `readSessions`(이 맥의 Claude Code·Codex 작업 기록을 읽나)
@@ -80,7 +81,8 @@ type Bubble = {
   "user": { "name": "길동" | null },
   "repoRoots": ["/Users/me/code"],                        // 절대 경로만
   "readSessions": true,                                   // 작업 기록 읽기 켜고 끄기
-  "onboarded": true                                       // 설치 마법사를 마침(마법사가 보낸다)
+  "onboarded": true,                                      // 설치 마법사를 마침(마법사가 보낸다)
+  "calendarAlert": { "minutesBefore": [15, 5] }           // 일정 몇 분 전(1~120 정수, 3개까지). [] = 알림 끔, 기본 [10]
 }
 ```
 
@@ -88,6 +90,8 @@ type Bubble = {
 - `config.json`에 원자적으로 합쳐 쓰고 메모리 설정도 바로 바꾼다. 데몬을 다시 켤 필요가 없다.
 - 뇌가 바뀌면 SSE `status`를 보낸다.
 - `onboarded`가 `false`인 동안(새 설치)은 브리핑·Slack 할 일·할 일 자동 완료·진행 확인·지식그래프·프로필 학습을 돌리지 않고 작업 기록·git 도 읽지 않는다. `true`가 되면 그때 첫 정리를 한 번 한다. 처음 `true`를 적을 때 빈 칸(`readSessions`·`repoRoots`·`brain.provider`)은 지금 쓰는 값으로 같이 적는다.
+- `calendarAlert`가 바뀌면 알림 시각을 바로 다시 잡는다. 일정마다 알린 분을 `meeting_alerts`에 남기고(키 `id@start#분`), 이미 알린 분보다 작은 분만 남은 알림으로 본다. 그래서 설정을 바꿔도 이미 울린 알림은 다시 울리지 않는다.
+- 일정 알림 말풍선은 문구 `meeting_alert`(`{mins}` `{title}` `{time}` `{where}`)다. `{mins}`는 실제로 남은 분이다(늦게 켜졌으면 설정보다 작다). `{mins}`가 없는 예전 고친 문구도 그대로 쓴다.
 - 커넥터(`connectors`)는 여기서 바꾸지 않는다. 파일을 고친 뒤 데몬을 다시 켜야 한다.
 
 ### `GET /connections` · `POST /connections/check { id? }`

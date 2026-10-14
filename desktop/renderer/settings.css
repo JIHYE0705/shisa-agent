@@ -144,3 +144,6 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
 .rem-auto { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .rem-auto[hidden] { display: none; }
 .rem-line { display: inline-flex; align-items: center; gap: 6px; }
+
+/* 일정 알림 */
+.cal-off-line { margin-top: 10px; }

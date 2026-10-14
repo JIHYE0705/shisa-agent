@@ -70,7 +70,7 @@ async function doBlink() {
 }
 scheduleBlink();
 
-// ---- 활동: 데몬이 스스로 세션을 돌리면 공부 영상, 회의 10분 전엔 춤 영상(우선순위 춤 > 공부 > 정지) ----
+// ---- 활동: 데몬이 스스로 세션을 돌리면 공부 영상, 일정 알림(기본 10분 전) 땐 춤 영상(우선순위 춤 > 공부 > 정지) ----
 const videos = { studying: document.getElementById('vid-studying'), dancing: document.getElementById('vid-dancing') };
 let act = initialActivity();
 let shownView = 'idle';

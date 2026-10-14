@@ -1,10 +1,11 @@
-// 설정 창: AI·모델 · 브리핑 출처 · 오늘 할 일 알림 · 자동 머지 레포 · 문구 · 행동 지침 · 연결 상태. 데몬은 메인 프로세스를 거쳐서만(window.cy)
+// 설정 창: AI·모델 · 브리핑 출처 · 오늘 할 일 알림 · 일정 알림 · 자동 머지 레포 · 문구 · 행동 지침 · 연결 상태. 데몬은 메인 프로세스를 거쳐서만(window.cy)
 // Claude Code 가 없는 컴퓨터(Gemini·GPT 키·로컬)에서는 Claude 세부 모델·자동 머지 칸을 안내로 바꾼다
 import {
   groupRows, pendingChecks, mergeRows, toggleExclude, dotClass, metaText, STATE_LABEL,
   phraseGroups, phraseText, phraseDefaultText, phraseCustom, phraseSaveValue, phraseProblem,
   repoSlugFrom, autoMergeNext, needsSetupHint, localReadView,
   REMINDER_DEFAULT, REMINDER_HOURS, cleanReminder, parseTimes, reminderSummary,
+  ALERT_DEFAULT, cleanCalendarAlert, alertMinutesNext, parseAlertMinutes, alertChoices, calendarAlertSummary,
 } from '../src/settings.js';
 import { mountGuidelines } from '../src/guidelines.js';
 
@@ -188,6 +189,52 @@ async function saveTimes() {
 $('rem-times-save').addEventListener('click', saveTimes);
 $('rem-times').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); saveTimes(); } });
 
+// ---- 일정 알림 ----
+const calAlert = () => cleanCalendarAlert(settings?.calendarAlert) ?? ALERT_DEFAULT;
+let lastAlertOn = null; // 끄기 전 목록(다시 켜면 그것으로, 없으면 기본 10분)
+async function saveCalAlert(minutesBefore) {
+  $('cal-err').textContent = '';
+  const ok = await save({ calendarAlert: { minutesBefore } });
+  renderCalAlert();
+  return ok;
+}
+function renderCalAlert() {
+  if (!settings) return;
+  const cur = calAlert().minutesBefore;
+  const off = !cur.length;
+  if (!off) lastAlertOn = cur;
+  $('cal-off').checked = off;
+  $('cal-on').hidden = off;
+  const box = $('cal-mins');
+  box.replaceChildren();
+  for (const m of alertChoices(cur)) {
+    const lab = el('label', 'toggle');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = cur.includes(m);
+    cb.addEventListener('change', () => {
+      const r = alertMinutesNext(calAlert().minutesBefore, m, cb.checked);
+      if (r.error) { cb.checked = !cb.checked; $('cal-err').textContent = r.error; return; }
+      saveCalAlert(r.minutesBefore);
+    });
+    lab.append(cb, document.createTextNode(`${m}분 전`));
+    box.append(lab);
+  }
+  $('cal-summary').textContent = calendarAlertSummary(calAlert());
+}
+$('cal-off').addEventListener('change', (e) => saveCalAlert(e.target.checked ? [] : (lastAlertOn ?? ALERT_DEFAULT.minutesBefore)));
+async function addCustomAlert() {
+  const p = parseAlertMinutes($('cal-custom').value);
+  if (p.error) { $('cal-err').textContent = p.error; return; }
+  const r = alertMinutesNext(calAlert().minutesBefore, p.mins, true);
+  if (r.error) { $('cal-err').textContent = r.error; return; }
+  $('cal-custom-add').disabled = true;
+  if (await saveCalAlert(r.minutesBefore)) $('cal-custom').value = '';
+  $('cal-custom-add').disabled = false;
+}
+$('cal-custom-add').addEventListener('click', addCustomAlert);
+$('cal-custom').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addCustomAlert(); } });
+
 // ---- 자동 머지 레포 ----
 function renderAutoMerge() {
   const box = $('am-list');
@@ -359,7 +406,7 @@ async function load() {
   if (k && typeof k === 'object' && typeof k.claude === 'boolean') caps = { claude: k.claude, codex: k.codex === true };
   if (!s?.ok || !c?.ok) banner('시사에 연결되지 않았어요. 시사가 켜져 있는지 확인해 주세요.');
   else banner(null);
-  if (s?.ok) { settings = s.data; renderModels(); renderSources(); renderLocal(); renderReminder(); renderAutoMerge(); renderPhrases(); }
+  if (s?.ok) { settings = s.data; renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderAutoMerge(); renderPhrases(); }
   if (c?.ok) {
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];
     renderRows();

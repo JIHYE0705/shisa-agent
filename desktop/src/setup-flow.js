@@ -32,7 +32,7 @@ export const FEATURES = [
   {
     id: 'calendar',
     title: '캘린더',
-    blurb: '회의 10분 전에 알려 줍니다.',
+    blurb: '일정 10분 전에 알려 줍니다(설정에서 바꿀 수 있어요).',
     need: '구글 캘린더나 Outlook 계정이 필요합니다. 비밀 주소를 복사하면 되고, 추가 결제는 없습니다.',
   },
   {

@@ -1,5 +1,5 @@
 // 설정: 환경변수 > ~/.cy-agent/config.json > 기본값. 비밀값(토큰)은 레포 밖에만 둔다.
-// 설정 창(PUT /settings, settings.ts)이 models·briefing·phrases·autoMerge 를 config.json 에 합쳐 쓰고 메모리의 cfg 도 바로 바꾼다.
+// 설정 창(PUT /settings, settings.ts)이 models·briefing·phrases·autoMerge·todayReminder·calendarAlert 를 config.json 에 합쳐 쓰고 메모리의 cfg 도 바로 바꾼다.
 import { readFileSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolveConnectors, type Connectors } from "./connectors.ts";
@@ -9,6 +9,7 @@ import { phraseLines } from "./phrases.ts";
 import { autoMergeList } from "./auto-merge.ts";
 import { todayReminderOf, type TodayReminder } from "./daily-plan.ts";
 import { isNewStyle, onboardedOf, readSessionsOf } from "./onboarding.ts";
+import { calendarAlertOf, type CalendarAlertConfig } from "./calendar-alert.ts";
 
 export const HOME_DIR = process.env.CY_AGENT_HOME ?? join(homedir(), ".cy-agent");
 
@@ -38,6 +39,8 @@ export type Config = {
   autoMerge?: string[];
   // 오늘 할 일 알림(설정 창 「오늘 할 일 알림」). 없으면 영업일 아침 한 번(daily-plan.ts DEFAULT_TODAY_REMINDER)
   todayReminder?: TodayReminder;
+  // 일정 알림(설정 창 「일정 알림」): 일정 몇 분 전에 알릴지. 없으면 10분 전 한 번, minutesBefore: [] 이면 끔(calendar-alert.ts)
+  calendarAlert?: CalendarAlertConfig;
   // 지식그래프 2단계(엔티티·관계 추출) 모델. 1단계(업무 판정)는 늘 경량. 기본은 경량(대량 작업이라 비용 우선)
   kgModel: string;
   // 대화 에이전트의 로컬 도구(Bash·Edit/Write·파일 읽기)를 승인 카드 없이 허용(permissions.ts 2-1). 하드 차단은 그대로. 기본 켜짐
@@ -210,6 +213,7 @@ export function loadConfig(env = process.env, f: Partial<Config> & Record<string
     phrases: phrasesOf(f.phrases),
     autoMerge: autoMergeList(f.autoMerge),
     todayReminder: todayReminderOf(f.todayReminder),
+    calendarAlert: calendarAlertOf(f.calendarAlert),
     kgModel: env.CY_AGENT_KG_MODEL ?? (f.kgModel as string) ?? (env.CY_AGENT_MODEL_LIGHT ?? (f.models as any)?.light ?? "claude-haiku-5-5"),
     localAutoAllow: env.CY_AGENT_LOCAL_ASK === "1" ? false : f.localAutoAllow !== false,
     repoRoots: (f.repoRoots as string[]) ?? (isNewStyle(f) ? [] : [join(homedir(), "code")]),

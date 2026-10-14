@@ -1,4 +1,4 @@
-// 캐릭터 활동 상태: 데몬이 스스로 Agent SDK 세션을 돌리는 동안 "공부 중", 회의 10분 전엔 "춤".
+// 캐릭터 활동 상태: 데몬이 스스로 Agent SDK 세션을 돌리는 동안 "공부 중", 일정 알림(기본 10분 전) 땐 "춤".
 // 우선순위 dancing > studying > idle. 춤이 끝나면 그 전 상태(돌고 있는 일이 있으면 studying)로 돌아간다.
 // 버스가 SSE `state` 에 { activity, runs, danceId? } 를 실어 보낸다(docs/contract.md "캐릭터 활동").
 //

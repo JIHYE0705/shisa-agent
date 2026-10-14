@@ -5,6 +5,7 @@ import {
   sanitizeSettingsPatch, okPanelTarget, needsSetupHint, okCheckId, dotClass, agoText, latencyText, groupRows, pendingChecks, mergeRows, toggleExclude, metaText,
   phraseGroups, phraseText, phraseCustom, phraseSaveValue, phraseProblem, repoSlugFrom, autoMergeNext,
   cleanReminder, parseTimes, reminderSummary, REMINDER_DEFAULT,
+  cleanCalendarAlert, alertMinutesNext, parseAlertMinutes, alertChoices, calendarAlertSummary, ALERT_DEFAULT,
 } from '../src/settings.js';
 import { setupSettings } from '../src/settings-window.js';
 
@@ -211,4 +212,35 @@ test('이 맥에서 읽는 것: 작업 기록 읽기는 켜고 끄기만, 레포
   assert.match(html, /id="local-read"/);
   assert.match(html, /id="open-repos"/);
   for (const t of [none.reposText, some.reposText]) assert.doesNotMatch(t, /—/);
+});
+
+test('일정 알림: 저장 본문 거르기 · 칩 켜고 끄기 · 직접 적기 · 한 줄 요약, 설정 창에 칸이 있다', () => {
+  assert.deepEqual(sanitizeSettingsPatch({ calendarAlert: { minutesBefore: [5, 15, 5] } }), { calendarAlert: { minutesBefore: [15, 5] } });
+  assert.deepEqual(sanitizeSettingsPatch({ calendarAlert: { minutesBefore: [] } }), { calendarAlert: { minutesBefore: [] } });
+  for (const bad of [{ minutesBefore: [0] }, { minutesBefore: [121] }, { minutesBefore: [2.5] }, { minutesBefore: ['10'] }, { minutesBefore: [1, 2, 3, 4] }, { minutesBefore: 10 }, { off: true }, [10], null]) {
+    assert.equal(sanitizeSettingsPatch({ calendarAlert: bad }), null, JSON.stringify(bad));
+  }
+  assert.deepEqual(cleanCalendarAlert(ALERT_DEFAULT), { minutesBefore: [10] });
+  assert.deepEqual(alertMinutesNext([10], 5, true), { minutesBefore: [10, 5] });
+  assert.deepEqual(alertMinutesNext([10, 5], 10, false), { minutesBefore: [5] });
+  assert.deepEqual(alertMinutesNext([10], 10, false), { minutesBefore: [] }, '마지막 것을 끄면 알림 끔');
+  assert.match(alertMinutesNext([30, 15, 10], 5, true).error, /3개까지/);
+  assert.deepEqual(parseAlertMinutes(' 45 '), { mins: 45 });
+  assert.deepEqual(parseAlertMinutes('20분 전'), { mins: 20 });
+  assert.match(parseAlertMinutes('0').error, /1~120/);
+  assert.match(parseAlertMinutes('열').error, /1~120/);
+  assert.match(parseAlertMinutes('200').error, /1~120/);
+  assert.deepEqual(alertChoices([10]), [5, 10, 15, 30]);
+  assert.deepEqual(alertChoices([45, 3]), [3, 5, 10, 15, 30, 45]);
+  assert.equal(calendarAlertSummary(ALERT_DEFAULT), '일정 10분 전에 춤추며 알려요.');
+  assert.equal(calendarAlertSummary({ minutesBefore: [15, 5] }), '일정 15분, 5분 전에 춤추며 알려요. 일정마다 그때그때 한 번씩이에요.');
+  assert.match(calendarAlertSummary({ minutesBefore: [] }), /껐어요/);
+  for (const c of [ALERT_DEFAULT, { minutesBefore: [15, 5] }, { minutesBefore: [] }]) assert.doesNotMatch(calendarAlertSummary(c), /—/);
+  const html = readFileSync(new URL('../renderer/settings.html', import.meta.url), 'utf8');
+  for (const id of ['h-cal', 'cal-mins', 'cal-custom', 'cal-custom-add', 'cal-off', 'cal-summary', 'cal-err']) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, />일정 알림</);
+  assert.match(html, /알림 끄기/);
+  const js = readFileSync(new URL('../renderer/settings.js', import.meta.url), 'utf8');
+  assert.match(js, /renderCalAlert\(\);/);
+  assert.match(js, /calendarAlert: \{ minutesBefore \}/);
 });

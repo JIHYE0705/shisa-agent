@@ -535,7 +535,7 @@ function readJSON(req) {
 
 // 뇌·이름·레포 폴더(GET /status · GET/PUT /settings) — FAKE_BRAIN=none 이면 뇌 없이 시작(더블클릭 춤·연결 안내·설치 마법사 보기)
 const BRAIN_LABELS = { 'claude-code': 'Claude Code', codex: 'Codex', anthropic: 'Claude API', gemini: 'Gemini', openai: 'OpenAI', local: '로컬(모델 없음)' };
-const fakeCfg = { provider: process.env.FAKE_BRAIN === 'none' ? 'openai' : 'gemini', ready: process.env.FAKE_BRAIN !== 'none', model: 'claude-sonnet-5-5', name: '', repoRoots: [], todayReminder: { mode: 'auto', everyHours: 0, times: [] } };
+const fakeCfg = { provider: process.env.FAKE_BRAIN === 'none' ? 'openai' : 'gemini', ready: process.env.FAKE_BRAIN !== 'none', model: 'claude-sonnet-5-5', name: '', repoRoots: [], todayReminder: { mode: 'auto', everyHours: 0, times: [] }, calendarAlert: { minutesBefore: [10] } };
 function fakeStatus() {
   const local = fakeCfg.provider === 'local';
   const label = BRAIN_LABELS[fakeCfg.provider] ?? fakeCfg.provider;
@@ -562,6 +562,7 @@ const fakeSettings = () => ({
   brain: { provider: fakeCfg.provider, model: fakeCfg.model, keys: { gemini: fakeCfg.provider === 'gemini', openai: false, anthropic: fakeCfg.provider === 'anthropic' } },
   user: fakeCfg.name ? { name: fakeCfg.name } : {}, repoRoots: [...fakeCfg.repoRoots], configPath: '(가짜)',
   todayReminder: { ...fakeCfg.todayReminder },
+  calendarAlert: { minutesBefore: [...fakeCfg.calendarAlert.minutesBefore] },
 });
 
 const server = http.createServer(async (req, res) => {
@@ -598,6 +599,7 @@ const server = http.createServer(async (req, res) => {
     if (b.user) fakeCfg.name = b.user.name || '';
     if (Array.isArray(b.repoRoots)) fakeCfg.repoRoots = b.repoRoots;
     if (b.todayReminder) fakeCfg.todayReminder = { ...fakeCfg.todayReminder, ...b.todayReminder };
+    if (Array.isArray(b.calendarAlert?.minutesBefore)) fakeCfg.calendarAlert = { minutesBefore: [...new Set(b.calendarAlert.minutesBefore)].sort((x, y) => y - x) };
     if (b.brain || b.user) emit('status', { status: fakeStatus() });
     return json(res, 200, { ok: true, settings: fakeSettings(), applied: 'live', restartNeeded: false });
   }
@@ -653,7 +655,7 @@ const server = http.createServer(async (req, res) => {
     setActivity('dancing');
     // 데몬 alertText 와 같은 모양: "· 📍 회의실 · 온라인"(없는 부분은 뺀다)
     const where = [m.location ? `📍 ${m.location}` : '', m.link ? '온라인' : ''].filter(Boolean).join(' · ');
-    emit('bubble', { id: `meeting:${m.id}@${m.start}`, text: `일정 10분 전이에요! 〈${m.subject}〉 ${kstHHMM(new Date(m.start))}${where ? ` · ${where}` : ''}`, kind: 'todo', ttlMs: 60e3, link: m.link });
+    emit('bubble', { id: `meeting:${m.id}@${m.start}#10`, text: `일정 10분 전이에요! 〈${m.subject}〉 ${kstHHMM(new Date(m.start))}${where ? ` · ${where}` : ''}`, kind: 'todo', ttlMs: 60e3, link: m.link });
     return json(res, 200, { ok: true });
   }
 

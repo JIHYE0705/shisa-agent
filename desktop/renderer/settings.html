@@ -55,6 +55,21 @@
       <div id="rem-err" class="ph-err" role="status"></div>
     </section>
 
+    <section class="card" aria-labelledby="h-cal">
+      <h2 id="h-cal">일정 알림</h2>
+      <p class="hint">캘린더를 연결하면 일정 몇 분 전에 캐릭터가 춤추며 알려 줘요. 여러 개 고르면 그때마다 한 번씩 알려요(3개까지).</p>
+      <div id="cal-on" class="rem-auto">
+        <div id="cal-mins" class="toggles" role="group" aria-label="몇 분 전에 알릴지"></div>
+        <div class="gl-add">
+          <input id="cal-custom" type="text" inputmode="numeric" placeholder="직접 적기 (분, 1~120)" aria-label="몇 분 전(직접)">
+          <button id="cal-custom-add" type="button" class="primary">추가</button>
+        </div>
+      </div>
+      <label class="toggle cal-off-line"><input id="cal-off" type="checkbox">알림 끄기</label>
+      <p id="cal-summary" class="hint"></p>
+      <div id="cal-err" class="ph-err" role="status"></div>
+    </section>
+
     <section id="am-card" class="card" aria-labelledby="h-am">
       <h2 id="h-am">자동 머지</h2>
       <p class="hint">여기 있는 레포는 ✓ 없이 머지까지 해요 — 채팅에서 시킨 머지, 시사가 고친 코드로 올린 PR 이 검사(실패·대기 중 검사·충돌·초안)를 통과하면 바로 머지해요. 채팅에서 「이 레포는 알아서 머지까지 해」·「X는 이제 머지 묻고 해」로도 바꿀 수 있어요.</p>
