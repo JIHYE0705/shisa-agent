@@ -21,6 +21,7 @@ export type ExecFileLike = (
 
 export type ProviderDeps = {
   fetch?: FetchLike;
+  sleep?: (ms: number) => Promise<void>;
   execFile?: ExecFileLike;
   commandExists?: (name: string) => boolean;
   env?: NodeJS.ProcessEnv;
@@ -146,10 +147,18 @@ async function readError(res: Response, fail: string, auth?: { provider: KeyProv
 }
 
 const geminiPicked = new Map<string, string>(); // 키 → 기본 대신 쓰는 모델(이 실행 동안만)
+const geminiLites = new Map<string, string | undefined>(); // 키 → 붐빌 때 넘어갈 flash-lite(이 실행 동안만)
+
+async function geminiLite(key: string, fetchImpl: FetchLike): Promise<string | undefined> {
+  if (!geminiLites.has(key)) geminiLites.set(key, await newestGeminiFlash(key, fetchImpl, true));
+  return geminiLites.get(key);
+}
 
 // 'gemini-3.8-flash' 같은 일반 flash 중 가장 새 것. lite·preview·image·tts 등은 뺀다.
-export function bestGeminiFlash(ids: string[]): string | undefined {
-  const ver = (id: string) => (/^gemini-(\d+(?:\.\d+)*)-flash$/.exec(id)?.[1] ?? "").split(".").filter(Boolean).map(Number);
+// lite: true 면 'gemini-3.5-flash-lite' 같은 flash-lite 중 가장 새 것
+export function bestGeminiFlash(ids: string[], lite = false): string | undefined {
+  const re = lite ? /^gemini-(\d+(?:\.\d+)*)-flash-lite$/ : /^gemini-(\d+(?:\.\d+)*)-flash$/;
+  const ver = (id: string) => (re.exec(id)?.[1] ?? "").split(".").filter(Boolean).map(Number);
   const cmp = (a: number[], b: number[]) => {
     for (let i = 0; i < Math.max(a.length, b.length); i++) {
       const d = (b[i] ?? 0) - (a[i] ?? 0);
@@ -161,7 +170,7 @@ export function bestGeminiFlash(ids: string[]): string | undefined {
 }
 
 // 출처: https://ai.google.dev/api/models#method:-models.list — GET /v1beta/models, generateContent 되는 것만
-async function newestGeminiFlash(key: string, fetchImpl: FetchLike): Promise<string | undefined> {
+async function newestGeminiFlash(key: string, fetchImpl: FetchLike, lite = false): Promise<string | undefined> {
   try {
     const res = await fetchImpl(`${GEMINI_URL}?pageSize=1000`, { method: "GET", headers: { "x-goog-api-key": key } });
     if (!res.ok) return undefined;
@@ -170,15 +179,26 @@ async function newestGeminiFlash(key: string, fetchImpl: FetchLike): Promise<str
     const ids = models
       .filter((m) => m?.supportedGenerationMethods?.includes("generateContent"))
       .map((m) => String(m?.name ?? "").replace(/^models\//, ""));
-    return bestGeminiFlash(ids);
+    return bestGeminiFlash(ids, lite);
   } catch {
     return undefined;
   }
 }
 
+// Gemini 가 붐비면(503·500) 또는 너무 자주 보내면(429) 이만큼 쉬고 다시 보낸다
+// 출처: 2026-10 무료 키로 시험 — 3.5~3.8 flash 는 503(high demand)이 계속, flash-lite 는 바로 답했다
+export const GEMINI_RETRY_MS = [2_000, 5_000];
+const BUSY = new Set([429, 500, 503]);
+
+function geminiFailText(status: number): string {
+  if (status === 503 || status === 500) return "Gemini가 지금 붐벼서 답하지 못했어요. 잠시 뒤 다시 보내 주세요";
+  if (status === 429) return "Gemini 사용량 한도에 걸렸어요(무료 키는 1분·하루 횟수가 정해져 있어요). 잠시 뒤 다시 보내 주세요";
+  return "Gemini 요청이 실패했어요";
+}
+
 export async function geminiJson(
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
-  opts: { system?: string; model?: string; fetch?: FetchLike; env?: NodeJS.ProcessEnv } = {},
+  opts: { system?: string; model?: string; fetch?: FetchLike; sleep?: (ms: number) => Promise<void>; env?: NodeJS.ProcessEnv } = {},
 ): Promise<unknown> {
   const env = opts.env ?? process.env;
   const key = geminiKey(cfg, env);
@@ -203,17 +223,40 @@ export async function geminiJson(
       throw new Error("Gemini 요청을 보내지 못했어요.");
     }
   };
-  let res = await send(picked ?? chosen);
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  // 붐비면 쉬었다 다시. Retry-After(초)를 주면 그만큼(최대 30초)
+  const retryBusy = async (r: Response, model: string) => {
+    for (const wait of GEMINI_RETRY_MS) {
+      if (!BUSY.has(r.status)) break;
+      const after = Number(r.headers.get("retry-after"));
+      await r.text().catch(() => "");
+      await sleep(after > 0 ? Math.min(after * 1000, 30_000) : wait);
+      r = await send(model);
+    }
+    return r;
+  };
+  const first = picked ?? chosen;
+  let res = await send(first);
+  // 붐비면 가벼운 flash-lite 로 넘어간다(같은 키에서 flash 는 막혀도 lite 는 바로 답하는 일이 많다). lite 가 없으면 같은 모델로 기다렸다 다시
+  if (BUSY.has(res.status)) {
+    const lite = /-lite$/.test(first) ? undefined : await geminiLite(key, fetchImpl);
+    if (lite) {
+      await res.text().catch(() => "");
+      res = await retryBusy(await send(lite), lite);
+    } else {
+      res = await retryBusy(res, first);
+    }
+  }
   // 기본 모델이 이 계정에 없으면(404) 목록에서 가장 새 flash 를 골라 한 번 더
   if (res.status === 404 && chosen === GEMINI_DEFAULT_MODEL && !picked) {
     const best = await newestGeminiFlash(key, fetchImpl);
     if (best && best !== chosen) {
       await res.text().catch(() => "");
-      res = await send(best);
+      res = await retryBusy(await send(best), best);
       if (res.ok) geminiPicked.set(key, best);
     }
   }
-  if (!res.ok) return readError(res, "Gemini 요청이 실패했어요", { provider: "gemini", key });
+  if (!res.ok) return readError(res, geminiFailText(res.status), { provider: "gemini", key });
   markAuth("gemini", key, false);
   const raw = await res.text();
   const data = asRecord(parseModelJson(raw, "Gemini 응답에서 JSON을 읽지 못했어요."));

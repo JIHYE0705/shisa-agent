@@ -115,6 +115,57 @@ test("gemini: 기본 모델이 404면 목록에서 가장 새 flash로 한 번 �
   assert.deepEqual(urls.map((u) => u.split("/").pop()), ["gemini-4-flash:generateContent"]);
 });
 
+test("gemini: 붐비면(503) 목록에서 가장 새 flash-lite 로 넘어가고, lite 도 붐비면 쉬었다 다시", async () => {
+  const posts: string[] = [];
+  const waits: number[] = [];
+  const sleep = async (ms: number) => { waits.push(ms); };
+  const list = () => new Response(JSON.stringify({ models: [
+    { name: "models/gemini-3.8-flash", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-3.1-flash-lite", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-3.5-flash-lite", supportedGenerationMethods: ["generateContent"] },
+  ] }), { status: 200 });
+  const ok = () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: thoughtJson() }] } }] }), { status: 200 });
+  let liteBusy = 0;
+  const fetch: FetchLike = async (url, init) => {
+    if (init?.method === "GET") return list();
+    const m = url.split("/").pop()!.replace(":generateContent", "");
+    posts.push(m);
+    if (m === "gemini-3.8-flash") return new Response("{}", { status: 503 });
+    if (liteBusy-- > 0) return new Response("{}", { status: 503 });
+    return ok();
+  };
+  const opts = { deps: { fetch, sleep, env: { CY_AGENT_GEMINI_API_KEY: `${KEY}-busy` } } };
+  const out = await ask<{ reply_md: string }>(cfgOf("gemini"), "x", SCHEMA, undefined, opts);
+  assert.equal(out.reply_md, "본문");
+  assert.deepEqual(posts, ["gemini-3.8-flash", "gemini-3.5-flash-lite"]);
+  assert.deepEqual(waits, []);
+
+  posts.length = 0; liteBusy = 1;
+  await ask(cfgOf("gemini"), "x", SCHEMA, undefined, opts);
+  assert.deepEqual(posts, ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash-lite"]);
+  assert.deepEqual(waits, [2000]);
+});
+
+test("gemini: 끝내 붐비면 알아듣기 쉬운 오류, Retry-After 를 따른다", async () => {
+  let posts = 0;
+  const waits: number[] = [];
+  const fetch: FetchLike = async (_url, init) => {
+    if (init?.method === "GET") return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    posts++;
+    return new Response("{}", { status: 503, headers: { "retry-after": "7" } });
+  };
+  await assert.rejects(
+    ask(cfgOf("gemini"), "x", SCHEMA, undefined, { deps: { fetch, sleep: async (ms: number) => { waits.push(ms); }, env: { CY_AGENT_GEMINI_API_KEY: `${KEY}-busy2` } } }),
+    /붐벼서.*HTTP 503/,
+  );
+  assert.equal(posts, 3);
+  assert.deepEqual(waits, [7000, 7000]);
+});
+
+test("bestGeminiFlash: lite 고르기", () => {
+  assert.equal(bestGeminiFlash(["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"], true), "gemini-3.5-flash-lite");
+});
+
 test("bestGeminiFlash: 일반 flash 중 가장 새 것", () => {
   assert.equal(bestGeminiFlash(["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.10-flash", "gemini-9-flash-lite", "gemini-3.8-pro"]), "gemini-3.10-flash");
   assert.equal(bestGeminiFlash(["gemini-pro"]), undefined);

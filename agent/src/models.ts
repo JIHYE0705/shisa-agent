@@ -10,8 +10,11 @@ export function modelLabel(id: string): string {
   return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}`;
 }
 
-// 큰 것부터(코딩 → 일반 → 경량). 같은 모델이 두 역할이면 한 번만
+// 큰 것부터(코딩 → 일반 → 경량). 같은 모델이 두 역할이면 한 번만.
+// 고르는 칸은 Claude 모델로 답하는 뇌(Claude Code·Claude API)일 때만. Gemini·OpenAI·Codex·로컬이면 빈 목록(칸을 숨긴다)
 export function modelChoices(cfg: Config): ModelChoice[] {
+  const provider = cfg.brain?.provider ?? "claude-code";
+  if (provider !== "claude-code" && provider !== "anthropic") return [];
   const out: ModelChoice[] = [];
   for (const role of ["code", "general", "light"] as const) {
     const id = cfg.models[role];
