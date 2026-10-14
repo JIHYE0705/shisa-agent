@@ -36,8 +36,10 @@ contextBridge.exposeInMainWorld('cy', {
   // 확인 카드(회의 응답 등): decision = 'confirm' | 'cancel'
   onAction: on('action'),
   actionDecide: (id, decision) => ipcRenderer.invoke('action-decide', String(id), String(decision)),
-  // 뇌(말 거는 AI) 연결 상태(brain-state.js brainView) — 없으면 더블클릭이 춤 + 연결 안내
+  // 뇌(말 거는 AI) 연결 상태(brain-state.js brainView). 없으면 더블클릭이 고르는 질문 칩
   brain: () => ipcRenderer.invoke('brain-get'),
+  // AI 없이 고르는 질문 칩(quick-ask.js) → 데몬 POST /local/ask
+  localAsk: (id) => ipcRenderer.invoke('local-ask', String(id)),
   onBrain: on('brain'),
   // 사용법 둘러보기 말풍선 버튼: 'next' | 'stop'
   tour: (cmd) => ipcRenderer.send('tour', cmd === 'stop' ? 'stop' : 'next'),

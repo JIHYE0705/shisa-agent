@@ -592,6 +592,18 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && p === '/health') return json(res, 200, { ok: true, fake: true });
   if (req.method === 'GET' && p === '/status') return json(res, 200, fakeStatus());
   if (req.method === 'GET' && p === '/settings') return json(res, 200, fakeSettings());
+  // AI 없이 고르는 질문 칩(데몬 local-mode.ts quickAnswer 흉내)
+  if (req.method === 'POST' && p === '/local/ask') {
+    const b = (await readJSON(req)) ?? {};
+    const answers = {
+      today: { text: '오늘 할 일 5개 중 3개 끝냈어요. 남은 건 \'코드 리뷰\', \'장 보기\'예요.', kind: 'info', open: { section: 'today' } },
+      next_todo: { text: '지금은 \'급한 버그\'부터 해 보면 좋겠어요.', kind: 'info', detail: '- P1 급한 버그\n- P2 주간 정리', open: { section: 'todos' } },
+      next_event: { text: '캘린더를 연결하면 다음 일정도 알려 드릴게요. 설정의 더 연결하기에서 할 수 있어요.', kind: 'info', open: { section: 'setup', id: 'extras' } },
+      cheer: { text: '오늘도 잘하고 있어요. 제가 옆에서 응원할게요!', kind: 'done' },
+    };
+    const a = answers[b.id];
+    return a ? json(res, 200, { ok: true, answer: { id: b.id, ...a } }) : json(res, 400, { error: 'unknown id' });
+  }
   if (req.method === 'PUT' && p === '/settings') {
     const b = (await readJSON(req)) ?? {};
     if (b.brain?.provider) { fakeCfg.provider = b.brain.provider; fakeCfg.ready = true; }

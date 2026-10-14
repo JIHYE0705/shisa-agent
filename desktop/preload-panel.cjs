@@ -93,6 +93,9 @@ contextBridge.exposeInMainWorld('cy', {
   // 뇌(말 거는 AI) 연결 상태(brain-state.js brainView) — 없으면 입력 대신 연결 안내 카드
   brain: () => ipcRenderer.invoke('brain-get'),
   onBrain: on('brain'),
+  // AI 연결 안내 카드 숨김(데스크톱 state.json): { hidden }
+  connectCardGet: () => ipcRenderer.invoke('connect-card-get'),
+  connectCardSet: (hidden) => ipcRenderer.invoke('connect-card-set', !!hidden),
   // 설치 마법사: 이름·레포 폴더 읽기/쓰기(데몬 설정) · 폴더 고르기 · 사용법 둘러보기
   setupLoad: () => ipcRenderer.invoke('setup-load'),
   setupSave: (patch) => ipcRenderer.invoke('setup-save', patch && typeof patch === 'object' ? JSON.parse(JSON.stringify(patch)) : null),

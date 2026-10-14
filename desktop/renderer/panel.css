@@ -1323,6 +1323,13 @@ body.has-undo #sec-todos, body.has-undo #sec-today { padding-bottom: 64px; }
 .connect-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
 .connect-card h3 { margin: 0 0 6px; font-size: 14px; }
 .connect-card ul { margin: 0 0 10px; padding-left: 18px; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.connect-card { position: relative; }
+.connect-card h3 { padding-right: 22px; }
+.connect-card .connect-hide { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
+.connect-card .connect-hide:hover { background: var(--line); color: inherit; }
+.connect-card .connect-actions { display: flex; gap: 6px; align-items: center; }
+#chat-canned .connect-reopen { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--accent, #2f80ed); font-size: 12px; cursor: pointer; }
+#chat-canned .connect-reopen:hover { text-decoration: underline; }
 
 /* 설치 마법사: 레포 폴더 · 끝 화면 요약 */
 .setup-folder { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }

@@ -1,4 +1,5 @@
 // 말풍선 큐 — 순수 로직. 렌더러와 테스트가 같이 쓴다.
+import { normQuick } from './quick-ask.js';
 
 export const KINDS = ['info', 'todo', 'proposal', 'done', 'error'];
 export const DEFAULT_TTL = 12000;
@@ -46,6 +47,9 @@ export function normalizeBubble(raw) {
   // 사용법 둘러보기(tour.js) 장면: [다음]/[끝] · [그만 볼래요]
   const t = raw.tour;
   if (t && Number.isInteger(t.step) && Number.isInteger(t.total) && t.step >= 1 && t.step <= t.total) b.tour = { step: t.step, total: t.total };
+  // AI 없이 고르는 질문 칩(quick-ask.js): 아는 칩 id 만
+  const quick = normQuick(raw.quick);
+  if (quick) b.quick = quick;
   return b;
 }
 

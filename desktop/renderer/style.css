@@ -227,6 +227,10 @@ html, body {
   cursor: pointer;
 }
 .bubble button.primary { background: var(--accent); color: #fff; }
+/* AI 없이 고르는 질문 칩(quick-ask.js): 둥근 칩, 마지막 「AI 연결하기」만 강조 */
+.bubble .meta.quick-bar { gap: 5px; }
+.bubble button.chip { border-radius: 999px; padding: 4px 11px; }
+.bubble button.chip.connect { background: var(--accent); color: #fff; }
 .bubble button:disabled { opacity: 0.5; cursor: default; }
 .bubble button:hover:not(:disabled) { filter: brightness(0.95); }
 .bubble .link {

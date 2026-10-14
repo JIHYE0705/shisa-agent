@@ -32,6 +32,7 @@ import { checkLlm, listModels } from './src/llm-check.js';
 import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
 import { personaFor } from './src/persona.js';
 import { normStatus, brainView, sameView } from './src/brain-state.js';
+import { isAskId } from './src/quick-ask.js';
 import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
 import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
@@ -1100,6 +1101,16 @@ function setupIPC() {
   ipcMain.handle('caps-get', (e) => (fromOurs(e) ? refreshCaps(false) : denied()));
   // 뇌 연결 상태(brain-state.js brainView) — 캐릭터·패널·세션 창
   ipcMain.handle('brain-get', (e) => (fromOurs(e) ? (lastBrain ?? brainNow()) : denied()));
+  // 패널 채팅의 AI 연결 안내 카드 숨김(state.json connectCardHidden). 껐다 켜도 그대로이고 「AI 연결 안내 보기」로 다시 연다
+  ipcMain.handle('connect-card-get', (e) => (fromOurs(e) ? { hidden: state.connectCardHidden === true } : denied()));
+  ipcMain.handle('connect-card-set', (e, hidden) => {
+    if (!fromOurs(e) || typeof hidden !== 'boolean') return denied();
+    state.connectCardHidden = hidden;
+    saveState();
+    return { hidden };
+  });
+  // AI 없이 고르는 질문 칩(quick-ask.js) → 데몬이 정해진 말로 답한다
+  ipcMain.handle('local-ask', (e, id) => (e.sender === win?.webContents && isAskId(id) ? post('/local/ask', { id }) : denied()));
   // 사용법 둘러보기: 캐릭터 말풍선 [다음]/[그만] · 패널(설치 끝 화면) · 설정 창
   ipcMain.on('tour', (e, cmd) => {
     if (e.sender !== win?.webContents) return;

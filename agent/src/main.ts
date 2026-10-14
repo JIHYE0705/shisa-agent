@@ -2,6 +2,7 @@
 import { installFileLog } from "./log.ts";
 import { loadConfig } from "./config.ts";
 import { DEFAULT_TODAY_REMINDER } from "./daily-plan.ts";
+import { localAsk } from "./local-mode.ts";
 import { Store } from "./store.ts";
 import { Bus } from "./bus.ts";
 import { runs } from "./runs.ts";
@@ -208,6 +209,12 @@ await bus.listen(cfg.port, {
     remove: (id) => agent.deletePermission(id),
   },
   settings: { get: () => settings.view(), put: (body) => settings.put(body) },
+  // AI 없이 고르는 질문(캐릭터 더블클릭 칩): 오늘 할 일·열린 할 일·캘린더만 보고 정해진 말로
+  localAsk: (id) => localAsk(id, {
+    today: () => agent.dailyPlan().state().items,
+    open: () => store.openTodos(),
+    calendar: () => ({ enabled: calendar.enabled, meetings: calendar.enabled ? calendar.upcoming() : [] }),
+  }),
   guidelines: agent.guidelinesApi(),
   connections: { ids: CHECK_IDS, list: () => connections.list(), recheck: async (id) => { const r = await connections.recheck(id as CheckId | undefined); bus.statusChanged(status()); return r; } },
   status: () => {

@@ -9,7 +9,7 @@ import { renderSetup, clearApiDraft, readSlot } from './setup-view.js';
 import { mountModels } from './models-view.js';
 import { CANNED, cannedReply, connectSteps, hubItem, slotOk, EXTRAS } from '../src/ai-onboard.js';
 import { SETUP_FLOW_VERSION, isSetupPhase, phaseAfterBrain, backPhase, restorePhase, agentFrom, NO_AI } from '../src/setup-plan.js';
-import { brainView, connectCard } from '../src/brain-state.js';
+import { brainView, connectCard, chatLock } from '../src/brain-state.js';
 import { initialChat, chatReducer, isBusy, isRunning, busyLabel, busyThreads, sendButton, stopTargets, localState, queuedChats, queuedLabel, sentLabel } from '../src/chat.js';
 import { stamp, withDayDividers } from '../src/chat-time.js';
 import { KIND_ICONS, KIND_LABELS, normThread, normThreads, upsertThread, groupThreads, filterThreads, initSeen, isUnread, markSeen, pruneSeen, unreadCount, pickInitial, neighborThread, afterRemoval, mergeMessages, appendLocal, tagLocal, dropLocal, markSent, isDoubleSend, todoChip, okThreadId, editTarget, dropFrom } from '../src/threads.js';
@@ -98,6 +98,7 @@ let setupReadSessions = false; // 데몬 설정 readSessions(이 맥의 Claude C
 let detected = { claude: null, codex: null }; // 이 맥에서 찾은 Claude Code·Codex(로그인까지)
 // 뇌(말 거는 AI) 연결 상태 — main 이 GET /status 로 알려 준다(brain-state.js brainView). 모르면 막지 않는다
 let brain = { ready: true, known: false, connected: [] };
+let connectCardHidden = false; // AI 연결 안내 카드를 숨겼나(state.json connectCardHidden)
 let setupAgent = '';
 let setupPicked = [];
 let setupCursor = 0;
@@ -2774,19 +2775,37 @@ function renderChatLock() {
     box.id = 'chat-canned';
     compose.before(box);
   }
-  const locked = brain.ready === false;
-  compose.hidden = locked;
-  box.hidden = !locked;
-  if (!locked) return;
+  const lock = chatLock(brain, connectCardHidden);
+  compose.hidden = lock.locked;
+  box.hidden = !lock.locked;
+  if (!lock.locked) return;
   const card = connectCard(brain);
+  const canned = h('div.canned-row', null, CANNED.map((c) => h('button.ghost', { type: 'button', text: c.label, onclick: () => sayCanned(c) })));
+  if (lock.reopen) {
+    box.replaceChildren(canned, h('button.link.connect-reopen', { type: 'button', text: card.reopen, onclick: () => setConnectCardHidden(false) }));
+    return;
+  }
   box.replaceChildren(
     h('div.card.connect-card', null,
+      h('button.connect-hide', { type: 'button', text: '×', title: card.hide, 'aria-label': card.hide, onclick: () => setConnectCardHidden(true) }),
       h('h3', { text: card.title }),
       h('ul', null, card.lines.map((l) => md(h('li'), l))),
-      h('button.primary', { type: 'button', text: card.button, onclick: () => { openSetup('brain'); detectAgents(); } })),
-    h('div.canned-row', null, CANNED.map((c) => h('button.ghost', { type: 'button', text: c.label, onclick: () => sayCanned(c) }))),
+      h('div.connect-actions', null,
+        h('button.primary', { type: 'button', text: card.button, onclick: () => { openSetup('brain'); detectAgents(); } }),
+        h('button.ghost', { type: 'button', text: card.hide, onclick: () => setConnectCardHidden(true) }))),
+    canned,
   );
 }
+
+// AI 연결 안내 카드 숨김: 데스크톱 state.json 에 남긴다(껐다 켜도 그대로)
+function setConnectCardHidden(v) {
+  connectCardHidden = !!v;
+  renderChatLock();
+  cy.connectCardSet?.(connectCardHidden).catch(() => {});
+}
+cy.connectCardGet?.().then((r) => {
+  if (r && typeof r.hidden === 'boolean' && r.hidden !== connectCardHidden) { connectCardHidden = r.hidden; renderChatLock(); }
+}).catch(() => {});
 
 // main 이 알려 주는 뇌 연결 상태(GET /status · SSE status)
 function applyBrain(v) {

@@ -1,6 +1,6 @@
 // 렌더러 — 말풍선 그리기, 캐릭터 상태, 클릭 투과 토글, 드래그, 호버 채팅.
 import { BubbleQueue, normalizeBubble, assetUrl, sequence, stickerTtl, clickTarget, cleanMergeQuestion, linkLabel, looksMarkdown, bubbleMd, isListBubble, keepClasses, BUBBLE_PURIFY, isWaitingApproval, approvalButtons, tourButtons } from '../src/bubbles.js';
-import { noBrainBubble } from '../src/brain-state.js';
+import { quickBubble, chipsOf, chipAction, answerBubble, QUICK_ID } from '../src/quick-ask.js';
 import { bubbleAfterAction } from '../src/actions.js';
 import { runningCaption } from '../src/agents.js';
 import DOMPurify from './vendor/purify.js';
@@ -222,7 +222,7 @@ function fillEl(item, b) {
   setRich(bubble.querySelector('.detail'), b.detail ?? '');
   const meta = bubble.querySelector('.meta');
   meta.replaceChildren();
-  meta.classList.remove('tour-bar');
+  meta.classList.remove('tour-bar', 'quick-bar');
 
   if (isWaitingApproval(b)) {
     // 확인 카드(회의 응답 등)·도구 승인(패널 채팅·캐릭터 대화·할 일·Slack 어디서 났든): 누르기 전엔 아무것도 보내지 않는다.
@@ -251,6 +251,10 @@ function fillEl(item, b) {
         if (t.cmd === 'stop' || b.tour.step >= b.tour.total) dismiss(b.id);
       }));
     }
+  } else if (b.quick) {
+    // AI 없이 고르는 질문 칩: 누르면 데몬이 정해진 말로 답한다(칩 말풍선은 남겨 두고 답은 새 말풍선으로)
+    meta.classList.add('quick-bar');
+    for (const c of chipsOf(b.quick)) meta.append(button(c.label, c.connect ? 'chip connect' : 'chip', () => quickChip(c.id)));
   } else if (b.kind === 'proposal' && b.proposalId && !b.decided) {
     const ok = button('승인', 'primary', () => decide(b, 'approve'));
     const hold = button('보류', '', () => decide(b, 'hold'));
@@ -755,19 +759,30 @@ wrap.addEventListener('mousedown', (e) => {
 });
 
 // 한 번 클릭 = 패널(공부 중이면 세션 창), 더블클릭 = 말 걸기(입력창). 두 번째 클릭이 올 때까지 잠깐 기다렸다가 패널을 연다.
-// 뇌(AI)가 아직 없으면 더블클릭 = 춤 + 연결 안내 말풍선(누르면 설치 단계로)
+// 뇌(AI)가 아직 없으면 더블클릭 = 짧은 춤 + 고르는 질문 칩(AI 없이 답하는 것 · AI 연결하기)
 const DOUBLE_CLICK_MS = 280;
 let clickTimer = null;
 let brain = { ready: true }; // 모르면 막지 않는다(main 이 GET /status 로 알려 준다)
 cy.brain?.().then((v) => { if (v) brain = v; }).catch(() => {});
 cy.onBrain?.((v) => { if (v) brain = v; if (brain.ready === false && askOpen) hideAsk(); });
 
+// 뇌 없이 더블클릭: 고르는 질문 칩(오늘 할 일·지금 할 일·다음 일정·응원·AI 연결하기) + 짧은 춤
 let danceOff = null;
 function noBrain() {
   dispatchActivity({ type: 'localDance', on: true });
   clearTimeout(danceOff);
-  danceOff = setTimeout(() => dispatchActivity({ type: 'localDance', on: false }), 4500);
-  showBubble(noBrainBubble(brain));
+  danceOff = setTimeout(() => dispatchActivity({ type: 'localDance', on: false }), 1800);
+  showBubble(quickBubble(brain));
+}
+async function quickChip(id) {
+  const a = chipAction(id);
+  if (!a) return;
+  if (a.type === 'open') { cy.openItem(a.section, a.id); dismiss(QUICK_ID); return; }
+  let r;
+  try { r = await cy.localAsk(a.id); } catch { r = { ok: false }; }
+  showBubble(answerBubble(a.id, r));
+  const chips = current(QUICK_ID);
+  if (chips) schedule(chips); // 칩은 답을 본 뒤에도 잠깐 더 남긴다
 }
 function talk() {
   if (brain.ready === false) return noBrain();

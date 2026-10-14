@@ -118,6 +118,8 @@ export type BusHandlers = {
   settings?: SettingsApi;
   // 연결 상태(connections.ts). 없으면 503
   connections?: ConnectionsApi;
+  // AI 없이 고르는 질문(local-mode.ts QUICK_ASKS → quickAnswer). 모르는 id 면 undefined → 400. 없으면 503
+  localAsk?(id: string): unknown;
   // 지금 무엇이 연결됐나(status.ts): GET /status. 없으면 503
   status?: () => unknown;
   // 설치 마법사가 config.json 의 connectors 를 고친 뒤: 다시 읽어 바뀌었는지 + (launchd 아래면) 다시 켜는지. POST /connectors/reload. 없으면 503
@@ -450,6 +452,16 @@ export class Bus {
         if (!p) return json(res, 404, { error: "no such attachment" });
         h.attachments.open(p);
         return json(res, 200, { ok: true });
+      }
+      // AI 없이 고르는 질문: { id } → { ok, answer: { id, text, kind, detail?, open? } }
+      if (url.pathname === "/local/ask") {
+        if (!h.localAsk) return json(res, 503, { error: "local ask unavailable" });
+        const body = await readJson(req, false);
+        for (const k of Object.keys(body)) if (k !== "id") throw new BadRequest(`unknown key: ${k}`);
+        if (typeof body.id !== "string") throw new BadRequest("id required");
+        const answer = h.localAsk(body.id);
+        if (!answer) throw new BadRequest("unknown id");
+        return json(res, 200, { ok: true, answer });
       }
       if (url.pathname === "/connections/check") {
         if (!h.connections) return json(res, 503, { error: "connections unavailable" });
