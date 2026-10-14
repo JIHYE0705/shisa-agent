@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 out/
 .dev-app/
 .DS_Store
