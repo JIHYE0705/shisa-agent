@@ -152,12 +152,22 @@ launchctl kickstart -k gui/$(id -u)/com.cy-agent.daemon
 
 ### 업데이트와 삭제
 
-새 버전 받기:
+새 버전 받기: 터미널에 아래 한 줄을 붙여 넣으면 GitHub에서 최신 버전을 받고, 설치해서 적용한 뒤, 시사를 다시 띄웁니다.
 
 ```bash
-cd ~/shisa-agent && git pull && ./ops/install.sh
+cd ~/shisa-agent && ./ops/update.sh
 ```
 
+`ops/update.sh`가 아직 없는 예전 버전이라면 이 한 줄을 대신 씁니다. 하는 일은 같습니다.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cheo0y/shisa-agent/main/ops/update.sh | sh
+```
+
+이 한 줄은 `~/shisa-agent` 폴더가 없으면 처음부터 받아서 설치까지 하므로, 새로 설치할 때 3·4단계 대신 써도 됩니다.
+
+받은 뒤에는 바뀐 내용 목록이 나오고, 캐릭터가 잠깐 사라졌다가 다시 나타나면 끝입니다. 설정과 할 일 같은 데이터(`~/.cy-agent/`)는 그대로 남습니다.
+레포 폴더 안의 파일을 직접 고쳐 두었다면 덮어쓰지 않고 멈추니, 안내대로 정리한 뒤 다시 실행해 주세요.
 Fork해서 쓰고 있다면 GitHub에서 「Sync fork」를 먼저 눌러 주세요.
 
 지우기:
@@ -260,7 +270,7 @@ cd ~/shisa-agent && ./ops/uninstall.sh
 | `agent/` | 데몬. TypeScript를 빌드 없이 Node.js로 바로 돌립니다. 수집, 뇌, 브리핑, 코드 고치기, 로컬 서버(`127.0.0.1:47823`) |
 | `desktop/` | Electron 앱. 캐릭터 오버레이, 패널, 작업 세션 창, 설정 창([desktop/README.md](desktop/README.md)) |
 | `assets/` | 캐릭터 그림·영상·스티커. 설치할 때 `~/.cy-agent/assets`로 복사됩니다 |
-| `ops/` | 설치·삭제 스크립트(launchd), Slack 앱 매니페스트, 설정 예시 |
+| `ops/` | 설치·업데이트·삭제 스크립트(launchd), Slack 앱 매니페스트, 설정 예시 |
 | `docs/connect/` | 연결 안내 |
 | `docs/contract.md` | 데몬과 앱 사이 HTTP/SSE 계약 |
 
