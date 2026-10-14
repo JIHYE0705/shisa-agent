@@ -136,3 +136,11 @@ test('AI 없이 쓰는 중: 연결 카드·말풍선·둘러보기가 AI 를 필
   const chat = tourSteps(brainView({})).find((s) => s.id === 'chat');
   assert.match(chat.text, /AI 없이도/);
 });
+
+test('사용법 투어: AI 없으면 두 번 눌러 질문 칩, Slack 없으면 새로고침 안내 없음', async () => {
+  const { tourSteps } = await import('../src/tour.js');
+  const off = tourSteps({ ready: false, connected: [] });
+  assert.match(off[0].text, /바로 답해 주는 질문/);
+  assert.ok(!off.find((s) => s.id === 'todos').text.includes('새로고침'));
+  assert.match(tourSteps({ ready: true, connected: ['slack'] }).find((s) => s.id === 'todos').text, /새로고침/);
+});

@@ -128,6 +128,7 @@ export function detailView(d, now = Date.now()) {
     if (kind === 'slack') meta.push(str(s.author), str(s.channel), when(s.at, now));
     else if (kind === 'commit') meta.push(str(s.repo).split('/').filter(Boolean).at(-1) ?? '', str(s.sha).slice(0, 7), str(s.author), when(s.at, now));
     else if (kind === 'session') meta.push(str(s.title), str(s.repo).split('/').filter(Boolean).at(-1) ?? '', when(s.at, now));
+    else if (s.kind === 'user') meta.push(when(s.at, now)); // 직접 추가: 안쪽 id 는 보이지 않게
     else meta.push(str(s.title) || str(s.ref).replace(/^[a-z]+:/, ''), when(s.at, now));
     const permalink = str(s.permalink) && isSafeLink(s.permalink) ? s.permalink : null;
     source = { kind, kindLabel: KIND_LABEL[kind], meta: meta.filter(Boolean), excerpt: str(s.excerpt), quote: kind === 'slack' || kind === 'session', permalink };

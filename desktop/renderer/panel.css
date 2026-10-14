@@ -1,5 +1,6 @@
 /* 대시보드 패널 — 왼쪽 사이드바(맥에선 블러) + 오른쪽 본문 */
 :root {
+  color-scheme: light dark; /* 체크박스·스크롤바도 다크 모드를 따른다 */
   --bg: #f4f4f6;          /* 블러 없을 때 사이드바 */
   --surface: #ffffff;     /* 본문 */
   --card: #f7f7f9;
@@ -628,7 +629,7 @@ button.setup-copy { padding: 2px 8px; font-size: 11.5px; }
 .todos { padding: 2px 4px; }
 .todo { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-top: 1px solid var(--line); transition: opacity 0.25s ease; }
 .todo:first-child { border-top: 0; }
-.todo .t { flex: 1; min-width: 0; user-select: text; }
+.todo .t { flex: 1; min-width: 0; user-select: text; overflow-wrap: anywhere; } /* 띄어쓰기 없는 긴 제목·주소도 줄 안에서 */
 .todo.leaving { opacity: 0; }
 .todo .note { color: var(--err); font-size: 11.5px; }
 .todo.pending { opacity: 0.55; }

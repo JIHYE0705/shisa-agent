@@ -1,5 +1,6 @@
 /* 작업 세션 창 — 왼쪽 run 목록, 오른쪽 기록 + 입력창. 패널과 같은 색 토큰 */
 :root {
+  color-scheme: light dark;
   --bg: #f4f4f6;
   --surface: #ffffff;
   --card: #f7f7f9;

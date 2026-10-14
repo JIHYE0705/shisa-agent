@@ -1,5 +1,6 @@
 /* 설정 창 — 패널과 같은 색 토큰(밝음·어두움) */
 :root {
+  color-scheme: light dark;
   --bg: #f4f4f6;
   --surface: #ffffff;
   --card: #f7f7f9;

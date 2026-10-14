@@ -2611,7 +2611,7 @@ function renderChat(opts = {}) {
     items.push(selectedId && t?.count
       ? h('div.chat-hello.muted', { text: '불러오는 중…' })
       : h('div.chat-hello', null, h('b', { text: t?.kind === 'todo' ? '이 할 일에 대해 말해 보세요' : '새 대화' }),
-        h('span', { text: t?.kind === 'todo' ? '"내일로 미뤄", "끝났어", "둘로 나눠"처럼 말하면 바로 바꿔요.' : `무엇이든 물어보세요. 예: ${hasCoder() ? '"오늘 커밋 보여줘", "P1 할 일 뭐 있어?"' : '"오늘 일정 알려줘", "급한 할 일 뭐 있어?"'} 다른 대화의 내용은 이어지지 않아요.` })));
+        h('span', { text: t?.kind === 'todo' ? '"내일로 미뤄", "끝났어", "둘로 나눠"처럼 말하면 바로 바꿔요.' : brain.ready === false ? '아래 정해진 말을 눌러 보세요. AI를 연결하면 무엇이든 물어볼 수 있어요.' : `무엇이든 물어보세요. 예: ${hasCoder() ? '"오늘 커밋 보여줘", "P1 할 일 뭐 있어?"' : '"오늘 일정 알려줘", "급한 할 일 뭐 있어?"'} 다른 대화의 내용은 이어지지 않아요.` })));
   }
   if (selectedId && isRunning(chat, selectedId)) items.push(h('div.typing', null, h('i'), h('i'), h('i'), h('span', { text: busyLabel(chat, selectedId) })));
   else if (cannedTyping) items.push(h('div.typing', null, h('i'), h('i'), h('i'), h('span', { text: '입력 중' })));
