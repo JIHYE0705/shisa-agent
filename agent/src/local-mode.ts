@@ -3,7 +3,7 @@
 import { TONE, voice, type Mood } from "./voice.ts";
 
 export type LocalTodo = { title: string; priority?: number };
-export type DayPart = "morning" | "lunch" | "evening";
+export type DayPart = "morning" | "lunch" | "afternoon" | "evening";
 
 export type LocalThought = {
   bubble: string;
@@ -19,6 +19,7 @@ export const LOCAL_TONE = TONE;
 export const LINES = {
   morning: "좋은 아침이에요.",
   lunch: "점심 시간이에요.",
+  afternoon: "좋은 오후예요.",
   evening: "좋은 저녁이에요.",
   remind: "오늘 꼭 할 일을 다시 일깨워 드려요.",
   praise: "최근에 끝낸 일을 칭찬드려요.",
@@ -27,7 +28,7 @@ export const LINES = {
 
 const BUBBLE_MAX = 40;
 
-// Asia/Seoul. 아침 05–11시, 점심 11–17시, 그 밖(저녁·밤·새벽)은 저녁.
+// Asia/Seoul. 아침 05–12시, 점심 12–13시, 오후 13–18시, 그 밖(저녁·밤·새벽)은 저녁.
 export function seoulHour(now: Date): number {
   const hour = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Seoul", hour: "numeric", hourCycle: "h23" })
     .formatToParts(now)
@@ -39,8 +40,9 @@ export function seoulHour(now: Date): number {
 
 export function dayPart(now: Date): DayPart {
   const h = seoulHour(now);
-  if (h >= 5 && h < 11) return "morning";
-  if (h >= 11 && h < 17) return "lunch";
+  if (h >= 5 && h < 12) return "morning";
+  if (h === 12) return "lunch";
+  if (h >= 13 && h < 18) return "afternoon";
   return "evening";
 }
 

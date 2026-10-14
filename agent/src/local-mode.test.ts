@@ -22,10 +22,13 @@ test("말투는 TONE이고 양념은 voice()가 맡는다", () => {
 test("시간대는 Asia/Seoul 아침·점심·저녁", () => {
   assert.equal(dayPart(new Date("2026-10-09T19:59:00Z")), "evening"); // 04:59 KST. UTC로는 저녁이 아니다
   assert.equal(dayPart(new Date("2026-10-09T20:00:00Z")), "morning"); // 05:00
-  assert.equal(dayPart(new Date("2026-10-10T01:59:00Z")), "morning"); // 10:59
-  assert.equal(dayPart(new Date("2026-10-10T02:00:00Z")), "lunch"); // 11:00
-  assert.equal(dayPart(new Date("2026-10-10T07:59:00Z")), "lunch"); // 16:59
-  assert.equal(dayPart(new Date("2026-10-10T08:00:00Z")), "evening"); // 17:00
+  assert.equal(dayPart(new Date("2026-10-10T02:59:00Z")), "morning"); // 11:59
+  assert.equal(dayPart(new Date("2026-10-10T03:00:00Z")), "lunch"); // 12:00
+  assert.equal(dayPart(new Date("2026-10-10T03:59:00Z")), "lunch"); // 12:59
+  assert.equal(dayPart(new Date("2026-10-10T04:00:00Z")), "afternoon"); // 13:00
+  assert.equal(dayPart(new Date("2026-10-10T07:18:00Z")), "afternoon"); // 16:18
+  assert.equal(dayPart(new Date("2026-10-10T08:59:00Z")), "afternoon"); // 17:59
+  assert.equal(dayPart(new Date("2026-10-10T09:00:00Z")), "evening"); // 18:00
   assert.equal(dayPart(morning), "morning");
   assert.equal(dayPart(lunch), "lunch");
   assert.equal(dayPart(evening), "evening");
