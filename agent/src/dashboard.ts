@@ -81,7 +81,6 @@ function dashTodo(t: Todo): DashTodo {
     ...(t.description ? { description: t.description } : {}),
     ...(t.appliedRule ? { appliedRule: t.appliedRule } : {}),
     ...(t.progress ? { progress: t.progress, ...(t.progressAt ? { progressAt: t.progressAt } : {}) } : {}),
-    ...(t.doing !== undefined ? { doing: t.doing } : {}),
     ...(t.doneBy === "auto" && t.autoReason ? { autoReason: t.autoReason } : {}),
     ...(t.doneBy === "auto" && t.autoEvidence?.permalink ? { autoEvidence: t.autoEvidence.permalink } : {}),
     ...(t.doing !== undefined ? { doing: t.doing } : {}),

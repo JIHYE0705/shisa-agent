@@ -5,7 +5,7 @@
 // cfg.contextMode = "inline" 이면 예전처럼 큰 맥락 블록(brain.ts buildContext)을 프롬프트에 붙이고 이 서버는 안 붙는다(되돌리기).
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import type { Config } from "./config.ts";
+import { displayUserName, type Config } from "./config.ts";
 import type { Store, Todo, Thread, Node } from "./store.ts";
 import { CTX_SERVER, CTX_TOOL_NAMES } from "./guard.ts";
 import { profileContext } from "./profile.ts";
@@ -46,7 +46,7 @@ export function contextHeader(cfg: Pick<Config, "slackUserId" | "gitAuthor"> & {
   const lines = [
     "## 지금",
     `- 시각: ${fmtTime(now.toISOString())} (KST)`,
-    `- 사용자: ${cfg.user?.name?.trim() || "(이름 모름 — 설정 user.name)"}${who ? ` (${who})` : ""}`,
+    `- 사용자: ${displayUserName(cfg.user) || "(이름 모름 — 설정 user.name)"}${who ? ` (${who})` : ""}`,
   ];
   if (opts.thread) lines.push(`- 이 대화: ${KIND_KO[opts.thread.kind] ?? opts.thread.kind} "${clip(opts.thread.title, 60)}"`);
   if (opts.focus) lines.push(`- 대상 할 일: id=${opts.focus.id} [P${opts.focus.priority}] ${clip(opts.focus.title, 80)}`);

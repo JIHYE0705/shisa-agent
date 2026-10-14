@@ -6,7 +6,7 @@
 // - 이슈 상태·결정 내용은 근거 시각이 최신인 것이 이긴다. 이전 값은 history에 남긴다.
 // - 기존 노드는 지우지도 덮어쓰지도 않는다(세션·Slack 수집이 쓰는 노드의 props는 그대로). KG 속성은 kg_entities에 따로 둔다.
 import { basename } from "node:path";
-import { userAliases } from "../config.ts";
+import { defaultSelfNames, displayUserName, userAliases } from "../config.ts";
 import type { Store } from "../store.ts";
 import type { Chunk } from "./chunks.ts";
 import type { EntityType, Extraction, Relation } from "./extract.ts";
@@ -59,9 +59,8 @@ export function normKey(s: string): string {
   return s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
-// "나"를 가리키는 이름: 기본 대명사 + 설정(user.name · user.aliases)
-const USER_NAME = userAliases()[0];
-const SELF_NAMES = ["me", "나", "사용자", ...userAliases()];
+// "나"를 가리키는 이름: 기본 대명사 + 설정(user.name · user.aliases) + 이 PC 의 git 이름·계정 이름(config.ts defaultSelfNames)
+const SELF_GENERIC = ["me", "나", "사용자"];
 
 export function meId(store: Store): string {
   try {
@@ -83,11 +82,13 @@ export class Resolver {
   persons = new Map<string, string>();
   projects = new Map<string, string>();
 
-  constructor(store: Store) {
+  // selfNames: 나를 가리키는 이름들(시험은 직접 넣는다). 기본은 설정 + 이 PC 의 git 이름·계정 이름
+  constructor(store: Store, opts: { selfNames?: string[] } = {}) {
     ensureMergeTables(store);
     this.store = store;
     this.me = meId(store);
-    for (const n of SELF_NAMES) this.persons.set(normKey(n), this.me);
+    for (const n of SELF_GENERIC) this.persons.set(normKey(n), this.me);
+    for (const n of opts.selfNames ?? defaultSelfNames()) for (const k of [normKey(n), ...personVariants(n, {})]) if (k) this.persons.set(k, this.me);
     const rows = store.db.prepare("SELECT id, label, props FROM nodes WHERE kind IN ('person', 'project')").all() as any[];
     // 경로가 짧은(대표) 레포가 먼저 자리를 잡게
     rows.sort((a, b) => a.id.length - b.id.length);
@@ -208,7 +209,8 @@ export function mergeExtraction(store: Store, ex: Extraction, chunks: Chunk[], r
 }
 
 function ensureSelf(store: Store, me: string) {
-  if (!store.node(me)) store.upsertNode(me, "person", USER_NAME ? `${USER_NAME} (나)` : "나", { kg: true, isMe: true });
+  const myName = userAliases()[0] ?? displayUserName(undefined);
+  if (!store.node(me)) store.upsertNode(me, "person", myName ? `${myName} (나)` : "나", { kg: true, isMe: true });
 }
 
 // 근거 출처 노드: 세션(없으면 최소 노드를 만든다 — 14일보다 오래된 세션) 또는 Slack 채널

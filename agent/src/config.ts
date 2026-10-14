@@ -3,7 +3,7 @@
 import { readFileSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolveConnectors, type Connectors } from "./connectors.ts";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { phraseLines } from "./phrases.ts";
 import { autoMergeList } from "./auto-merge.ts";
@@ -101,14 +101,47 @@ export function pickBrain(env: NodeJS.ProcessEnv, file: Record<string, unknown>)
   };
 }
 
+// git config --global 값. 키마다 한 번만 읽는다(git 이 없거나 멈춰도 3초 뒤 포기)
+const gitGlobalCache = new Map<string, string | undefined>();
 function gitGlobal(key: string): string | undefined {
-  try { return execFileSync("git", ["config", "--global", key], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined; } catch { return undefined; }
+  if (gitGlobalCache.has(key)) return gitGlobalCache.get(key);
+  let v: string | undefined;
+  try { v = execFileSync("git", ["config", "--global", key], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined; } catch { v = undefined; }
+  gitGlobalCache.set(key, v);
+  return v;
+}
+export type GitIdentity = { name?: string; email?: string };
+export function gitGlobalIdentity(): GitIdentity {
+  const name = gitGlobal("user.name"), email = gitGlobal("user.email");
+  return { ...(name ? { name } : {}), ...(email ? { email } : {}) };
 }
 
 // "나"를 가리키는 이름들(지식그래프 병합용). 설정 파일의 user.name·user.aliases
 export function userAliases(): string[] {
   const u = (readFileConfig().user ?? {}) as { name?: string; aliases?: string[] };
   return [u.name, ...(Array.isArray(u.aliases) ? u.aliases : [])].filter((x): x is string => typeof x === "string" && !!x.trim());
+}
+
+// 비서가 부르는 사용자 이름(머리말 「사용자: …」·지식그래프 「나」 노드 이름).
+// 설정 user.name > env CY_AGENT_USER_NAME > git config --global user.name. 없으면 undefined(이름 없이)
+export function displayUserName(user: { name?: string } | undefined, env: NodeJS.ProcessEnv = process.env, git: GitIdentity = gitGlobalIdentity()): string | undefined {
+  const pick = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  return pick(user?.name) ?? pick(env.CY_AGENT_USER_NAME) ?? pick(git.name);
+}
+
+// 지식그래프에서 "나"로 볼 이름들: 설정(user.name·aliases) + env CY_AGENT_USER_NAME + 이 PC 의 git 이름·이메일 아이디·계정 이름.
+// 설정을 안 채운 새 사용자도 자기 이름이 다른 사람으로 잡히지 않게 한다
+export function defaultSelfNames(opts: { aliases?: string[]; env?: NodeJS.ProcessEnv; git?: GitIdentity; username?: string | null } = {}): string[] {
+  const out = [...(opts.aliases ?? userAliases())];
+  const env = opts.env ?? process.env;
+  if (env.CY_AGENT_USER_NAME?.trim()) out.push(env.CY_AGENT_USER_NAME.trim());
+  const git = opts.git ?? gitGlobalIdentity();
+  if (git.name) out.push(git.name);
+  if (git.email) out.push(git.email.split("@")[0]!);
+  let u = opts.username;
+  if (u === undefined) { try { u = userInfo().username; } catch { u = null; } }
+  if (u) out.push(u);
+  return [...new Set(out.map((x) => x.trim()).filter(Boolean))];
 }
 
 function readFileConfig(): Partial<Config> & Record<string, unknown> {
