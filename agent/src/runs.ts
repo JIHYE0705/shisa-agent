@@ -15,6 +15,8 @@ export type RunKind = "fix" | "briefing" | "chat" | "profile" | "kg" | "calendar
 export const RUN_KINDS: RunKind[] = ["fix", "briefing", "chat", "profile", "kg", "calendar", "slack-ingest", "todo-auto", "action", "other"];
 export type RunStatus = "running" | "done" | "failed" | "stopped";
 export const RUN_STATUSES: RunStatus[] = ["running", "done", "failed", "stopped"];
+// 정기 작업인가(데스크톱 session.js isRoutine 과 같은 기준): 늘 정기인 종류, 아니면 routine 표시, 표시 없는 옛 기록은 브리핑·스크럼
+const ROUTINE_SQL = "(kind IN ('slack-ingest', 'calendar', 'kg', 'profile', 'todo-auto') OR coalesce(routine, kind IN ('briefing', 'scrum')) = 1)";
 
 export type Run = {
   id: string; kind: RunKind; title: string; cwd?: string; model: string;
@@ -442,9 +444,11 @@ export class RunRegistry {
   // 돌고 있는 것 먼저, 그다음 최근 시작 순
   listRuns(o: { limit?: number; status?: RunStatus } = {}): Run[] {
     const limit = Math.max(1, Math.min(200, o.limit ?? 50));
-    const rows = (o.status
-      ? this.db.prepare("SELECT * FROM runs WHERE status = ? ORDER BY started_at DESC, rowid DESC LIMIT ?").all(o.status, limit)
-      : this.db.prepare("SELECT * FROM runs ORDER BY (status = 'running') DESC, started_at DESC, rowid DESC LIMIT ?").all(limit)) as any[];
+    if (o.status) return (this.db.prepare("SELECT * FROM runs WHERE status = ? ORDER BY started_at DESC, rowid DESC LIMIT ?").all(o.status, limit) as any[]).map((r) => this.row(r));
+    // 내 작업과 정기 작업을 따로 limit 개씩 — 자주 도는 정기 작업이 최근 목록을 다 채워 내 작업 세션이 안 보이던 것 막기
+    const q = (where: string) => this.db.prepare(`SELECT * FROM runs WHERE ${where} ORDER BY (status = 'running') DESC, started_at DESC, rowid DESC LIMIT ?`).all(limit) as any[];
+    const rows = [...q(`NOT ${ROUTINE_SQL}`), ...q(ROUTINE_SQL)]
+      .sort((a, b) => Number(b.status === "running") - Number(a.status === "running") || String(b.started_at).localeCompare(String(a.started_at)));
     return rows.map((r) => this.row(r));
   }
   active(): Run[] { return this.listRuns({ status: "running", limit: 200 }); }

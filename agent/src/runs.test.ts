@@ -45,6 +45,18 @@ test("listRuns: 돌고 있는 것 먼저, status 필터, limit", async () => {
   b.end("stopped");
 });
 
+test("listRuns: 정기 작업이 아무리 많아도 내 작업은 따로 limit 개까지 보인다", async () => {
+  const r = reg();
+  r.startRun({ kind: "chat", title: "내 대화" }).end("done");
+  r.startRun({ kind: "fix", title: "내 수정" }).end("done");
+  await new Promise((ok) => setTimeout(ok, 5));
+  for (let i = 0; i < 5; i++) r.startRun({ kind: "slack-ingest", title: `수집${i}`, routine: true }).end("done");
+  r.startRun({ kind: "briefing", title: "정기 브리핑", routine: true }).end("done");
+  const got = r.listRuns({ limit: 3 }).map((x) => x.title);
+  assert.ok(got.includes("내 대화") && got.includes("내 수정"), got.join(","));
+  assert.equal(got.filter((t) => t.startsWith("수집") || t === "정기 브리핑").length, 3);
+});
+
 test("잘라내기: tool_result 4KB, 텍스트 16KB, 원래 크기 기록", () => {
   const r = reg();
   const run = r.startRun({ kind: "fix", title: "t" });
