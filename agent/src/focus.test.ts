@@ -98,8 +98,7 @@ test("0초 세션(바로 그만)은 남기지 않는다", () => {
 test("앱이 꺼졌다 켜짐: 금방이면 이어 가고(꺼진 동안은 빼고), 오래면 마지막 저장 시각에 끝낸다", () => {
   const s = setup();
   s.f.start();
-  s.add(20 * 60e3);
-  s.f.checkpoint(); // 20분까지 저장
+  for (let i = 0; i < 40; i++) { s.add(30e3); s.f.checkpoint(); } // 타이머처럼 30초마다 저장, 20분까지
   s.add(60e3); // 저장 안 된 1분 뒤 꺼짐
   // 금방 다시 켜짐
   s.add(60e3);
@@ -108,7 +107,9 @@ test("앱이 꺼졌다 켜짐: 금방이면 이어 가고(꺼진 동안은 빼�
   let v = f2.view();
   assert.ok(v.active && !v.active.paused);
   assert.equal(v.active.seconds, 1200);
-  t += 5 * 60e3;
+  t += 2.5 * 60e3;
+  f2.checkpoint(); // 타이머처럼 간격(RESUME_GAP_MS) 안에서 저장 — 아니면 잠자기로 본다
+  t += 2.5 * 60e3;
   assert.equal(f2.view().active!.seconds, 1500);
   f2.checkpoint();
   // 이번엔 오래 꺼져 있다 켜짐
@@ -173,4 +174,44 @@ test("bus: GET /focus · /focus/stats · POST /focus/:cmd (헤더 필수) · SSE
   } finally {
     bus.close();
   }
+});
+
+test("잠자기: 지난 checkpoint 에서 RESUME_GAP_MS 넘게 지났으면 잠든 시간은 빼고 지금부터 새 구간", () => {
+  const s = setup(at(14, 23));
+  s.f.start();
+  s.add(30e3); s.f.checkpoint();
+  s.add(8 * 3600e3); s.f.checkpoint(); // 8시간 잠들었다 깸
+  assert.equal(s.f.view().active!.seconds, 30);
+  s.add(10e3);
+  const r = s.f.stop();
+  assert.equal(r.stopped!.seconds, 40);
+  assert.equal(s.f.stats("2026-10-14", "2026-10-15")!.total, 40);
+  // 타이머가 돌고 있으면 checkpoint 없이 깨자마자 그만해도 같다
+  const s2 = setup(at(14, 10));
+  s2.f.startTimer(3600e3);
+  s2.f.start();
+  s2.add(20e3); s2.f.checkpoint();
+  s2.add(RESUME_GAP_MS + 1);
+  assert.equal(s2.f.stop().stopped!.seconds, 20);
+  s2.f.stopTimer();
+  // 간격 안이면 그대로 이어진다
+  const s3 = setup(at(14, 10));
+  s3.f.start();
+  s3.add(RESUME_GAP_MS - 1); s3.f.checkpoint();
+  assert.equal(s3.f.view().active!.seconds, Math.floor((RESUME_GAP_MS - 1) / 1000));
+});
+
+test("그만할 때 초는 오늘 합계처럼 버림(1초 차이 없음)", () => {
+  const s = setup(at(14, 10));
+  s.f.start();
+  s.add(10_700);
+  const r = s.f.stop();
+  assert.equal(r.stopped!.seconds, 10);
+  assert.equal(r.today, 10);
+});
+
+test("통계 범위: 3660일 넘으면 undefined(→ 400)", () => {
+  const s = setup();
+  assert.equal(s.f.stats("1000-01-01", "9999-12-31"), undefined);
+  assert.ok(s.f.stats("2016-01-01", "2026-01-01"));
 });

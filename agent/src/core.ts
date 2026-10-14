@@ -103,6 +103,8 @@ export function mergedLine(st: { number: number; title: string; url: string; rep
     : `🤖 자동으로 머지했어요 — #${st.number} ${st.title} ${tail} · ${st.repo} 은(는) 자동 머지 레포라 ✓ 없이 머지했어요`;
 }
 
+export const LOCAL_GREET_ID = "local-greet";
+
 export class Agent {
   private briefing?: Promise<void>;
   // 돌고 있는 수정 run(채팅 제안·이어서 하기) — 줄 세우지 않고 전부 동시에(각자 워크트리, 같은 레포 git 참조 변경만 git-mutex.ts 로 짧게)
@@ -510,7 +512,9 @@ export class Agent {
       this.changed();
       const open = this.store.openTodos();
       const hasP1 = open.some((x) => x.priority === 1);
-      const b = { text: t.bubble, kind: hasP1 ? "todo" : "info", ttlMs: 30e3, link: posted?.permalink } as const;
+      // 로컬 뇌의 시간대 인사(「좋은 저녁이에요」…)는 고정 id — 같은 인사가 겹쳐 뜨지 않고 새 것이 옛 것을 바꾼다
+      const local = (this.cfg.brain?.provider ?? "claude-code") === "local";
+      const b = { ...(local ? { id: LOCAL_GREET_ID } : {}), text: t.bubble, kind: hasP1 ? "todo" : "info", ttlMs: 30e3, link: posted?.permalink } as const;
       // 별일 없는 브리핑엔 가끔 daily 스티커, 할 거 많으면 lots(반나절 한 번)
       const notable = hasP1 || this.lastAdded > 0 || t.proposals.length > 0 || !!this.reactions?.lotsDue(open);
       this.bus.bubble(this.reactions?.briefingBubble({ ...b }, { notable }) ?? b);

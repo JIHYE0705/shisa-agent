@@ -1,5 +1,5 @@
 // 데몬 엔트리포인트: 버스 + Slack + 주기 작업(세션·Slack 수집, 프로필 학습, 브리핑)
-import { installFileLog } from "./log.ts";
+import { installFileLog, stallLag } from "./log.ts";
 import { loadConfig } from "./config.ts";
 import { DEFAULT_TODAY_REMINDER } from "./daily-plan.ts";
 import { localAsk } from "./local-mode.ts";
@@ -42,6 +42,9 @@ import { featureBrain, NEEDS_CLAUDE_MCP, NEEDS_CODER, withMcpBrain } from "./fea
 import { mergePr } from "./fixer.ts";
 import { askBtw } from "./btw.ts";
 import { Focus, focusApi, focusDoneText } from "./focus.ts";
+import { brainAuthFailed, onBrainAuthChange } from "./providers.ts";
+import { briefingHours } from "./calendar.ts";
+import { performance } from "node:perf_hooks";
 
 installFileLog();
 // 새 설치면 config.json 에 "onboarded": false 를 남긴다: 설치 마법사를 마칠 때까지 아무것도 읽지 않고 모델도 부르지 않는다(onboarding.ts)
@@ -142,6 +145,8 @@ function pushStatus() {
   if (cfg.brain.provider === "claude-code" && connections.claudeLoggedIn() === undefined) void probeClaude();
   bus.statusChanged(status());
 }
+onBrainAuthChange(() => pushStatus()); // API 키가 401·403 을 받음 ↔ 다시 됨 → 데스크톱에 바로
+if (cfg.configError) console.error("[config] 안전 모드: 설정 파일을 고칠 때까지 아무것도 읽지 않고 로컬 뇌로 돌아요");
 
 await bus.listen(cfg.port, {
   approve: (id) => agent.approve(id),
@@ -287,15 +292,25 @@ const ingest = safe("ingest", () => { const n = agent.ingest(); if (n) console.l
 // 커넥터 MCP 서버(주소가 있는 http 서버만) 도달 상태 — 끊기면 말풍선으로 알리고, 다시 붙으면 바로 훑어본다
 const health = new McpHealth({ urls: () => connectorServerUrls(cfg.connectors) });
 
-// 이벤트 루프 멈춤 감시: 동기 작업이 2초 넘게 데몬을 붙잡으면(패널이 '연결 안 됨'으로 보임) 로그로 남긴다
-let tickAt = Date.now();
+// 이벤트 루프 멈춤 감시: 동기 작업이 2초 넘게 데몬을 붙잡으면(패널이 '연결 안 됨'으로 보임) 로그로 남긴다.
+// 단조 시계(performance.now) 기준. 맥이 잠들면 단조 시계는 거의 안 가고 벽시계만 크게 뛴다. 그건 멈춤이 아니다(log.ts stallLag)
+let tickMono = performance.now(), tickWall = Date.now();
 setInterval(() => {
-  const lag = Date.now() - tickAt - 1000;
+  const mono = performance.now(), wall = Date.now();
+  const lag = stallLag(mono - tickMono, wall - tickWall);
   if (lag > 2000) console.warn(`[stall] 데몬이 ${(lag / 1000).toFixed(1)}초 멈췄어요`);
-  tickAt = Date.now();
+  tickMono = mono; tickWall = wall;
 }, 1000).unref();
+let authSkipLogged = false;
 const brief = asRoutine(safe("briefing", async () => {
   if (!modelWorkAllowed(cfg)) return; // 설치 마법사를 마치기 전(정기 브리핑은 말풍선도 없이 조용히)
+  // API 키가 401·403 을 받았으면 정기 브리핑은 쉰다(실패 말풍선을 매번 띄우지 않게). 키를 바꾸면 지문이 달라져 다시 돈다
+  if (brainAuthFailed(cfg)) {
+    if (!authSkipLogged) console.warn("[briefing] API 키가 맞지 않아 정기 브리핑을 쉬어요. 키를 바꾸면 다시 해요");
+    authSkipLogged = true;
+    return;
+  }
+  authSkipLogged = false;
   const h = await health.check().catch(() => health.last);
   if (h.state !== "ok") console.log("[briefing] 일부 MCP 서버에 연결이 안 돼요 —", healthNote(h)); // 쓸 수 있는 출처로만 브리핑한다
   await agent.runBriefing();
@@ -414,12 +429,8 @@ const healthTick = asRoutine(safe("mcp-health", async () => {
 }));
 healthTick();
 setInterval(healthTick, 2 * 60e3);
-// 평일 업무시간(9~19시 KST)에만 정기 브리핑
-setInterval(() => {
-  const h = Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul", hour: "numeric", hour12: false }));
-  const d = new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul", weekday: "short" });
-  if (h >= 9 && h < 19 && !["Sat", "Sun"].includes(d)) brief();
-}, cfg.briefingIntervalMin * 60e3);
+// 평일 업무시간(이 맥의 시간대로 9~19시)에만 정기 브리핑
+setInterval(() => { if (briefingHours(new Date())) brief(); }, cfg.briefingIntervalMin * 60e3);
 setTimeout(() => briefIfDue("시작"), 5e3);
 // 일정 N분 전(설정 calendarAlert): 춤 + 말풍선(회의실·온라인 여부, 링크 버튼은 회의 링크, 없으면 캘린더 일정). 일정·분마다 한 번(DB에 남김)
 const stopCalendar = asRoutine(calendar.schedule.bind(calendar))((m, text, mins) => {

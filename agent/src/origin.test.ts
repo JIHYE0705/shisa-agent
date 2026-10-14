@@ -4,6 +4,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { RunRegistry, cleanOrigin, inRunContext, asRoutine } from "./runs.ts";
 import { Store } from "./store.ts";
 import { Bus } from "./bus.ts";
@@ -12,6 +16,13 @@ import { Actions } from "./actions.ts";
 import { loadConfig } from "./config.ts";
 import { lastExchange } from "./todo-ask.ts";
 import type { Converse } from "./chat.ts";
+
+// 채팅 제안이 쓸 레포: 레포 밖(압축 받은 소스 등)에서 돌려도 되게 임시 git 레포
+const tmpRepo = (() => {
+  const d = mkdtempSync(join(tmpdir(), "cy-origin-repo-"));
+  execFileSync("git", ["init", "-q"], { cwd: d });
+  return realpathSync(d);
+})();
 
 const cfg = () => ({ ...loadConfig(), repoRoots: [], claudeProjectsDir: "/none", codexSessionsDir: "/none" });
 
@@ -97,10 +108,10 @@ test("호출 지점별 origin: 채팅·호버 → 그 스레드, 할 일 집어 
   // 채팅 제안은 바로 실행된다 — 진짜 수정 run 이 돌지 않게 가짜
   const fixed: any[] = [];
   const s2 = setup({
-    converse: async () => ({ reply_md: "작업 시작했어요", bubble: "", show: null, proposals: [{ repo: process.cwd(), title: "고치기", plan: "…" }] }),
+    converse: async () => ({ reply_md: "작업 시작했어요", bubble: "", show: null, proposals: [{ repo: tmpRepo, title: "고치기", plan: "…" }] }),
     runFix: async (_c: unknown, p: any) => { fixed.push(p); return { ok: false, summary: "가짜", log: [] }; },
   });
-  (s2.agent as any).cfg.repoRoots = [process.cwd()];
+  (s2.agent as any).cfg.repoRoots = [tmpRepo];
   const pc = s2.agent.chat("고쳐줘") as { threadId: string };
   await s2.agent.chatIdle();
   await s2.agent.fixIdle();

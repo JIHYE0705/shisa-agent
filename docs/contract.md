@@ -6,11 +6,12 @@
 - 쓰기(POST·PUT·DELETE)는 `X-CY-Agent: 1` 헤더가 필수다. `Origin`이 있으면 거부한다(`file://` 제외) → 403. 첨부 파일 읽기(GET)도 같은 규칙이다.
 - 본문은 JSON 객체(`content-type: application/json`)이고, 본문이 없어도 되는 곳은 `{}`로 본다.
 - 처리기가 없으면(모듈이 꺼짐) 503, 모양이 틀리면 400, 없는 id면 404다.
+- `Host` 헤더가 `127.0.0.1:<포트>`나 `localhost:<포트>`가 아니면 모든 경로(`/events` 포함)를 403으로 막는다. 다른 이름이 127.0.0.1을 가리키게 하는 DNS 리바인딩을 막기 위해서다.
 - 응답과 상태 어디에도 키·토큰·ICS 주소 값은 넣지 않는다(있나 없나만).
 
 ## SSE `GET /events`
 
-접속 직후 `state`를 한 번 보낸다. 그다음 결정을 기다리는 버튼 말풍선과 최근 말풍선 3개, `runs`(`{ active }`)를 보낸다. 25초마다 ping, `retry: 3000`.
+접속 직후 `state`를 한 번 보낸다. 그다음 결정을 기다리는 버튼 말풍선과 최근 말풍선 3개, `runs`(`{ active }`)를 보낸다. 최근 말풍선은 띄운 지 `ttlMs`(없으면 3분) 안의 것만 다시 보낸다. 로컬 뇌의 시간대 인사는 고정 id `local-greet`로 와서 겹쳐 쌓이지 않는다. 25초마다 ping, `retry: 3000`.
 
 | 이벤트 | 데이터 | 뜻 |
 |---|---|---|
@@ -56,9 +57,16 @@ type Bubble = {
   "chat": true,                      // 말 걸 수 있나(뇌 준비 + local 아님). null = 모름
   "coder": { "claude": true, "codex": false },
   "connectors": [{ "cap": "slack|calendar|mail|issues", "label": "Slack", "mode": "api|mcp|off", "ready": true }],
-  "user": { "name": "길동" }
+  "user": { "name": "길동" },
+  "onboarded": true,
+  "configError": "설정 파일(config.json)에 문법 오류가 있어 …",  // 있을 때만. 파일을 못 읽어 안전 모드로 켬
+  "configNotes": ["ingestIntervalMin 값이 이상해서 …"]         // 있을 때만. 이상한 설정 값을 기본값으로 바꾼 것들
 }
 ```
+
+- `configError`: `config.json`이 JSON 문법 오류이거나 `{ … }` 모양이 아니면 데몬은 안전 모드로 켠다. 설치 마법사 전처럼 작업 기록·레포를 읽지 않고, 뇌는 `local`이다. 로그에도 크게 남긴다. 파일을 고친 뒤 데몬을 다시 켜면 풀린다.
+- `configNotes`: 모르는 `brain.provider`(→ `local`), 1분보다 작거나 숫자가 아닌 분 간격(`briefingIntervalMin`·`ingestIntervalMin`·`slackIngestIntervalMin`·`progressCheckMin`, `progressCheckMin`만 0 = 끔), 0이 아니면서 0.25시간보다 작은 `todayReminder.everyHours`, 숫자가 아닌 `port`(→ 47823), `repoRoots`의 상대 경로·`/` 같은 값. 위쪽 상한은 없다.
+- API 키 뇌(`openai`·`gemini`·`anthropic`)가 401·403을 받으면 `brain.ready: false`, `detail`은 「… API 키가 맞지 않아요. 키를 확인해 주세요」가 되고 SSE `status`로 알린다. 그 키로는 정기 브리핑을 쉬어서 실패 말풍선이 매번 뜨지 않는다. 키를 바꾸거나 호출이 한 번 성공하면 풀린다.
 
 ### `GET /settings` · `PUT /settings`
 
@@ -88,6 +96,7 @@ type Bubble = {
 ```
 
 - 결과는 200 `{ ok, settings, applied: "live", restartNeeded: false }`다.
+- `config.json`이 깨져 있으면 덮어쓰지 않고 409 `{ error }`(몇 번째 줄인지 담은 한 줄)를 준다. 파일을 쓰지 못하면 500.
 - `config.json`에 원자적으로 합쳐 쓰고 메모리 설정도 바로 바꾼다. 데몬을 다시 켤 필요가 없다.
 - 뇌가 바뀌면 SSE `status`를 보낸다.
 - `onboarded`가 `false`인 동안(새 설치)은 브리핑·Slack 할 일·할 일 자동 완료·진행 확인·지식그래프·프로필 학습을 돌리지 않고 작업 기록·git 도 읽지 않는다. `true`가 되면 그때 첫 정리를 한 번 한다. 처음 `true`를 적을 때 빈 칸(`readSessions`·`repoRoots`·`brain.provider`)은 지금 쓰는 값으로 같이 적는다.
@@ -177,7 +186,8 @@ type Bubble = {
 
 - `GET /focus` → `FocusView`
 - `POST /focus/start` · `/focus/pause` · `/focus/resume` · `/focus/stop` → `FocusView`(같은 걸 두 번 눌러도 안전). `stop`은 `stopped: { id, seconds } | null`도 주고, 1초 이상이면 「25분 집중했어요」 말풍선을 띄운다
-- `GET /focus/stats?from=YYYY-MM-DD&to=YYYY-MM-DD` → `{ from, to, days: [{ date, seconds, longest }], total }` (양끝 포함, 집중 중인 것은 지금까지. longest = 그날 일시정지 없이 가장 길게 이어서 집중한 초)
+- `GET /focus/stats?from=YYYY-MM-DD&to=YYYY-MM-DD` → `{ from, to, days: [{ date, seconds, longest }], total }` (양끝 포함, 집중 중인 것은 지금까지. longest = 그날 일시정지 없이 가장 길게 이어서 집중한 초). `from > to`이거나 3660일보다 넓으면 400
+- 맥이 잠들었다 깨서 마지막 저장에서 3분 넘게 지났으면, 돌던 구간을 마지막 저장 시각에 닫고 깬 때부터 새 구간을 연다(잠든 시간은 빠진다). `stop`의 초와 `today`는 둘 다 버림이라 서로 맞는다
 
 ```ts
 type FocusView = {
@@ -241,7 +251,7 @@ type FocusView = {
 
 | | |
 |---|---|
-| `GET /runs?limit&status` · `GET /runs/:id?since=<seq>` | 목록 · 한 run 과 이벤트 |
+| `GET /runs?limit&status` · `GET /runs/:id?since=<seq>` | 목록 · 한 run 과 이벤트. `status` 없이 부르면 내 작업과 정기 작업을 따로 `limit`개씩 모아 주므로 최대 `limit`의 2배가 온다 |
 | `POST /proposals { repo, text }` → 201 | 「새 작업」(승인 대기 제안) |
 | `POST /runs/:id/message { text, model?, attachments?, clientId? }` | 돌고 있는 수정 run 의 다음 턴. 전달 대기 중이면 `{ msgId, pending: true }` |
 | `POST /runs/:id/messages/:msgId/now\|cancel` | 대기 중인 말 지금 보내기·빼기 |
@@ -254,6 +264,8 @@ type FocusView = {
 - 워크트리(`cy/…` 브랜치)에서만 돈다.
 - 에이전트의 git commit·push·merge와 gh pr merge·create는 훅이 막는다.
 - 커밋·푸시·PR은 데몬이 하고, 테스트가 실패하면 커밋하지 않는다.
+
+대화 에이전트의 하드 차단(`permissions.ts` `HARD_DENY`: 비밀 파일 읽기·데몬 API 직접 호출 등)은 따옴표 쪼개기·glob·루프백 다른 표기(127.1·2130706433·[::1] 등)까지 걷어 보고, `.env`·`~/.cy-agent`를 언급하는 셸 명령은 묻지 않고 허용하지 않고 승인 카드로 돌린다. 그래도 이 목록은 셸 명령을 글로 읽어 맞춰 보는 것이라 완벽한 방어선이 아니다. 비밀은 애초에 에이전트가 닿는 폴더에 두지 않는 편이 안전하다.
 
 ## 가짜 데몬
 

@@ -1,6 +1,7 @@
 // 캐릭터 오버레이와 통신하는 로컬 HTTP 서버(127.0.0.1 전용). SSE로 말풍선·상태를 보낸다.
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
+import type { AddressInfo } from "node:net";
 import { parseNew, parseOps, parsePatch, type NewTodo, type TodoOp } from "./todos.ts";
 import type { TodoPatch } from "./store.ts";
 import { parseRulePatch } from "./todo-rules.ts";
@@ -162,6 +163,13 @@ function bodyModel(h: BusHandlers, body: any): string | undefined {
 
 const MAX_BODY = 64 * 1024 * 1024; // 글자 제한은 두지 않는다(사용자 요청) — 본문 크기는 메모리 보호용으로만
 class BadRequest extends Error {}
+// 버스에 붙어도 되는 Host 헤더: 127.0.0.1:포트 · localhost:포트(대소문자 무시)
+export function hostOk(host: string | undefined, port: number | undefined): boolean {
+  if (!host || !port) return false;
+  const h = host.toLowerCase();
+  return h === `127.0.0.1:${port}` || h === `localhost:${port}`;
+}
+export const RECENT_TTL_MS = 3 * 60e3; // ttlMs 없는 말풍선을 다시 붙은 오버레이에 다시 보낼 시간
 
 export class Bus {
   private clients = new Set<ServerResponse>();
@@ -169,14 +177,16 @@ export class Bus {
   onOverlay?: () => void; // 오버레이가 /events 로 붙을 때(아침 첫 실행 등)
   // 캐릭터 활동(공부 중·춤). 바뀌면 state 를 다시 보낸다 — activity.ts
   readonly activity = new ActivityTracker();
-  private recent: (Bubble & { id: string })[] = [];
+  // 최근 말풍선 3개(다시 붙은 오버레이에 다시 보냄). at = 넣은 시각 — ttlMs(없으면 RECENT_TTL_MS) 지난 건 다시 보내지 않는다
+  private recent: (Bubble & { id: string; at: number })[] = [];
+  now: () => number = Date.now;
   // 사용자 결정을 기다리는 버튼 말풍선(승인·확인 카드·머지): 결정·만료로 같은 id 가 바뀌거나 걷힐 때까지 다시 붙은 오버레이에도 보낸다
   private waiting = new Map<string, Bubble & { id: string }>();
   server?: Server;
 
   bubble(b: Bubble): string {
     const full = { ...b, id: b.id ?? randomUUID() };
-    this.recent = [...this.recent.filter((x) => x.id !== full.id), full].slice(-3);
+    this.recent = [...this.recent.filter((x) => x.id !== full.id), { ...full, at: this.now() }].slice(-3);
     this.waiting.delete(full.id);
     if (full.kind === "proposal" && full.actions) {
       this.waiting.set(full.id, full);
@@ -184,6 +194,11 @@ export class Bus {
     }
     this.send("bubble", full);
     return full.id;
+  }
+  // 아직 떠 있을 만한 최근 말풍선(ttl 안). 버튼 말풍선(waiting)은 따로 늘 보낸다
+  private freshRecent(): (Bubble & { id: string })[] {
+    const now = this.now();
+    return this.recent.filter((x) => now - x.at <= (x.ttlMs ?? RECENT_TTL_MS)).map(({ at: _at, ...b }) => b);
   }
   clear(id: string) {
     this.recent = this.recent.filter((x) => x.id !== id);
@@ -266,6 +281,8 @@ export class Bus {
   }
 
   private async route(req: IncomingMessage, res: ServerResponse, h: BusHandlers) {
+    // DNS 리바인딩 막기: Host 가 127.0.0.1:포트 · localhost:포트 가 아니면(다른 이름이 127.0.0.1 을 가리켜도) 모든 경로 403(/events 포함)
+    if (!hostOk(req.headers.host, (this.server?.address() as AddressInfo | null)?.port)) return json(res, 403, { error: "forbidden host" });
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     if (req.method === "GET" && url.pathname === "/health") return json(res, 200, { ok: true, mood: this.mood, activity: this.activity.snapshot().activity });
     if (req.method === "GET" && url.pathname === "/dashboard") return json(res, 200, await h.dashboard());
@@ -415,7 +432,7 @@ export class Bus {
       const from = url.searchParams.get("from"), to = url.searchParams.get("to");
       if (!from || !to || !DAY_RE.test(from) || !DAY_RE.test(to)) throw new BadRequest("from, to must be YYYY-MM-DD");
       const r = h.focus.stats(from, to);
-      if (!r) throw new BadRequest("bad range");
+      if (!r) throw new BadRequest("bad range: from ≤ to, 3660일 안");
       return json(res, 200, r);
     }
     if (req.method === "GET" && url.pathname === "/events") {
@@ -423,8 +440,9 @@ export class Bus {
       res.write("retry: 3000\n\n");
       this.clients.add(res);
       res.write(`event: state\ndata: ${JSON.stringify(this.state())}\n\n`);
-      for (const b of this.waiting.values()) if (!this.recent.some((x) => x.id === b.id)) res.write(`event: bubble\ndata: ${JSON.stringify(b)}\n\n`);
-      for (const b of this.recent) res.write(`event: bubble\ndata: ${JSON.stringify(b)}\n\n`);
+      const fresh = this.freshRecent();
+      for (const b of this.waiting.values()) if (!fresh.some((x) => x.id === b.id)) res.write(`event: bubble\ndata: ${JSON.stringify(b)}\n\n`);
+      for (const b of fresh) res.write(`event: bubble\ndata: ${JSON.stringify(b)}\n\n`);
       if (h.runs) res.write(`event: runs\ndata: ${JSON.stringify({ active: h.runs.active() })}\n\n`);
       if (h.focus) res.write(`event: focus\ndata: ${JSON.stringify(h.focus.view())}\n\n`);
       try { this.onOverlay?.(); } catch (e: any) { console.warn("[bus] onOverlay:", e?.message ?? e); }

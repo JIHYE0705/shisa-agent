@@ -66,3 +66,10 @@ export function installFileLog(dir = join(process.env.CY_AGENT_HOME ?? join(home
     if (orig.error) console.error = orig.error;
   };
 }
+
+// [stall] 감시용: 1초 타이머 한 번 사이에 단조 시계(mono)·벽시계(wall)가 간 ms → 멈춘 ms(아니면 0 이하).
+// 멈춤은 단조 시계로만 잰다. 벽시계만 크게 뛰었으면(맥 잠자기·시계 맞춤) 멈춤이 아니다
+export function stallLag(monoMs: number, wallMs: number, periodMs = 1000): number {
+  if (wallMs - monoMs > 5000) return 0;
+  return monoMs - periodMs;
+}

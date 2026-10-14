@@ -310,6 +310,7 @@ export function attachmentsTitle(list: Pick<Attachment, "name">[] | undefined): 
 // 새 대화 제목(가벼운 모델, 도구 없이 한 번). 답이 끝난 뒤 따로 — 실패하면 첫 말 제목 그대로
 const TITLE_SCHEMA = { type: "object", additionalProperties: false, required: ["title"], properties: { title: { type: "string", description: "대화 제목. 한국어 명사구 4–18자, 따옴표·마침표 없이." } } } as const;
 export async function suggestTitle(cfg: Config, text: string, reply: string, threadId?: string): Promise<string | undefined> {
+  if ((cfg.brain?.provider ?? "claude-code") === "local") return undefined; // 로컬 뇌는 모델이 없다(빈 run 을 만들지 않는다)
   const prompt = `아래 대화의 제목을 지어라.\n\n사용자: """${text.slice(0, 600)}"""\ncy: """${reply.slice(0, 600)}"""`;
   const r = await ask<{ title: string }>(cfg, prompt, TITLE_SCHEMA, undefined, {
     model: cfg.models.light, tools: false, system: "너는 대화 목록에 붙일 짧은 제목을 짓는 도우미다.",

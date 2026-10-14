@@ -10,7 +10,8 @@ import type { Store } from "./store.ts";
 export const FOCUS_CMDS = ["start", "pause", "resume", "stop"] as const;
 export type FocusCmd = (typeof FOCUS_CMDS)[number];
 export const CHECKPOINT_MS = 30e3; // 돌고 있는 구간 끝 시각을 이만큼마다 저장
-export const RESUME_GAP_MS = 3 * 60e3; // 데몬이 이 안에 다시 켜지면 같은 세션을 이어 간다(재시작)
+export const RESUME_GAP_MS = 3 * 60e3;
+export const STATS_MAX_DAYS = 3660; // GET /focus/stats 범위(약 10년). 넘으면 400 // 데몬이 이 안에 다시 켜지면 같은 세션을 이어 간다(재시작)
 
 // 지금 집중 중인 세션. base = 끝난 구간들 합(초 아님, ms) · since = 지금 구간 시작(일시정지면 null)
 export type FocusActive = { id: string; startedAt: number; paused: boolean; baseMs: number; since: number | null; seconds: number };
@@ -113,7 +114,7 @@ export class Focus {
   private finish(id: string, end: number): number {
     const db = this.store.db;
     db.prepare("UPDATE focus_spans SET end = MAX(start, ?), open = 0 WHERE session_id = ? AND open = 1").run(end, id);
-    const sec = Math.round(this.closedMs(id) / 1000);
+    const sec = Math.floor(this.closedMs(id) / 1000); // 오늘 합계(stats)처럼 버림 — 말풍선과 합계가 1초 어긋나지 않게
     if (sec <= 0) {
       db.prepare("DELETE FROM focus_spans WHERE session_id = ?").run(id);
       db.prepare("DELETE FROM focus_sessions WHERE id = ?").run(id);
@@ -140,13 +141,29 @@ export class Focus {
     });
   }
 
+  // 지난 저장(seen)에서 RESUME_GAP_MS 넘게 지났으면(맥이 잠들었음) 돌던 구간을 seen 에서 닫고 지금부터 새 구간 — recover 와 같은 규칙
+  // fromTimer=false(그만·일시정지·보기): 타이머(startTimer)가 30초마다 저장하고 있을 때만 — 저장이 없는 동안의 간격은 잠자기로 볼 근거가 없다
+  private bridgeGap(fromTimer = false) {
+    if (!fromTimer && !this.timer) return;
+    const cur = this.current();
+    if (!cur || cur.paused) return;
+    const now = this.now(), seen = Number(cur.seen);
+    if (now - seen <= RESUME_GAP_MS) return;
+    const open = this.openSpan(cur.id);
+    if (!open) return;
+    this.store.db.prepare("UPDATE focus_spans SET end = MAX(start, ?), open = 0 WHERE n = ?").run(seen, open.n);
+    this.store.db.prepare("INSERT INTO focus_spans (session_id, start, end, open) VALUES (?, ?, ?, 1)").run(cur.id, now, now);
+    this.store.db.prepare("UPDATE focus_sessions SET seen = ? WHERE id = ?").run(now, cur.id);
+  }
+
   // 돌고 있는 구간 끝 시각·세션 초를 저장(꺼져도 여기까지는 남는다)
   checkpoint() {
+    this.bridgeGap(true);
     const cur = this.current();
     if (!cur) return;
     const now = this.now();
     this.store.db.prepare("UPDATE focus_spans SET end = MAX(start, ?) WHERE session_id = ? AND open = 1").run(now, cur.id);
-    this.store.db.prepare("UPDATE focus_sessions SET seen = ?, seconds = ? WHERE id = ?").run(now, Math.round(this.sessionMs(cur.id, now) / 1000), cur.id);
+    this.store.db.prepare("UPDATE focus_sessions SET seen = ?, seconds = ? WHERE id = ?").run(now, Math.floor(this.sessionMs(cur.id, now) / 1000), cur.id);
   }
   startTimer(ms = CHECKPOINT_MS) {
     this.stopTimer();
@@ -169,11 +186,12 @@ export class Focus {
     return this.view();
   }
   pause(): FocusView {
+    this.bridgeGap();
     const cur = this.current();
     if (cur && !cur.paused) {
       const now = this.now();
       this.store.db.prepare("UPDATE focus_spans SET end = MAX(start, ?), open = 0 WHERE session_id = ? AND open = 1").run(now, cur.id);
-      this.store.db.prepare("UPDATE focus_sessions SET paused = 1, seen = ?, seconds = ? WHERE id = ?").run(now, Math.round(this.closedMs(cur.id) / 1000), cur.id);
+      this.store.db.prepare("UPDATE focus_sessions SET paused = 1, seen = ?, seconds = ? WHERE id = ?").run(now, Math.floor(this.closedMs(cur.id) / 1000), cur.id);
       this.changed();
     }
     return this.view();
@@ -190,6 +208,7 @@ export class Focus {
   }
   // 그만하기 → { stopped: { id, seconds } | null, ...view }
   stop(): FocusView & { stopped: { id: string; seconds: number } | null } {
+    this.bridgeGap(); // 잠에서 깨자마자 그만해도 잠든 시간은 빼고
     const cur = this.current();
     if (!cur) return { ...this.view(), stopped: null };
     const sec = this.finish(cur.id, this.now());
@@ -203,6 +222,7 @@ export class Focus {
 
   // ---- 보기 ----
   view(): FocusView {
+    this.bridgeGap();
     const now = this.now();
     const cur = this.current();
     let active: FocusActive | null = null;
@@ -220,6 +240,7 @@ export class Focus {
   stats(from: string, to: string): { from: string; to: string; days: FocusDay[]; total: number } | undefined {
     const a = dayStart(from), z = dayStart(to);
     if (Number.isNaN(a) || Number.isNaN(z) || a > z) return undefined;
+    if ((z - a) / 864e5 > STATS_MAX_DAYS) return undefined; // 입력 검증: 지나치게 넓은 범위(날마다 한 줄씩 만든다)
     const end = nextDayStart(z), now = this.now();
     const rows = this.store.db.prepare("SELECT start, end, open FROM focus_spans WHERE start < ? AND (end > ? OR open = 1)").all(end, a) as any[];
     const spans = rows.map((r) => ({ start: Number(r.start), end: r.open ? Math.max(Number(r.end), now) : Number(r.end) }));

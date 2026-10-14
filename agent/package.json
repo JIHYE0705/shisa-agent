@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/main.ts",
-    "test": "tsc -p . && CY_AGENT_HOME=${TMPDIR:-/tmp}/cy-agent-test-home node --test 'src/**/*.test.ts'",
+    "test": "tsc -p . && TZ=Asia/Seoul CY_AGENT_HOME=${TMPDIR:-/tmp}/cy-agent-test-home node --test 'src/**/*.test.ts'",
     "typecheck": "tsc -p ."
   },
   "dependencies": {

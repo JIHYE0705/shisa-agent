@@ -564,3 +564,12 @@ test("춤뿐인 말: 모델을 부르지 않고 고정 문구(설정 창 dance)�
     setPhrases({});
   }
 });
+
+test("로컬 뇌면 대화 제목 짓기 run 을 만들지 않는다(모델 없음)", async () => {
+  const { suggestTitle } = await import("./chat.ts");
+  const { runs } = await import("./runs.ts");
+  const cfg = { ...loadConfig(), brain: { provider: "local" as const } };
+  const before = runs.listRuns({ limit: 200 }).length;
+  assert.equal(await suggestTitle(cfg, "안녕", "응"), undefined);
+  assert.equal(runs.listRuns({ limit: 200 }).length, before);
+});

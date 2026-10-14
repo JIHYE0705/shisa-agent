@@ -39,3 +39,34 @@ test("msUntilNext: 오늘 전이면 오늘, 지났으면 다음 영업일", () =
   const ms2 = msUntilNext(10, 30, at("2026-09-23T02:00:00Z"));
   assert.equal(kstDate(new Date(at("2026-09-23T02:00:00Z").getTime() + ms2)), "2026-09-28");
 });
+
+test("로컬 시간대: 날짜·시각·정기 브리핑 시간은 이 맥의 TZ 를 따른다(KST 고정 아님)", async () => {
+  const { localDate, localHhmm, localMinutes, briefingHours } = await import("./calendar.ts");
+  const { DailyPlanService } = await import("./daily-plan.ts");
+  const { Store } = await import("./store.ts");
+  const prev = process.env.TZ;
+  const t = new Date("2026-10-14T02:30:00Z"); // 서울 수 11:30 · 뉴욕 화 22:30
+  try {
+    process.env.TZ = "Asia/Seoul";
+    assert.equal(localDate(t), "2026-10-14");
+    assert.equal(localHhmm(t), "11:30");
+    assert.equal(localMinutes(t), 11 * 60 + 30);
+    assert.equal(briefingHours(t), true);
+    process.env.TZ = "America/New_York";
+    assert.equal(localDate(t), "2026-10-13");
+    assert.equal(localHhmm(t), "22:30");
+    assert.equal(briefingHours(t), false); // 밤
+    assert.equal(briefingHours(new Date("2026-10-13T14:00:00Z")), true); // 뉴욕 화 10:00
+    assert.equal(briefingHours(new Date("2026-10-17T14:00:00Z")), false); // 뉴욕 토
+    // 오늘 할 일의 「오늘」도 로컬 날짜
+    const plan = new DailyPlanService(new Store(":memory:"), { now: () => t });
+    assert.equal(plan.state().date, "2026-10-13");
+    // 아침 알림: 로컬 9시 전이면(앱을 막 연 게 아니면) 아직
+    const early = new DailyPlanService(new Store(":memory:"), { now: () => new Date("2026-10-13T12:00:00Z") }); // 뉴욕 08:00
+    assert.equal(early.remind({ mode: "auto", everyHours: 0, times: [] }), null);
+    const nine = new DailyPlanService(new Store(":memory:"), { now: () => new Date("2026-10-13T13:05:00Z") }); // 뉴욕 09:05
+    assert.equal(nine.remind({ mode: "auto", everyHours: 0, times: [] })?.kind, "ask");
+  } finally {
+    if (prev === undefined) delete process.env.TZ; else process.env.TZ = prev;
+  }
+});

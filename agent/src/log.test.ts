@@ -38,3 +38,11 @@ test("installFileLog: 커지면 이전 파일로 돌린다", () => {
     restore();
   }
 });
+
+test("[stall]: 단조 시계로만 잰다 — 잠자기(벽시계만 크게 뜀)는 멈춤이 아니다", async () => {
+  const { stallLag } = await import("./log.ts");
+  assert.equal(stallLag(1000, 1000), 0);
+  assert.equal(stallLag(4500, 4500), 3500); // 진짜 멈춤
+  assert.ok(stallLag(1001, 8 * 3600e3) <= 0); // 맥이 8시간 잠듦
+  assert.ok(stallLag(1000, 1000 + 60e3) <= 0); // 시계 맞춤
+});

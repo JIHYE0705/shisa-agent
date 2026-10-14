@@ -26,9 +26,10 @@ export function initRepo(dir: string, localEmail?: string) {
   if (localEmail) execFileSync("git", ["config", "user.email", localEmail], { cwd: dir });
 }
 
-test("kstMidnight: KST 날짜 기준 0시", () => {
-  assert.equal(kstMidnight(new Date("2026-10-08T16:30:00Z")), "2026-10-09T00:00:00+09:00"); // KST 10/9 01:30
-  assert.equal(kstMidnight(new Date("2026-10-08T14:59:00Z")), "2026-10-08T00:00:00+09:00");
+test("kstMidnight: 이 맥의 시간대 기준 오늘 0시(시험은 TZ=Asia/Seoul)", () => {
+  const at = (iso: string) => Date.parse(kstMidnight(new Date(iso)));
+  assert.equal(at("2026-10-08T16:30:00Z"), Date.parse("2026-10-09T00:00:00+09:00")); // KST 10/9 01:30
+  assert.equal(at("2026-10-08T14:59:00Z"), Date.parse("2026-10-08T00:00:00+09:00"));
 });
 
 test("git: 깊이 2 스캔, 내 커밋만(이메일·이름·로컬 user.email), 오늘 KST 기준", async () => {

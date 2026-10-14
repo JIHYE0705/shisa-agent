@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import { execFile } from "node:child_process";
 import type { Bubble, BubbleImage } from "./bus.ts";
 import type { Config } from "./config.ts";
-import { kstDate, kstMinutes } from "./calendar.ts";
+import { localDate as kstDate, localMinutes as kstMinutes } from "./calendar.ts"; // 이 맥의 시간대 기준(이름은 예전 그대로)
 import { voice, TONE } from "./voice.ts";
 import { phrase, phraseVoice, customPhrase } from "./phrases.ts";
 import { mergeDetail, mergeQuestion, type MergeInfo } from "./merge-request.ts";

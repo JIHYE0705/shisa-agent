@@ -505,3 +505,73 @@ test("bus: POST /connectors/reload — 헤더 필수, 핸들러 없으면 503", 
   const off = await serve();
   try { assert.equal((await off.post("/connectors/reload")).status, 503); } finally { off.bus.close(); }
 });
+
+// Host 헤더를 마음대로 넣어 보내기(fetch 는 Host 를 못 바꾸는 경우가 있어 http.request)
+function rawGet(port: number, path: string, host: string): Promise<number> {
+  return new Promise(async (ok, fail) => {
+    const { request } = await import("node:http");
+    const r = request({ host: "127.0.0.1", port, path, method: "GET", headers: { host } }, (res) => { res.resume(); ok(res.statusCode!); res.destroy(); });
+    r.on("error", fail);
+    r.end();
+  });
+}
+
+test("bus: Host 가 127.0.0.1:포트 · localhost:포트 가 아니면 모든 경로 403(/events 포함, DNS 리바인딩)", async () => {
+  const { bus } = await serve();
+  const port = (bus.server!.address() as any).port;
+  try {
+    for (const path of ["/health", "/dashboard", "/events", "/settings"]) {
+      assert.equal(await rawGet(port, path, "evil.example:" + port), 403, path);
+      assert.equal(await rawGet(port, path, "127.0.0.1.nip.io:" + port), 403, path);
+      assert.equal(await rawGet(port, path, "127.0.0.1:1"), 403, path);
+    }
+    assert.equal(await rawGet(port, "/health", `127.0.0.1:${port}`), 200);
+    assert.equal(await rawGet(port, "/health", `localhost:${port}`), 200);
+    assert.equal(await rawGet(port, "/events", `localhost:${port}`), 200);
+  } finally {
+    bus.close();
+  }
+});
+
+test("bus: 다시 붙을 때 최근 말풍선은 ttl(없으면 몇 분) 안의 것만 다시 보낸다", async () => {
+  const { bus, base } = await serve();
+  let t = 1_000_000;
+  bus.now = () => t;
+  try {
+    bus.bubble({ id: "old", text: "14초 집중했어요", kind: "done", ttlMs: 8000 });
+    bus.bubble({ id: "noTtl", text: "ttl 없음", kind: "info" });
+    t += 10_000; // focus 말풍선은 이미 사라졌을 때
+    bus.bubble({ id: "fresh", text: "방금", kind: "info", ttlMs: 60e3 });
+    const read = async () => {
+      const ac = new AbortController();
+      const res = await fetch(`${base}/events`, { signal: ac.signal });
+      const reader = res.body!.getReader();
+      let buf = "";
+      // 붙자마자 한꺼번에 오는 것만 모은다(150ms 동안 더 안 오면 끝)
+      for (;;) {
+        const r = await Promise.race([reader.read(), new Promise<null>((ok) => setTimeout(() => ok(null), 150))]);
+        if (!r || r.done) break;
+        buf += new TextDecoder().decode(r.value);
+      }
+      ac.abort();
+      return buf;
+    };
+    let buf = await read();
+    assert.doesNotMatch(buf, /"old"/);
+    assert.match(buf, /"noTtl"/);
+    assert.match(buf, /"fresh"/);
+    t += 4 * 60e3; // 몇 분 지나면 ttl 없는 것도 안 보낸다
+    buf = await read();
+    assert.doesNotMatch(buf, /"noTtl"|"fresh"/);
+  } finally {
+    bus.close();
+  }
+});
+
+test("로컬 뇌 인사 말풍선은 고정 id(local-greet) — 같은 인사가 겹쳐 쌓이지 않는다", async () => {
+  const { LOCAL_GREET_ID } = await import("./core.ts");
+  const bus = new Bus();
+  bus.bubble({ id: LOCAL_GREET_ID, text: "좋은 저녁이에요.", kind: "info" });
+  bus.bubble({ id: LOCAL_GREET_ID, text: "좋은 저녁이에요.", kind: "info" });
+  assert.equal((bus as any).recent.filter((b: any) => b.id === LOCAL_GREET_ID).length, 1);
+});

@@ -1,10 +1,10 @@
 // 설정: 환경변수 > ~/.cy-agent/config.json > 기본값. 비밀값(토큰)은 레포 밖에만 둔다.
 // 설정 창(PUT /settings, settings.ts)이 models·briefing·phrases·autoMerge·todayReminder·calendarAlert 를 config.json 에 합쳐 쓰고 메모리의 cfg 도 바로 바꾼다.
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync, mkdirSync, chmodSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolveConnectors, type Connectors } from "./connectors.ts";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { phraseLines } from "./phrases.ts";
 import { autoMergeList } from "./auto-merge.ts";
 import { todayReminderOf, type TodayReminder } from "./daily-plan.ts";
@@ -68,6 +68,10 @@ export type Config = {
   // inline = 예전처럼 큰 맥락 블록(프로필·KG·Slack 미답·48시간 세션·할 일·대시보드 요약)을 매 턴 프롬프트에(되돌리기용).
   // env CY_AGENT_CONTEXT_MODE > config.json contextMode. 데몬을 다시 켜면 바뀐다(배포 불필요)
   contextMode?: "tools" | "inline"; // 없으면 tools
+  // config.json 을 못 읽음(JSON 문법 오류 등) — 안전 모드(아무것도 안 읽고 local 뇌). 사람이 읽을 한 줄, GET /status configError
+  configError?: string;
+  // 설정 값이 이상해서 기본값으로 바꾼 것들(모르는 뇌·잘못된 숫자·레포 폴더 등). GET /status configNotes
+  configNotes?: string[];
 };
 
 export const BRAIN_PROVIDERS = ["claude-code", "codex", "anthropic", "gemini", "openai", "local"] as const;
@@ -93,12 +97,16 @@ function safeLabel(raw: string): string {
   return raw;
 }
 
-export function pickBrain(env: NodeJS.ProcessEnv, file: Record<string, unknown>): BrainConfig {
-  const rawBrain = (file.brain ?? {}) as { provider?: unknown; geminiApiKey?: unknown; openaiApiKey?: unknown; anthropicApiKey?: unknown };
+// notes: 모르는 provider 면 여기에 한 줄(GET /status configNotes). 데몬은 죽지 않고 local 로 뜬다
+export function pickBrain(env: NodeJS.ProcessEnv, file: Record<string, unknown>, notes: string[] = []): BrainConfig {
+  const rawBrain = (file.brain && typeof file.brain === "object" ? file.brain : {}) as { provider?: unknown; geminiApiKey?: unknown; openaiApiKey?: unknown; anthropicApiKey?: unknown };
   // 새 설치(onboarded 키가 있음)는 마법사에서 고르기 전까지 "아직 안 고름" = local(모델 없음). 예전 설정은 claude-code
-  const providerRaw = nonempty(env.CY_AGENT_BRAIN) ?? nonempty(rawBrain.provider) ?? (isNewStyle(file) ? "local" : "claude-code");
+  let providerRaw = nonempty(env.CY_AGENT_BRAIN) ?? nonempty(rawBrain.provider) ?? (isNewStyle(file) ? "local" : "claude-code");
   if (!(BRAIN_PROVIDERS as readonly string[]).includes(providerRaw)) {
-    throw new Error(`알 수 없는 brain.provider예요: ${safeLabel(providerRaw)}`);
+    const note = `알 수 없는 뇌(brain.provider: ${safeLabel(providerRaw)})라서 로컬로 켰어요. 설정에서 뇌를 다시 골라 주세요`;
+    console.warn(`[config] ${note}`);
+    notes.push(note);
+    providerRaw = "local";
   }
   // 키: 이름 있는 환경변수 > 일반 환경변수 > 파일. 빈 문자열은 없는 것과 같다
   const geminiApiKey = nonempty(env.CY_AGENT_GEMINI_API_KEY) ?? nonempty(env.GEMINI_API_KEY) ?? nonempty(rawBrain.geminiApiKey);
@@ -156,12 +164,67 @@ export function defaultSelfNames(opts: { aliases?: string[]; env?: NodeJS.Proces
   return [...new Set(out.map((x) => x.trim()).filter(Boolean))];
 }
 
-function readFileConfig(): Partial<Config> & Record<string, unknown> {
-  try {
-    return JSON.parse(readFileSync(join(HOME_DIR, "config.json"), "utf8"));
-  } catch {
-    return {};
+// config.json 을 못 읽었을 때 붙이는 표시(loadConfig 가 안전 모드로 뜬다)
+export const CONFIG_ERROR = Symbol("configError");
+type FileConfig = Partial<Config> & Record<string, unknown> & { [CONFIG_ERROR]?: string };
+
+// JSON.parse 오류 글에서 줄·칸만 뽑아 사람이 읽을 한 줄로(내용은 넣지 않는다 — 토큰이 섞여 있을 수 있다)
+export function configErrorText(e: unknown): string {
+  const m = /line (\d+) column (\d+)/.exec(String((e as Error)?.message ?? e));
+  const at = m ? ` (${m[1]}번째 줄 ${m[2]}번째 칸 근처)` : "";
+  return `설정 파일(config.json)에 문법 오류가 있어${at} 안전 모드로 켰어요. 파일을 고친 뒤 데몬을 다시 켜 주세요`;
+}
+
+// 글 → 설정 객체. 비었으면 {}(새 설치), 문법 오류·객체가 아니면 CONFIG_ERROR 표시만 단 {}
+export function parseConfigText(raw: string): FileConfig {
+  if (!raw.trim()) return {};
+  let v: unknown;
+  try { v = JSON.parse(raw); } catch (e) { return { [CONFIG_ERROR]: configErrorText(e) }; }
+  if (!v || typeof v !== "object" || Array.isArray(v)) return { [CONFIG_ERROR]: "설정 파일(config.json)이 { … } 모양이 아니라서 안전 모드로 켰어요. 파일을 고친 뒤 데몬을 다시 켜 주세요" };
+  return v as FileConfig;
+}
+
+function readFileConfig(): FileConfig {
+  let raw: string;
+  try { raw = readFileSync(join(HOME_DIR, "config.json"), "utf8"); } catch (e: any) {
+    if (e?.code === "ENOENT") return {}; // 아직 없음(새 설치)
+    return { [CONFIG_ERROR]: `설정 파일(config.json)을 읽지 못해(${e?.code ?? "오류"}) 안전 모드로 켰어요. 파일 권한을 확인한 뒤 데몬을 다시 켜 주세요` };
   }
+  return parseConfigText(raw);
+}
+
+// 분 간격(setInterval 에 들어가는 값): 유한한 수이고 1분 이상이어야. 아니면 기본값(위로는 막지 않는다)
+// allowZero: 0 = 끔이 뜻이 있는 값(progressCheckMin)
+export function minutesOf(key: string, raw: unknown, def: number, notes: string[], opts: { allowZero?: boolean } = {}): number {
+  if (raw === undefined || raw === null) return def;
+  const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+  if (Number.isFinite(n) && (n >= 1 || (opts.allowZero && n === 0))) return n;
+  notes.push(`${key} 값이 이상해서(1분 이상의 숫자여야 해요) 기본값 ${def}분으로 돌려요`);
+  return def;
+}
+
+// 포트: 1~65535 정수만. 아니면 기본 포트
+export function portOf(raw: unknown, def: number, notes: string[]): number {
+  if (raw === undefined || raw === null || raw === "") return def;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= 1 && n <= 65535) return n;
+  notes.push(`port 값이 숫자가 아니라서 기본 포트 ${def}을 써요`);
+  return def;
+}
+
+// 레포 폴더: 절대 경로 글 목록(글 하나면 [그 글]). 루트(/) 자체·상대 경로·글 아닌 것은 뺀다
+export function repoRootsOf(raw: unknown, notes: string[]): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : null;
+  if (!list) { notes.push("repoRoots 는 폴더 경로 목록이어야 해서 비워 뒀어요"); return []; }
+  const out: string[] = [];
+  for (const x of list) {
+    const p = typeof x === "string" ? x.trim() : "";
+    if (!p || !isAbsolute(p) || resolve(p) === "/") { notes.push(`repoRoots 에서 쓸 수 없는 값(${typeof x === "string" ? x.slice(0, 80) : typeof x})을 뺐어요. 「/」로 시작하는 폴더 경로만, 디스크 맨 위(/)는 안 돼요`); continue; }
+    const r = resolve(p);
+    if (!out.includes(r)) out.push(r);
+  }
+  return out;
 }
 
 // env CY_AGENT_GITHUB=0/1 > config.json github(또는 connectors.github): true/false 또는 { enabled, bin }
@@ -189,20 +252,28 @@ function phrasesOf(raw: unknown): Record<string, string[]> {
 }
 
 // f: config.json 내용(시험은 직접 넣는다)
-export function loadConfig(env = process.env, f: Partial<Config> & Record<string, unknown> = readFileConfig()): Config {
-  mkdirSync(HOME_DIR, { recursive: true });
-  return {
-    port: Number(env.CY_AGENT_PORT ?? f.port ?? 47823),
+// config.json 이 깨져 있으면(f[CONFIG_ERROR]) 안전 모드: 설치 마법사 전처럼 아무것도 읽지 않고(onboarded false·작업 기록 끔·레포 없음) local 뇌
+export function loadConfig(env = process.env, file: FileConfig = readFileConfig()): Config {
+  ensureHomeDir();
+  const configError = file[CONFIG_ERROR];
+  if (configError) {
+    console.error(`\n[config] !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n[config] ${configError}\n[config] ${join(HOME_DIR, "config.json")}\n[config] !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n`);
+  }
+  const f: FileConfig = configError ? { onboarded: false, readSessions: false, repoRoots: [], brain: { provider: "local" } as any } : file;
+  const notes: string[] = [];
+  const cfg: Config = {
+    port: portOf(env.CY_AGENT_PORT ?? f.port, 47823, notes),
     dbPath: env.CY_AGENT_DB ?? (f.dbPath as string) ?? join(HOME_DIR, "cy.db"),
     claudeProjectsDir: (f.claudeProjectsDir as string) ?? join(homedir(), ".claude", "projects"),
     codexSessionsDir: (f.codexSessionsDir as string) ?? join(homedir(), ".codex", "sessions"),
     slackBotToken: env.SLACK_BOT_TOKEN ?? (f.slackBotToken as string),
     slackAppToken: env.SLACK_APP_TOKEN ?? (f.slackAppToken as string),
     slackUserId: env.SLACK_USER_ID ?? (f.slackUserId as string),
-    briefingIntervalMin: Number(f.briefingIntervalMin ?? 60),
-    ingestIntervalMin: Number(f.ingestIntervalMin ?? 10),
-    slackIngestIntervalMin: Number(f.slackIngestIntervalMin ?? 5),
-    progressCheckMin: Number(f.progressCheckMin ?? f.slackIngestIntervalMin ?? 5), // 세션 진행 확인 — 슬랙 수집과 같은 간격(새 세션이 없으면 모델 안 부름)
+    briefingIntervalMin: minutesOf("briefingIntervalMin", f.briefingIntervalMin, 60, notes),
+    ingestIntervalMin: minutesOf("ingestIntervalMin", f.ingestIntervalMin, 10, notes),
+    slackIngestIntervalMin: minutesOf("slackIngestIntervalMin", f.slackIngestIntervalMin, 5, notes),
+    // 세션 진행 확인 — 슬랙 수집과 같은 간격(새 세션이 없으면 모델 안 부름). 0 이면 끔
+    progressCheckMin: f.progressCheckMin !== undefined ? minutesOf("progressCheckMin", f.progressCheckMin, 5, notes, { allowZero: true }) : minutesOf("slackIngestIntervalMin", f.slackIngestIntervalMin, 5, []),
     models: {
       code: env.CY_AGENT_MODEL_CODE ?? (f.models as any)?.code ?? "claude-opus-5-5",
       general: env.CY_AGENT_MODEL_GENERAL ?? (f.models as any)?.general ?? DEFAULT_GENERAL_MODEL,
@@ -212,11 +283,11 @@ export function loadConfig(env = process.env, f: Partial<Config> & Record<string
     briefing: { exclude: Array.isArray((f.briefing as any)?.exclude) ? ((f.briefing as any).exclude as unknown[]).filter((x): x is string => typeof x === "string") : [] },
     phrases: phrasesOf(f.phrases),
     autoMerge: autoMergeList(f.autoMerge),
-    todayReminder: todayReminderOf(f.todayReminder),
+    todayReminder: todayReminderOf(f.todayReminder, notes),
     calendarAlert: calendarAlertOf(f.calendarAlert),
     kgModel: env.CY_AGENT_KG_MODEL ?? (f.kgModel as string) ?? (env.CY_AGENT_MODEL_LIGHT ?? (f.models as any)?.light ?? "claude-haiku-5-5"),
     localAutoAllow: env.CY_AGENT_LOCAL_ASK === "1" ? false : f.localAutoAllow !== false,
-    repoRoots: (f.repoRoots as string[]) ?? (isNewStyle(f) ? [] : [join(homedir(), "code")]),
+    repoRoots: repoRootsOf(f.repoRoots, notes) ?? (isNewStyle(f) ? [] : [join(homedir(), "code")]),
     onboarded: onboardedOf(f),
     readSessions: readSessionsOf(f),
     allowMcp: Array.isArray(f.allowMcp) ? (f.allowMcp as unknown[]).filter((x): x is string => typeof x === "string" && !!x.trim()).map((x) => x.trim()) : [],
@@ -231,6 +302,16 @@ export function loadConfig(env = process.env, f: Partial<Config> & Record<string
       aliases: Array.isArray((f.user as any)?.aliases) ? (f.user as any).aliases : [],
     },
     connectors: resolveConnectors(env, f as any),
-    brain: pickBrain(env, f),
+    brain: configError ? { provider: "local" } : pickBrain(env, f, notes),
   };
+  for (const n of notes) console.warn(`[config] ${n}`);
+  if (configError) cfg.configError = configError;
+  if (notes.length) cfg.configNotes = [...new Set(notes)];
+  return cfg;
+}
+
+// ~/.cy-agent: 나만 열 수 있게(0700). 이미 있으면 권한만 고친다
+export function ensureHomeDir(dir = HOME_DIR) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { chmodSync(dir, 0o700); } catch { /* 내 폴더가 아니면 그대로 */ }
 }

@@ -15,10 +15,9 @@ function git(cwd: string, args: string[]): Promise<string> {
     execFile("git", args, { cwd, timeout: 5000, maxBuffer: 4 << 20 }, (e, out) => (e ? fail(e) : ok(String(out)))));
 }
 
-// 오늘(KST) 0시를 +09:00 오프셋 ISO로
+// 오늘 0시(이 맥의 시간대)를 ISO 로. 이름은 예전 그대로(예전엔 KST 고정)
 export function kstMidnight(now = new Date()): string {
-  const d = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(now);
-  return `${d}T00:00:00+09:00`;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
 }
 
 // 깊이 2까지 .git 이 있는 디렉터리. 데몬 워크트리·node_modules·숨김 폴더는 건너뛴다.

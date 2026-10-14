@@ -108,6 +108,75 @@ function bashSecretWhy(cmd: string, c: PermCtx): string | undefined {
   return undefined;
 }
 
+// ---- 우회 막기(완벽한 방어선은 아니다 — docs/contract.md 안전 절) ----
+// 따옴표 쪼개기·역슬래시(.e''nv · .e\nv · ".e"nv)를 걷어 낸 글. 판정에만 쓴다
+export function normShell(cmd: string): string {
+  return cmd.replace(/\\(.)/g, "$1").replace(/["']/g, "");
+}
+// 비어 있을 수 있는 변수 자리(${x} · $x)까지 걷은 글(.e${x}nv)
+const dropVars = (s: string) => s.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*/g, "");
+const GLOB_CH = /[*?[{]/;
+// 셸 glob 한 조각 → 정규식(* ? [..] [!..] {a,b})
+export function globRe(seg: string): RegExp {
+  let out = "", i = 0;
+  while (i < seg.length) {
+    const ch = seg[i];
+    if (ch === "*") { out += "[^/]*"; i++; continue; }
+    if (ch === "?") { out += "[^/]"; i++; continue; }
+    if (ch === "[") {
+      const end = seg.indexOf("]", i + 2);
+      if (end > 0) { const body = seg.slice(i + 1, end).replace(/^!/, "^").replace(/\\/g, "\\\\"); out += `[${body}]`; i = end + 1; continue; }
+    }
+    if (ch === "{") {
+      const end = seg.indexOf("}", i);
+      if (end > 0 && seg.slice(i + 1, end).includes(",")) { out += `(?:${seg.slice(i + 1, end).split(",").map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`; i = end + 1; continue; }
+    }
+    out += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    i++;
+  }
+  try { return new RegExp(`^${out}$`, "i"); } catch { return /^$/; }
+}
+const ENV_NAMES = [".env", ".env.local", ".env.production", ".env.development", ".env.test"];
+// glob 낱말이 비밀 파일(.env* · ~/.cy-agent 의 config.json·cy.db · ~/.claude*)을 가리킬 수 있으면 그 이유
+function globSecretWhy(cmd: string, c: PermCtx): string | undefined {
+  const home = homeOf(c);
+  for (const word of normShell(cmd).split(/[\s;|&()<>=`]+/)) {
+    if (!GLOB_CH.test(word)) continue;
+    const segs = word.split("/");
+    let cy = false;
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i], last = i === segs.length - 1;
+      if (!seg) continue;
+      const re = GLOB_CH.test(seg) ? globRe(seg) : undefined;
+      if (re && ENV_NAMES.some((n) => re.test(n))) return `${word}(.env 비밀 파일을 가리킬 수 있는 glob)`;
+      if (seg === ".cy-agent" || re?.test(".cy-agent")) cy = true;
+      if (re && (re.test(".claude") || re.test(".claude.json")) && (i === 0 || segs.slice(0, i).join("/").replace(/^(~|\$HOME|\$\{HOME\})/, home) === home)) return `${word}(~/.claude* 를 가리킬 수 있는 glob)`;
+      if (last && re && (cy || cyHomes(c).some((h) => word.startsWith(h))) && (re.test("config.json") || re.test("cy.db"))) return `${word}(~/.cy-agent 의 토큰·데몬 상태를 가리킬 수 있는 glob)`;
+    }
+  }
+  return undefined;
+}
+// 하드 차단이 아니어도 묻지 않고 허용하지 않을 셸: .env·~/.cy-agent 를 언급하거나(워크트리·두뇌·첨부 폴더는 빼고),
+// 변수·명령 치환으로 그런 이름을 만들 수 있어 보이면 → 승인 카드
+export function bashNeedsCard(cmd: string, c: PermCtx): boolean {
+  const n = normShell(cmd);
+  const flat = dropVars(n);
+  if ([...flat.matchAll(/\.env(?:\.[\w.-]+)?/gi)].some((m) => !ENV_OK.test(m[0]))) return true;
+  const cyMention = (s: string) => /\.cy-agent(?!\/(worktrees|brain|attachments)\/(?!.*\.\.))/.test(s) || cyHomes(c).some((h) => s.includes(h) && !/(worktrees|brain|attachments)\//.test(s.slice(s.indexOf(h) + h.length + 1, s.indexOf(h) + h.length + 13)));
+  if (cyMention(n)) return true;
+  if (/[$`]/.test(cmd) && /env|\.en?\b|cy-agent|cy\.db|config\.json/i.test(n)) return true;
+  return false;
+}
+// 데몬 API 주소: 루프백 전체(127.0.0.0/8 · 127.1 · 정수 2130706433 · 16진 0x7f… · 8진 0177… · [::1] · [::ffff:127…] · localhost · 0.0.0.0 · 0)
+const LOOPBACK = String.raw`(?:127(?:\.\d{1,3}){0,3}|2130706433|0x7f[0-9a-f.x]*|0177(?:\.\d+){0,3}|localhost\.?|\[(?:0{0,4}:){2,7}0{0,3}1\]|\[::\]|\[::ffff:(?:127[\d.]*|7f[0-9a-f]{2}:[0-9a-f]{1,4})\]|0\.0\.0\.0|0)`;
+export function daemonApiWhy(cmd: string, port?: number): string | undefined {
+  const n = normShell(cmd);
+  if (/x-cy-agent/i.test(n)) return "데몬 로컬 API 직접 호출";
+  if (!port) return undefined;
+  if (new RegExp(`(?:^|[^\\w.-])${LOOPBACK}(?::|\\s+)${port}(?!\\d)`, "i").test(n) || new RegExp(`:${port}(?!\\d)`).test(n)) return "데몬 로컬 API 직접 호출";
+  return undefined;
+}
+
 // 셸에서 .env 를 읽을 수 있는 자리에 나오면 그 이름. 쓰기 대상(> · >> 뒤 · touch 인자 · cp/mv/install 의 마지막 인자)은 뺀다 —
 // .env 만들기·키 자리 쓰기는 되고, 내용 읽기만 막는다
 const ENV_MENTION = /(?:^|[\s'"=/<>:])(\.env(?:\.[\w.-]+)?)(?=$|[\s'"/;|&)<>])/g;
@@ -273,9 +342,11 @@ export function hardDeny(toolName: string, input: unknown, c: PermCtx): Verdict 
   const no = (why: string): Verdict => ({ allow: false, reason: `차단됨(승인해도 안 됨): ${why}` });
   if (toolName === "Bash") {
     const cmd = typeof i.command === "string" ? i.command : "";
-    const secret = bashSecretWhy(cmd, c);
+    // 따옴표 쪼개기·빈 변수 끼우기를 걷은 글로도 본다(.e''nv · .e${x}nv)
+    const secret = bashSecretWhy(cmd, c) ?? bashSecretWhy(normShell(cmd), c) ?? bashSecretWhy(dropVars(normShell(cmd)), c) ?? globSecretWhy(cmd, c);
     if (secret) return no(secret);
-    if (/x-cy-agent/i.test(cmd) || (c.port && new RegExp(`(127\\.0\\.0\\.1|localhost|\\[::1\\]|0\\.0\\.0\\.0):${c.port}\\b`).test(cmd))) return no("데몬 로컬 API 직접 호출");
+    const api = daemonApiWhy(cmd, c.port);
+    if (api) return no(api);
     if (GH_MERGE.test(cmd)) return no(GH_MERGE_WHY);
     const git = gitWriteWhy(cmd, c);
     if (git) return no(git);
@@ -295,6 +366,12 @@ export function hardDeny(toolName: string, input: unknown, c: PermCtx): Verdict 
       const v = i[k];
       if (typeof v === "string" && (/(^|[\\/*{,])\.env(?!\.(example|sample|template|dist)\b)/i.test(v) || /\.claude|\.cy-agent|cy\.db/.test(v)))
         return no(`${v} 은(는) 비밀 파일을 가리킬 수 있음`);
+      // Glob 패턴·Grep glob 은 glob 으로도 맞춰 본다(**/.en? · .[e]nv)
+      if (typeof v === "string" && (k === "glob" || toolName === "Glob") && GLOB_CH.test(v)) {
+        const base = v.split("/").pop() ?? "";
+        const re = globRe(base);
+        if (ENV_NAMES.some((n) => re.test(n))) return no(`${v} 은(는) .env 비밀 파일을 가리킬 수 있음`);
+      }
     }
   }
   return { allow: true };
@@ -579,6 +656,8 @@ export class PermissionBroker {
       const v = subagentCall(input);
       return v.allow ? { decision: "allow", why: "서브에이전트(포그라운드)", input: v.input, ...(v.worktree ? { worktree: true as const } : {}) } : { decision: "deny", reason: v.reason };
     }
+    // .env·~/.cy-agent 를 언급하는 셸은 읽기·로컬 자동 허용·[항상 허용] 규칙 없이 늘 승인 카드
+    if (toolName === "Bash" && bashNeedsCard(String((input as { command?: unknown } | null)?.command ?? ""), c)) return { decision: "ask" };
     if (isAutoAllowed(toolName, input, c)) return { decision: "allow", why: "읽기" };
     if (c.localAuto && isLocalTool(toolName)) return { decision: "allow", why: "로컬" };
     const r = this.rules.match(toolName, input, c);

@@ -67,13 +67,33 @@ export function kstMinutes(d: Date = new Date()): number {
   return t.getUTCHours() * 60 + t.getUTCMinutes();
 }
 
+// ---- 이 맥의 시간대(TZ) 기준 — 오늘 할 일·알림·정기 브리핑·하루 진행률·집중하기가 같은 하루를 본다 ----
+const pad2 = (n: number) => String(n).padStart(2, "0");
+// Date → 로컬 날짜 "YYYY-MM-DD"
+export function localDate(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+// 로컬 0시부터 지난 분
+export function localMinutes(d: Date = new Date()): number {
+  return d.getHours() * 60 + d.getMinutes();
+}
+// 로컬 "HH:MM"
+export function localHhmm(d: Date = new Date()): string {
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+// 정기 브리핑 시간: 평일(토·일 빼고) 9~19시, 로컬
+export function briefingHours(d: Date = new Date()): boolean {
+  const h = d.getHours(), dow = d.getDay();
+  return h >= 9 && h < 19 && dow !== 0 && dow !== 6;
+}
+
 // "YYYY-MM-DD" 에 일수를 더한다
 export function addDays(ymd: string, n: number): string {
   return new Date(Date.parse(`${ymd}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 }
 
 export function isBusinessDay(day: Date | string, extra: readonly string[] = []): boolean {
-  const ymd = typeof day === "string" ? day : kstDate(day);
+  const ymd = typeof day === "string" ? day : localDate(day);
   const dow = new Date(`${ymd}T00:00:00Z`).getUTCDay();
   if (dow === 0 || dow === 6) return false;
   return !(ymd in KR_HOLIDAYS) && !extra.includes(ymd);

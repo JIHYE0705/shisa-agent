@@ -1,5 +1,6 @@
 // 로컬 뇌. SDK·HTTP·CLI를 부르지 않고, 넘겨받은 시각과 할 일 목록만으로 Thought를 만든다.
 // 말투는 TONE(존댓말)을 따르고, 가끔 ~요·감정 표시는 voice()만 붙인다. 할 일을 새로 짓지 않는다.
+import { localDate, localHhmm } from "./calendar.ts";
 import { TONE, seedHash, voice, type Mood } from "./voice.ts";
 
 export type LocalTodo = { title: string; priority?: number };
@@ -28,14 +29,10 @@ export const LINES = {
 
 const BUBBLE_MAX = 40;
 
-// Asia/Seoul. 아침 05–12시, 점심 12–13시, 오후 13–18시, 그 밖(저녁·밤·새벽)은 저녁.
+// 이 맥의 시간대 기준 시(0~23). 이름은 예전 그대로(예전엔 Asia/Seoul 고정).
+// 아침 05–12시, 점심 12–13시, 오후 13–18시, 그 밖(저녁·밤·새벽)은 저녁.
 export function seoulHour(now: Date): number {
-  const hour = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Seoul", hour: "numeric", hourCycle: "h23" })
-    .formatToParts(now)
-    .find((p) => p.type === "hour")?.value;
-  const n = Number(hour);
-  if (!Number.isInteger(n)) throw new Error("서울 시각을 읽지 못했어요.");
-  return n === 24 ? 0 : n;
+  return now.getHours();
 }
 
 export function dayPart(now: Date): DayPart {
@@ -47,7 +44,7 @@ export function dayPart(now: Date): DayPart {
 }
 
 function seoulDay(now: Date): string {
-  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  return localDate(now);
 }
 
 function cleanTitle(title: string): string {
@@ -148,7 +145,7 @@ const fill = (s: string, v: Record<string, string | number>) => s.replace(/\{(\w
 const quote = (t: string) => `'${cleanTitle(t).slice(0, 30)}'`;
 
 function hhmmKst(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso));
+  return localHhmm(new Date(iso)); // 로컬
 }
 
 // "10분 뒤(14:30)" · "오늘 14:30" · "내일 09:00" · "10월 20일 09:00"

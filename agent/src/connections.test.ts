@@ -163,3 +163,14 @@ test("GET /connections · POST /connections/check {id}: 헤더 필수, 모르는
     bus.close();
   }
 });
+
+test("Connections: 작업 기록 읽기를 끄면 「작업 세션」 줄은 off·「읽지 않아요」, 켜면 ok", async () => {
+  const off = (await make({}, { onboarded: true, readSessions: false }).c.list()).rows.find((r) => r.id === "sessions")!;
+  assert.equal(off.state, "off");
+  assert.equal(off.detail, "읽지 않아요(설정에서 켤 수 있어요)");
+  const on = (await make({}, { onboarded: true, readSessions: true }).c.list()).rows.find((r) => r.id === "sessions")!;
+  assert.equal(on.state, "ok");
+  assert.equal(on.detail, "로컬 기록을 읽어요");
+  const wait = (await make({}, { onboarded: false }).c.list()).rows.find((r) => r.id === "sessions")!;
+  assert.equal(wait.state, "off");
+});

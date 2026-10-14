@@ -7,7 +7,7 @@ import { calendarAlertOf, validateCalendarAlert, type CalendarAlertConfig } from
 import { readFileSync, renameSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isAbsolute } from "node:path";
-import { BRAIN_PROVIDERS, DEFAULT_GENERAL_MODEL, HOME_DIR, type BrainProvider, type Config } from "./config.ts";
+import { BRAIN_PROVIDERS, DEFAULT_GENERAL_MODEL, HOME_DIR, configErrorText, type BrainProvider, type Config } from "./config.ts";
 import { modelLabel } from "./models.ts";
 import { AUTO_MERGE_MAX, inAutoMerge, normSlug } from "./auto-merge.ts";
 import { STEP_HEAD } from "./briefing-sources.ts";
@@ -79,9 +79,11 @@ export type SettingsPatch = {
   calendarAlert?: CalendarAlertConfig;
 };
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,100}$/;
-export type PutResult = { ok: true; settings: SettingsView; applied: "live"; restartNeeded: false; note?: string } | { ok: false; status: 400 | 500; error: string };
+export type PutResult = { ok: true; settings: SettingsView; applied: "live"; restartNeeded: false; note?: string } | { ok: false; status: 400 | 409 | 500; error: string };
 
 export class SettingsError extends Error {}
+// config.json 이 깨져 있어 합쳐 쓸 수 없음 → PUT /settings 409(사람이 읽을 한 줄)
+export class ConfigFileError extends Error {}
 
 // 본문 검증: 모르는 키·모르는 모델·모르는 출처는 400
 export function validatePatch(body: unknown, cfg: Pick<Config, "models">): SettingsPatch {
@@ -217,8 +219,8 @@ export function mergeConfigFile(path: string, patch: SettingsPatch): void {
     const raw = readFileSync(path, "utf8");
     if (raw.trim()) {
       let v: unknown;
-      try { v = JSON.parse(raw); } catch { throw new Error("config.json 을 읽을 수 없어요(JSON 오류) — 덮어쓰지 않았어요"); }
-      if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("config.json 이 객체가 아니에요 — 덮어쓰지 않았어요");
+      try { v = JSON.parse(raw); } catch (e) { throw new ConfigFileError(`${configErrorText(e).replace(/ 안전 모드로 켰어요\./, " 설정을 저장하지 못했어요(파일은 덮어쓰지 않았어요).")}`); }
+      if (!v || typeof v !== "object" || Array.isArray(v)) throw new ConfigFileError("설정 파일(config.json)이 { … } 모양이 아니라서 설정을 저장하지 못했어요(파일은 덮어쓰지 않았어요). 파일을 고친 뒤 데몬을 다시 켜 주세요");
       cur = v as Record<string, unknown>;
     }
   }
@@ -337,7 +339,10 @@ export class Settings {
     let patch: SettingsPatch;
     try { patch = validatePatch(body, this.cfg); } catch (e: any) { return { ok: false, status: 400, error: String(e?.message ?? e) }; }
     if (patch.onboarded !== undefined) patch = this.withCurrentDefaults(patch);
-    try { mergeConfigFile(this.path, patch); } catch (e: any) { return { ok: false, status: 500, error: String(e?.message ?? e) }; }
+    try { mergeConfigFile(this.path, patch); } catch (e: any) {
+      if (e instanceof ConfigFileError) return { ok: false, status: 409, error: e.message };
+      return { ok: false, status: 500, error: `설정 파일을 쓰지 못했어요(${e?.code ?? "오류"}). 폴더 권한·남은 공간을 확인해 주세요` };
+    }
     if (patch.models) Object.assign(this.cfg.models, patch.models);
     if (patch.briefing?.exclude) this.cfg.briefing = { ...(this.cfg.briefing ?? {}), exclude: patch.briefing.exclude };
     if (patch.phrases) {

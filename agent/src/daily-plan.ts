@@ -3,8 +3,7 @@
 // 서버에 올리지 않고 로컬 SQLite 에만 둔다. 패널·에이전트 plan_ops 가 같이 쓴다.
 // 알림(영업일 아침 첫 실행 등)은 설정 todayReminder 를 따르고, 모델 없이 정해진 말로만 한다.
 import type { Store, Todo, TodoPatch } from "./store.ts";
-import { isBusinessDay, kstDate } from "./calendar.ts";
-import { seoulHour } from "./local-mode.ts";
+import { isBusinessDay, localDate, localHhmm } from "./calendar.ts";
 
 export type PlanItem = { id: string; title: string; done: boolean; priority: number; source: string; doing?: boolean };
 export type DailyPlan = { date: string; items: PlanItem[]; asked: boolean };
@@ -64,13 +63,17 @@ export type TodayReminder = { mode: "auto" | "off"; everyHours: number; times: s
 export const DEFAULT_TODAY_REMINDER: TodayReminder = { mode: "auto", everyHours: 0, times: [] };
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-// config.json 값 → 설정. 이상한 값은 기본으로(읽기 전용, 조용히)
-export function todayReminderOf(raw: unknown): TodayReminder {
+// everyHours 최솟값(15분). 0 은 끔. 위로는 막지 않는다
+export const EVERY_HOURS_MIN = 0.25;
+// config.json 값 → 설정. 이상한 값은 기본으로(notes 가 있으면 한 줄 남긴다)
+export function todayReminderOf(raw: unknown, notes?: string[]): TodayReminder {
   const r = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const every = Number(r.everyHours);
+  const everyOk = Number.isFinite(every) && (every === 0 || every >= EVERY_HOURS_MIN);
+  if (r.everyHours !== undefined && !everyOk) notes?.push(`todayReminder.everyHours 값이 이상해서(0 또는 ${EVERY_HOURS_MIN}시간 이상이어야 해요) 반복 알림을 껐어요`);
   return {
     mode: r.mode === "off" ? "off" : "auto",
-    everyHours: Number.isFinite(every) && every > 0 ? every : 0,
+    everyHours: everyOk ? every : 0,
     times: Array.isArray(r.times) ? [...new Set(r.times.filter((x): x is string => typeof x === "string" && TIME.test(x)))].sort() : [],
   };
 }
@@ -81,7 +84,7 @@ export function validateTodayReminder(raw: unknown): TodayReminder {
   const r = raw as Record<string, unknown>;
   for (const k of Object.keys(r)) if (!["mode", "everyHours", "times"].includes(k)) throw new Error(`unknown key: todayReminder.${k}`);
   if (r.mode !== undefined && r.mode !== "auto" && r.mode !== "off") throw new Error("todayReminder.mode must be auto or off");
-  if (r.everyHours !== undefined && (typeof r.everyHours !== "number" || !Number.isFinite(r.everyHours) || r.everyHours < 0)) throw new Error("todayReminder.everyHours must be 0 or more");
+  if (r.everyHours !== undefined && (typeof r.everyHours !== "number" || !Number.isFinite(r.everyHours) || (r.everyHours !== 0 && r.everyHours < EVERY_HOURS_MIN))) throw new Error(`todayReminder.everyHours must be 0 or at least ${EVERY_HOURS_MIN}`);
   if (r.times !== undefined && (!Array.isArray(r.times) || r.times.some((x) => typeof x !== "string" || !TIME.test(x)))) throw new Error("todayReminder.times must list HH:MM");
   return todayReminderOf({ ...DEFAULT_TODAY_REMINDER, ...r });
 }
@@ -117,7 +120,7 @@ export class DailyPlanService {
     this.migrateLegacy();
   }
 
-  private today() { return kstDate(this.now()); }
+  private today() { return localDate(this.now()); } // 이 맥의 시간대 기준 하루
 
   // 예전 따로 있던 표(daily_plan)의 오늘·앞날 줄 → 할 일(P2, 오늘로 고름). 옮긴 줄은 지운다. 지난 날 줄은 그대로 둔다
   private migrateLegacy() {
@@ -218,9 +221,9 @@ export class DailyPlanService {
   remind(cfg: TodayReminder, opts: { opened?: boolean } = {}): Reminder | null {
     if (cfg.mode === "off") return null;
     const now = this.now();
-    const date = kstDate(now);
+    const date = localDate(now);
     if (!isBusinessDay(date, this.holidays)) return null;
-    const hour = seoulHour(now);
+    const hour = now.getHours(); // 로컬
     const meta = this.store.db.prepare("SELECT asked, last_at, slots FROM daily_plan_meta WHERE date = ?").get(date) as { asked?: number; last_at?: string | null; slots?: string | null } | undefined;
     const fire = (kind: Reminder["kind"], extra: { asked?: boolean; slots?: string[] } = {}): Reminder | null => {
       this.mark(date, { ...extra, lastAt: now.toISOString() });
@@ -243,7 +246,5 @@ export class DailyPlanService {
   }
 }
 
-// KST HH:MM
-function hhmm(d: Date): string {
-  return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
-}
+// 로컬 HH:MM
+const hhmm = localHhmm;

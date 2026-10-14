@@ -8,7 +8,7 @@ import { SCHEMA, ask, think } from "./brain.ts";
 import { Store } from "./store.ts";
 import {
   ANTHROPIC_URL, MISSING_ANTHROPIC_KEY, GEMINI_DEFAULT_MODEL, MISSING_CODEX, MISSING_GEMINI_KEY, MISSING_OPENAI_KEY, OPENAI_DEFAULT_MODEL, OPENAI_URL,
-  type ExecFileLike, type FetchLike, parseCodexStdout, resolveHttpModel,
+  type ExecFileLike, type FetchLike, parseCodexStdout, resolveHttpModel, brainAuthFailed, resetBrainAuth, onBrainAuthChange, BrainAuthError,
 } from "./providers.ts";
 
 const KEY = "unit-test-gemini-key";
@@ -43,15 +43,14 @@ test("loadConfig: 기본은 claude-code, 환경변수가 파일과 키보다 우
     assert.equal(loadConfig({ CY_AGENT_GEMINI_API_KEY: "  " }).brain.geminiApiKey, "file-gemini");
     assert.equal(loadConfig({ OPENAI_API_KEY: "env-openai" }).brain.openaiApiKey, "env-openai");
     assert.equal(loadConfig({ CY_AGENT_OPENAI_API_KEY: "ns-openai", OPENAI_API_KEY: "env-openai" }).brain.openaiApiKey, "ns-openai");
-    let hid = false;
-    try { loadConfig({ CY_AGENT_BRAIN: secret }); } catch (e) {
-      hid = true;
-      assert.ok(e instanceof Error);
-      assert.equal(e.message.includes(secret), false);
-      assert.match(e.message, /brain\.provider/);
-    }
-    assert.equal(hid, true);
-    assert.throws(() => loadConfig({ CY_AGENT_BRAIN: "nope" }), /nope/);
+    // 모르는 뇌: 죽지 않고 local + configNotes 한 줄(키 같은 값은 숨김)
+    const hid = loadConfig({ CY_AGENT_BRAIN: secret });
+    assert.equal(hid.brain.provider, "local");
+    assert.equal(JSON.stringify(hid.configNotes).includes(secret), false);
+    assert.match(hid.configNotes!.join("\n"), /brain\.provider/);
+    const nope = loadConfig({ CY_AGENT_BRAIN: "nope" });
+    assert.equal(nope.brain.provider, "local");
+    assert.match(nope.configNotes!.join("\n"), /nope/);
   } finally {
     if (prev === null) rmSync(path, { force: true });
     else writeFileSync(path, prev);
@@ -111,10 +110,11 @@ test("gemini: 실패 본문과 예외 문자열에 키를 넣지 않는다", asy
   const denied: FetchLike = async () => new Response(JSON.stringify({ error: KEY }), { status: 401 });
   await assert.rejects(() => ask(cfgOf("gemini"), "x", SCHEMA, undefined, { deps: { fetch: denied, env: { GEMINI_API_KEY: KEY } } }), (err: unknown) => {
     assert.ok(err instanceof Error);
-    assert.equal(err.message, "Gemini 요청이 실패했어요 (HTTP 401).");
+    assert.equal(err.message, "Gemini API 키가 맞지 않아요. 키를 확인해 주세요 (HTTP 401).");
     assert.equal(err.message.includes(KEY), false);
     return true;
   });
+  resetBrainAuth();
 });
 
 test("openai: URL·Bearer·모델, 도구 없음", async () => {
@@ -241,4 +241,41 @@ test("local ask: 브리핑·채팅 스키마가 아니면 SDK 없이 거절한�
     assert.equal(err.message, "로컬 뇌는 브리핑·채팅만 답해요.");
     return true;
   });
+});
+
+test("잘못된 API 키(401·403): 그 키만 기억 → /status brain.ready=false·「키를 확인해 주세요」, 성공하거나 키가 바뀌면 풀림", async () => {
+  const { statusOf } = await import("./status.ts");
+  resetBrainAuth();
+  let changes = 0;
+  onBrainAuthChange(() => changes++);
+  try {
+    for (const [provider, envKey, status] of [["openai", "OPENAI_API_KEY", 401], ["gemini", "GEMINI_API_KEY", 403], ["anthropic", "CY_AGENT_ANTHROPIC_API_KEY", 401]] as const) {
+      const env = { [envKey]: "bad-key-1" };
+      const cfg = cfgOf(provider);
+      const denied: FetchLike = async () => new Response("{}", { status });
+      await assert.rejects(() => ask(cfg, "x", SCHEMA, undefined, { deps: { fetch: denied, env } }), (e: unknown) => e instanceof BrainAuthError && /키를 확인해 주세요/.test((e as Error).message));
+      assert.equal(brainAuthFailed(cfg, env), true, provider);
+      const st = statusOf(cfg, { env });
+      assert.equal(st.brain.ready, false);
+      assert.equal(st.chat, false);
+      assert.match(st.brain.detail, /키를 확인해 주세요/);
+      assert.equal(brainAuthFailed(cfg, { [envKey]: "new-key-2" }), false, "키를 바꾸면 다시 해 본다");
+      assert.equal(statusOf(cfg, { env: { [envKey]: "new-key-2" } }).brain.ready, true);
+    }
+    assert.equal(changes, 3);
+    // 500 같은 다른 오류는 키 탓으로 보지 않는다
+    resetBrainAuth();
+    const env = { OPENAI_API_KEY: "k" };
+    await assert.rejects(() => ask(cfgOf("openai"), "x", SCHEMA, undefined, { deps: { fetch: async () => new Response("{}", { status: 500 }), env } }), /HTTP 500/);
+    assert.equal(brainAuthFailed(cfgOf("openai"), env), false);
+    // 틀렸다가 성공하면 풀린다
+    await assert.rejects(() => ask(cfgOf("openai"), "x", SCHEMA, undefined, { deps: { fetch: async () => new Response("{}", { status: 401 }), env } }));
+    assert.equal(brainAuthFailed(cfgOf("openai"), env), true);
+    const ok: FetchLike = async () => new Response(JSON.stringify({ choices: [{ message: { content: thoughtJson() } }] }), { status: 200 });
+    await ask(cfgOf("openai"), "x", SCHEMA, undefined, { deps: { fetch: ok, env } });
+    assert.equal(brainAuthFailed(cfgOf("openai"), env), false);
+  } finally {
+    onBrainAuthChange(undefined);
+    resetBrainAuth();
+  }
 });

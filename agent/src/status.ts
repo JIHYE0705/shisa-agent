@@ -5,7 +5,7 @@
 //   MCP 커넥터(메일·이슈·Slack·캘린더 MCP)는 Claude Code 뇌일 때만 읽는다 — features.mcp, connectors[].needs
 // 비밀값(키·토큰·ICS 주소)은 넣지 않는다. 있나 없나만.
 import type { Config } from "./config.ts";
-import { brainKeyReady, commandOnPath } from "./providers.ts";
+import { authFailText, brainAuthFailed, brainKeyReady, commandOnPath } from "./providers.ts";
 import { CAPABILITIES, CONNECTORS, connectorStatus, type Capability } from "./connectors.ts";
 import { BRAIN_LABEL } from "./connections.ts";
 import { NEEDS_CODER, featureBrain, type FeatureBrain } from "./feature-brain.ts";
@@ -33,6 +33,8 @@ export type Status = {
   connectors: { cap: Capability; label: string; mode: string; ready: boolean; needs?: "claude-code" }[];
   user: { name?: string };
   onboarded: boolean; // 설치 마법사를 마쳤나(onboarding.ts): false 면 뒤에서 도는 일·작업 기록 읽기를 쉰다
+  configError?: string;  // config.json 을 못 읽어 안전 모드로 켬(사람이 읽을 한 줄)
+  configNotes?: string[]; // 이상한 설정 값을 기본값으로 바꾼 것들(모르는 뇌·잘못된 숫자·레포 폴더 등)
 };
 
 export type StatusDeps = {
@@ -43,16 +45,18 @@ export type StatusDeps = {
 
 const KEY_LABEL: Record<string, string> = { gemini: "Gemini", openai: "OpenAI", anthropic: "Claude" };
 
-export function statusOf(cfg: Pick<Config, "brain" | "connectors" | "user" | "onboarded">, deps: StatusDeps = {}): Status {
+export function statusOf(cfg: Pick<Config, "brain" | "connectors" | "user" | "onboarded"> & Partial<Pick<Config, "configError" | "configNotes">>, deps: StatusDeps = {}): Status {
   const env = deps.env ?? process.env;
   const provider = cfg.brain?.provider ?? "claude-code";
   const claude = deps.claude?.();
   const keyReady = brainKeyReady(cfg, env);
-  const ready = provider === "claude-code" ? (claude === undefined ? null : claude) : !!keyReady;
+  const badKey = !!keyReady && brainAuthFailed(cfg, env); // 키는 있는데 401·403 을 받음
+  const ready = provider === "claude-code" ? (claude === undefined ? null : claude) : !!keyReady && !badKey;
   const label = BRAIN_LABEL[provider] ?? provider;
   const detail = provider === "local" ? "로컬 — 할 일 읽기·정해진 말만"
     : ready === null ? `${label} — 확인 중`
     : ready ? `${label} 연결됨`
+    : badKey ? authFailText(provider as "gemini" | "openai" | "anthropic")
     : provider === "claude-code" ? "Claude Code 로그인이 필요해요"
     : provider === "codex" ? "Codex 를 찾을 수 없어요"
     : `${KEY_LABEL[provider] ?? label} API 키가 없어요`;
@@ -78,5 +82,7 @@ export function statusOf(cfg: Pick<Config, "brain" | "connectors" | "user" | "on
     }),
     user: cfg.user?.name ? { name: cfg.user.name } : {},
     onboarded: cfg.onboarded !== false,
+    ...(cfg.configError ? { configError: cfg.configError } : {}),
+    ...(cfg.configNotes?.length ? { configNotes: [...cfg.configNotes] } : {}),
   };
 }

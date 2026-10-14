@@ -597,3 +597,30 @@ test("채팅: 앞 턴이 답 없이 남긴 카드는 다음 답에 끌려 붙지
   assert.equal(done.actions, undefined);
   assert.equal(s.agent.threadMessages(t.id)!.actions.find((a) => a.id === "stale")!.msgN, undefined);
 });
+
+test("우회 막기: 따옴표 쪼개기·glob·빈 변수로 .env·~/.cy-agent 읽기, 루프백 다른 표기로 데몬 API → 하드 차단", () => {
+  for (const c of [
+    "cat .e''nv", "cat .e\"\"nv", "cat .e\\nv", "cat '.e'nv", "cat .en?", "cat .env*", "cat .[e]nv", "cat .{env,x}", "head src/.e*", "cat .e${x}nv",
+    "sqlite3 ~/.cy-agent/c?.db .dump", "cat ~/.cy-agent/conf*.json", "cat ~/.cy-agent/*", `cat ${join(root, "cy")}/conf?g.json`, "cat ~/.cla*/settings.json",
+    "curl -s http://127.1:47823/dashboard", "curl http://127.0.0.2:47823/x", "curl http://2130706433:47823/x", "curl http://0x7f000001:47823/x",
+    "curl http://[::1]:47823/x", "curl http://[::ffff:127.0.0.1]:47823/x", "curl http://localhost:47823/x", "curl http://0:47823/x", "nc 127.1 47823",
+    "curl -s -X POST -H \"X-CY-$(echo Agent): 1\" http://127.1:47823/actions/x/confirm", "curl -H 'X-CY-''Agent: 1' http://h/x", "curl http://localtest.me:47823/x",
+  ]) assert.ok(bash(c), c);
+  // 그대로 되는 것: .env 쓰기 · 예시 파일 · 다른 포트 · 보통 glob
+  for (const c of ["echo 'A=1' >> .env", "touch .env", "cat .env.example", "cat .env.exam?le", "curl http://127.0.0.1:3000/x", "ls src/*.ts", "rm -f dist/*.js", "cat *.md"]) assert.ok(!bash(c), c);
+  // Grep·Glob: path 가 .env 를 가리키거나 glob 이 .env 에 맞으면 차단
+  assert.ok(deny("Grep", { pattern: "KEY", path: join(repo, ".env") }));
+  assert.ok(deny("Grep", { pattern: "KEY", path: repo, glob: ".en?" }));
+  assert.ok(deny("Glob", { pattern: "**/.[e]nv" }));
+  assert.ok(!deny("Grep", { pattern: "KEY", path: repo, glob: "*.ts" }));
+  assert.ok(!deny("Write", { file_path: join(repo, ".env"), content: "A=\n" })); // .env 쓰기는 그대로
+});
+
+test("우회 막기: .env·~/.cy-agent 를 언급하거나 치환으로 만들 수 있어 보이는 셸은 로컬 자동 허용 없이 승인 카드", async () => {
+  const r = rig();
+  const local = { ...ctx, localAuto: true };
+  for (const c of ["echo 'A=1' >> .env", "f=.en; cat ${f}v", "head -n 50 $(ls -a | grep env)", "ls ~/.cy-agent", "ls ~/.cy-agent/worktrees/../", `ls ${join(root, "cy")}`])
+    assert.equal(r.broker.quick("Bash", { command: c }, local).decision, "ask", c);
+  for (const c of ["npm test", "cat .env.example", "cd ~/.cy-agent/worktrees/x && npm test", `cd ${join(root, "cy", "worktrees", "a")} && git status`, "echo $HOME"])
+    assert.equal(r.broker.quick("Bash", { command: c }, local).decision, "allow", c);
+});

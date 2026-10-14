@@ -1,4 +1,6 @@
 // 로컬 지식그래프 + 작업 상태. node:sqlite 하나에 다 담는다(~/.cy-agent/cy.db).
+import { localDate } from "./calendar.ts";
+import { chmodSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { DEDUPE, sameItem } from "./todo-match.ts";
@@ -33,10 +35,10 @@ export type LedgerAction = "added" | "edited" | "done" | "reopened" | "trashed" 
 export type LedgerEntry = { n: number; day: string; at: string; todoId: string; title: string; action: LedgerAction; by: TodoActor; detail?: string };
 export type UpsertResult = "added" | "updated" | "skipped" | "merged" | "blocked";
 export const LEDGER_KEEP_DAYS = 90;
-// KST 날짜(YYYY-MM-DD)
+// 이 맥의 시간대 기준 날짜(YYYY-MM-DD). 이름은 예전 그대로(예전엔 KST 고정)
 export const kstDay = (iso: string | number | Date) => {
   const t = new Date(iso).getTime();
-  return new Date((Number.isFinite(t) ? t : Date.now()) + 9 * 3600e3).toISOString().slice(0, 10); // 예전 행의 이상한 시각은 오늘로
+  return localDate(new Date(Number.isFinite(t) ? t : Date.now())); // 예전 행의 이상한 시각은 오늘로
 };
 export type AutoEvidence = { ids: string[]; permalink?: string };
 export type TodoField = "title" | "priority" | "link" | "note" | "status" | "description";
@@ -130,6 +132,12 @@ function trashRow(r: any): TrashedTodo {
   return { ...t, trashedAt: r.trashed_at, prevStatus: r.prev_status ?? "open" };
 }
 
+// cy.db(·-wal·-shm)는 나만 읽고 쓰게(0600). 메모리 DB·없는 파일은 건너뛴다
+export function lockDown(path: string) {
+  if (!path || path === ":memory:" || path.startsWith("file:")) return;
+  for (const p of [path, `${path}-wal`, `${path}-shm`]) { try { chmodSync(p, 0o600); } catch { /* 없음 */ } }
+}
+
 export class Store {
   db: DatabaseSync;
   constructor(path: string) {
@@ -137,6 +145,7 @@ export class Store {
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec(SCHEMA);
     this.migrate();
+    lockDown(path);
   }
 
   // 예전 DB에 없는 열만 덧붙인다(여러 번 돌아도 안전)

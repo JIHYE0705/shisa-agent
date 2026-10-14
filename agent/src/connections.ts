@@ -17,6 +17,7 @@ import { CAPABILITIES, CONNECTORS, connectorStatus, type Capability } from "./co
 import { hasUserMcpServer } from "./mcp.ts";
 import { brainKeyReady } from "./providers.ts";
 import { NEEDS_CLAUDE_MCP } from "./feature-brain.ts";
+import { sessionsAllowed } from "./onboarding.ts";
 import { BRIEFING_SOURCES, type BriefingSource } from "./settings.ts";
 import type { Run, RunKind } from "./runs.ts";
 
@@ -267,7 +268,10 @@ export class Connections {
       else if (k.phase === "running") kgRow.detail = `${kgRow.detail} · 백필 중${k.step ? `: ${redact(k.step, 60)}` : ""}`;
     }
     rows.push(kgRow);
-    rows.push({ id: "sessions", label: "작업 세션(Claude Code·Codex 기록)", group: "local", check: "local", checkedAt: at, state: "ok", detail: "로컬 기록을 읽어요", briefing: brief(["sessions"]) });
+    // 작업 기록 읽기를 껐으면(마법사·설정 「작업 기록 읽지 않아요」) 꺼짐으로(onboarding.ts sessionsAllowed)
+    const sessionsOn = sessionsAllowed(this.cfg);
+    rows.push({ id: "sessions", label: "작업 세션(Claude Code·Codex 기록)", group: "local", check: "local", checkedAt: at,
+      state: sessionsOn ? "ok" : "off", detail: sessionsOn ? "로컬 기록을 읽어요" : this.cfg.onboarded === false ? "처음 설정을 마치기 전이라 읽지 않아요" : "읽지 않아요(설정에서 켤 수 있어요)", briefing: brief(["sessions"]) });
     return rows;
   }
 

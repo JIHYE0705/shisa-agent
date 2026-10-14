@@ -5,6 +5,7 @@
 // Codex 는 codex exec 한 번으로 브리핑·채팅 JSON, 그리고 뒤에서 도는 정리(feature-brain.ts: 끝난 할 일 판정·진행 확인·지식그래프·프로필 학습).
 // 도구·사용자 MCP 는 붙이지 않는다(CODEX_ARGS). 코드 고치기(fixer.ts)·MCP 읽기는 provider 와 상관없이 Claude Code 경로다.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -107,8 +108,39 @@ export function parseModelJson(text: string, fail: string): unknown {
   throw new Error(fail);
 }
 
-async function readError(res: Response, fail: string): Promise<never> {
+// ---- 잘못된 키(401·403) 기억 ----
+// 키 지문(해시 앞부분)만 남긴다. 키가 바뀌면 지문이 달라져 저절로 풀린다. 성공하면 바로 지운다
+type KeyProvider = "gemini" | "openai" | "anthropic";
+const KEY_LABEL: Record<KeyProvider, string> = { gemini: "Gemini", openai: "OpenAI", anthropic: "Claude" };
+const badKeys = new Map<KeyProvider, string>();
+let onAuthChange: (() => void) | undefined;
+const fingerprint = (key: string) => createHash("sha256").update(key).digest("hex").slice(0, 16);
+export class BrainAuthError extends Error {}
+export const authFailText = (p: KeyProvider) => `${KEY_LABEL[p]} API 키가 맞지 않아요. 키를 확인해 주세요`;
+// 상태가 바뀌면(키가 틀림 ↔ 다시 됨) 부른다(main 이 SSE status 로 알린다)
+export function onBrainAuthChange(fn: (() => void) | undefined) { onAuthChange = fn; }
+function markAuth(p: KeyProvider, key: string, bad: boolean) {
+  const fp = fingerprint(key);
+  const was = badKeys.get(p) === fp;
+  if (bad) badKeys.set(p, fp);
+  else if (was) badKeys.delete(p);
+  if (was !== bad) try { onAuthChange?.(); } catch { /* 알림 실패는 무시 */ }
+}
+// 지금 쓰는 키가 인증 오류를 받은 그 키인가(뇌가 키 방식이 아니면 false)
+export function brainAuthFailed(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv = process.env): boolean {
+  const p = cfg.brain?.provider;
+  if (p !== "gemini" && p !== "openai" && p !== "anthropic") return false;
+  const key = p === "gemini" ? geminiKey(cfg, env) : p === "openai" ? openaiKey(cfg, env) : anthropicKey(cfg, env);
+  return !!key && badKeys.get(p) === fingerprint(key);
+}
+export function resetBrainAuth() { badKeys.clear(); }
+
+async function readError(res: Response, fail: string, auth?: { provider: KeyProvider; key: string }): Promise<never> {
   await res.text().catch(() => "");
+  if (auth && (res.status === 401 || res.status === 403)) {
+    markAuth(auth.provider, auth.key, true);
+    throw new BrainAuthError(`${authFailText(auth.provider)} (HTTP ${res.status}).`);
+  }
   throw new Error(`${fail} (HTTP ${res.status}).`);
 }
 
@@ -137,7 +169,8 @@ export async function geminiJson(
   } catch {
     throw new Error("Gemini 요청을 보내지 못했어요.");
   }
-  if (!res.ok) return readError(res, "Gemini 요청이 실패했어요");
+  if (!res.ok) return readError(res, "Gemini 요청이 실패했어요", { provider: "gemini", key });
+  markAuth("gemini", key, false);
   const raw = await res.text();
   const data = asRecord(parseModelJson(raw, "Gemini 응답에서 JSON을 읽지 못했어요."));
   const parts = (data?.candidates as { content?: { parts?: { text?: string }[] } }[] | undefined)?.[0]?.content?.parts;
@@ -172,7 +205,8 @@ export async function openaiJson(
   } catch {
     throw new Error("OpenAI 요청을 보내지 못했어요.");
   }
-  if (!res.ok) return readError(res, "OpenAI 요청이 실패했어요");
+  if (!res.ok) return readError(res, "OpenAI 요청이 실패했어요", { provider: "openai", key });
+  markAuth("openai", key, false);
   const data = asRecord(parseModelJson(await res.text(), "OpenAI 응답에서 JSON을 읽지 못했어요."));
   const content = (data?.choices as { message?: { content?: unknown } }[] | undefined)?.[0]?.message?.content;
   const text = typeof content === "string"
@@ -206,7 +240,8 @@ export async function anthropicJson(
   } catch {
     throw new Error("Claude API 요청을 보내지 못했어요.");
   }
-  if (!res.ok) return readError(res, "Claude API 요청이 실패했어요");
+  if (!res.ok) return readError(res, "Claude API 요청이 실패했어요", { provider: "anthropic", key });
+  markAuth("anthropic", key, false);
   const data = asRecord(parseModelJson(await res.text(), "Claude API 응답에서 JSON을 읽지 못했어요."));
   if (data?.stop_reason === "refusal") throw new Error("Claude 가 이 요청에는 답하지 않았어요.");
   const content = Array.isArray(data?.content) ? data!.content as unknown[] : [];
