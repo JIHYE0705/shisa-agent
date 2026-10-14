@@ -5,6 +5,7 @@ import { createFakeRules } from './fake-rules.mjs';
 import { createFakeRuns } from './fake-runs.mjs';
 import { createFakeThreads } from './fake-threads.mjs';
 import { createFakeActions, permissionKindOf, PERMISSION_KINDS, fakeMerge } from './fake-actions.mjs';
+import { createFakeFocus, handleFocus } from './fake-focus.mjs';
 import { pathToFileURL } from 'node:url';
 
 // 녹화용 데모(scripts/demo.mjs): FAKE_DATA=모듈 경로면 그 모듈이 데이터·훅(route·chat·createRuns 등)을 덮어쓴다
@@ -41,6 +42,8 @@ function setActivity(kind) {
   }
   emit('state', stateFrame());
 }
+// 집중하기(fake-focus.mjs): 지난 몇 주 기록을 지어 넣고 시작. SSE focus·완료 말풍선
+const fakeFocus = createFakeFocus({ emit });
 // 가짜 작업 세션(runs): 돌고 있는 수정 run 이 있으면 캐릭터는 공부 중(activity.ts 처럼)
 const fakeRuns = (D.createRuns ?? createFakeRuns)(emit, {
   onActive: (active) => {
@@ -569,7 +572,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   console.log(req.method, p);
-  if (D.route && await D.route(req, res, url, { emit, json, clients, mood, runs: fakeRuns, brain: setFakeBrain })) return;
+  if (D.route && await D.route(req, res, url, { emit, json, clients, mood, runs: fakeRuns, brain: setFakeBrain, focus: fakeFocus })) return;
 
   if (req.method === 'GET' && p === '/events') {
     res.writeHead(200, {
@@ -581,6 +584,7 @@ const server = http.createServer(async (req, res) => {
     clients.add(res);
     res.write(`event: state\ndata: ${JSON.stringify(stateFrame())}\n\n`);
     res.write(`event: runs\ndata: ${JSON.stringify(fakeRuns.snapshot())}\n\n`);
+    res.write(`event: focus\ndata: ${JSON.stringify(fakeFocus.view())}\n\n`);
     const hb = setInterval(() => res.write(': ping\n\n'), 15000);
     req.on('close', () => { clearInterval(hb); clients.delete(res); });
     if (!QUIET) setTimeout(() => { mood('idle'); bubble({ text: '안녕하세요! 가짜 데몬에 연결됐어요.', kind: 'info', ttlMs: 5000 }); }, 500);
@@ -589,6 +593,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && handleFocus(fakeFocus, req, res, url, json)) return;
   if (req.method === 'GET' && p === '/health') return json(res, 200, { ok: true, fake: true });
   if (req.method === 'GET' && p === '/status') return json(res, 200, fakeStatus());
   if (req.method === 'GET' && p === '/settings') return json(res, 200, fakeSettings());
@@ -644,6 +649,7 @@ const server = http.createServer(async (req, res) => {
   }
   const body = await readJSON(req);
   if (body === null) return json(res, 400, { error: 'bad json' });
+  if (handleFocus(fakeFocus, req, res, url, json)) return;
   if (fakeRuns.handle(req, res, url, body)) return;
   if (fakeThreads.handle(req, res, url, body, json, findTodo)) return;
   if (await fakeActions.handle(req, res, url, json, body)) return;

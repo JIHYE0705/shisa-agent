@@ -20,6 +20,8 @@ export const BEATS = [
   { id: 'overview', title: '패널 — 개요·프로젝트·숨기기', est: 30 },
   { id: 'todos', title: '할 일 — 펼침·제목·설명 고치기·규칙·끌기·완료', est: 70 },
   { id: 'today', title: '오늘 할 일 — 표에 적기·체크·저장', est: 22 },
+  { id: 'focus', title: '집중하기 — 공부 영상·머리 위 집중 시간·일시정지', est: 26 },
+  { id: 'focus-stats', title: '오늘 집중 — 주 막대·월 잔디·날짜 눌러 총·최대 연속', est: 30 },
   { id: 'chat', title: '채팅 — 단계 → 표·콜아웃·색 답 → 프로젝트로', est: 36 },
   { id: 'hover', title: '더블클릭 채팅 — 입력창·생각 중·패널에서 보기', est: 26 },
   { id: 'run', title: '스스로 작업 — 공부 영상·진행 보고·작업 세션 창', est: 44 },
@@ -41,7 +43,7 @@ export const TIMING = {
   typing: { msPerChar: 85, jitter: 25, space: 30 },   // 글자당 ~85–110ms
   mouse: { perPx: 1.3, min: 320, max: 950, settle: 220 },
   beats: {
-    idle: 1, nobrain: 1, setup: 1, tour: 1, briefing: 1, 'new-todos': 1, overview: 1, todos: 1, today: 1,
+    idle: 1, nobrain: 1, setup: 1, tour: 1, briefing: 1, 'new-todos': 1, overview: 1, todos: 1, today: 1, focus: 1, 'focus-stats': 1,
     chat: 1, hover: 1, run: 1, merge: 1, settings: 1, meeting: 1, day: 1, outro: 1,
   },
 };
@@ -813,6 +815,97 @@ const SCENES = {
     await d.wait(600);
     await d.hold('panel');
     await pn.scrollTop('#content');
+  },
+
+  // 집중하기: 할 일 탭 [▶ 집중하기] → 캐릭터가 공부 영상, 머리 위에 집중 시간·일시정지·그만하기
+  async focus(d) {
+    await d.clearAll();
+    if ((await d.get('/focus').catch(() => null))?.active) await d.post('/focus/stop'); // 이 장면만 다시 볼 때
+    const pn = await d.ensurePanel('todos');
+    await pn.click('#nav button[data-section="todos"]');
+    await pn.scrollTop('#content');
+    d.cue('할 일 탭 [▶ 집중하기]');
+    await pn.click('#sec-todos .focus-bar button.focus-start');
+    await pn.waitFor(`document.querySelector('#sec-todos .focus-live')`, { timeout: 6000, label: '집중 중 표시' });
+    // 그림용: 25분쯤 집중한 셈 치기(말풍선 시계가 「25:0x」)
+    await d.post('/demo/focus/backdate', { ms: 25 * 60e3 });
+    await d.wait(2500);
+    await d.snap('focus-bar');
+    await d.hidePanel();
+    const ov = await d.overlay();
+    await d.focus(ov);
+    await ov.waitFor(`!document.getElementById('focus').hidden`, { timeout: 6000, label: '집중 말풍선' });
+    d.cue('공부 영상 + 머리 위 「집중 중 25:0x」 · 일시정지 · 그만하기');
+    await d.wait(2500);
+    await d.snap('focus-study');
+    await d.hold('bubble');
+    d.cue('일시정지 → 쉬는 시간은 빼고 셈 → 다시 시작');
+    await ov.click('#focus-toggle');
+    await ov.moveTo(REST.x, REST.y);
+    await d.wait(2500);
+    await d.snap('focus-paused');
+    await d.wait(2000);
+    await ov.click('#focus-toggle');
+    await ov.moveTo(REST.x, REST.y);
+    await d.wait(2000);
+  },
+
+  // 할 일 탭 맨 아래 「오늘 집중」 → 주 막대 · 월 잔디, 날짜를 누르면 총·최대 연속
+  async 'focus-stats'(d) {
+    if (!(await d.get('/focus').catch(() => null))?.active) await d.post('/focus/start');
+    const pn = await d.ensurePanel('todos');
+    await pn.click('#nav button[data-section="todos"]');
+    d.cue('맨 아래 「오늘 집중」 → 기록 보기');
+    await pn.eval(`document.querySelector('#sec-todos .focus-foot')?.scrollIntoView({ block: 'center', behavior: 'smooth' })`);
+    await sleep(800);
+    await pn.click('#sec-todos button.focus-today');
+    await pn.waitFor(`document.querySelector('#sec-todos .focus-week, #sec-todos .focus-month')`, { timeout: 8000, label: '집중 기록' });
+    const tab = async (label) => {
+      const on = await pn.eval(`document.querySelector('#sec-todos .focus-tab.on')?.textContent`);
+      if (on !== label) await pn.click({ sel: '#sec-todos .focus-tab', text: label });
+    };
+    // 주: 기록 카드 끝을 화면 아래에 맞춤(위로 할 일 목록이 조금 보이게). 월: 「오늘 집중」 줄을 맨 위로(카드가 길어서)
+    // 월은 목록 끝이라 더 못 내려가면 위 줄이 반쯤 걸리니 아래 여백을 잠깐 늘린다(그림용)
+    const reveal = (top) => pn.eval(`(() => { const f = document.querySelector('#sec-todos .focus-foot'), c = document.getElementById('content'); if (!f || !c) return; const cr = c.getBoundingClientRect(), fr = f.getBoundingClientRect(); if (${top}) c.style.paddingBottom = '60vh'; c.scrollBy({ top: ${top} ? fr.top - cr.top - 12 : fr.bottom - cr.bottom + 16, behavior: 'smooth' }); })()`).then(() => sleep(800));
+    d.cue('주 — 요일별 막대, 오래 집중한 날 누르기');
+    await tab('주');
+    await pn.waitFor(`document.querySelector('#sec-todos .focus-week')`, { label: '주 막대' });
+    await reveal(false);
+    await d.wait(1500);
+    await pn.click({ sel: '#sec-todos .fw-col:not(.future):not(.today):has(.fw-bar.lv-4), #sec-todos .fw-col:not(.future):not(.today):has(.fw-bar.lv-3), #sec-todos .fw-col.today' });
+    await pn.waitFor(`document.querySelector('#sec-todos .focus-day-detail')`, { label: '그날 한 줄' });
+    await reveal(false);
+    await pn.moveTo(90, 460); // 스크롤로 마우스 밑에 온 칸이 hover 테두리를 갖지 않게(옆 메뉴 빈 곳)
+    await d.wait(1200);
+    await d.snap('focus-week');
+    await d.hold('panel');
+    d.cue('월 — 잔디(진할수록 오래), 날짜 누르면 총·최대 연속');
+    await tab('월');
+    await pn.waitFor(`document.querySelector('#sec-todos .focus-month')`, { label: '월 잔디' });
+    await d.wait(1500);
+    d.cue('지난달 — 한 달 내내 쌓인 잔디');
+    await pn.click('#sec-todos .focus-nav button[aria-label="이전 달"]');
+    await pn.waitFor(`document.querySelectorAll('#sec-todos .fm-cell.lv-4').length > 3`, { label: '지난달 잔디' });
+    await reveal(true);
+    await d.wait(1200);
+    await pn.click({ sel: '#sec-todos .fm-cell.lv-4:not(.future):not(.today)', index: 3 });
+    await pn.waitFor(`document.querySelector('#sec-todos .focus-day-detail')`, { label: '그날 한 줄' });
+    await reveal(true);
+    await pn.moveTo(90, 460);
+    await d.wait(1200);
+    await d.snap('focus-month');
+    await d.hold('panel');
+    d.cue('그만하기 → 「N분 집중했어요」');
+    await pn.eval(`document.getElementById('content').style.paddingBottom = ''`);
+    await pn.scrollTop('#content');
+    await d.hidePanel();
+    const ov = await d.overlay();
+    await d.focus(ov);
+    await ov.click('#focus-stop');
+    await ov.moveTo(REST.x, REST.y);
+    await d.wait(2500);
+    await d.snap('focus-done');
+    await d.wait(4000);
   },
 
   async chat(d) {

@@ -435,7 +435,7 @@ export function chat(text, focus, { emit, history }) {
 }
 
 // ---- 데모 전용 경로: 드라이버(demo-driver.mjs)가 부른다 ----
-// POST /demo/emit {event,data} · /demo/mood {mood} · /demo/brain {ready, provider?} · /demo/run/start {title} · /demo/merge {title}
+// POST /demo/emit {event,data} · /demo/mood {mood} · /demo/brain {ready, provider?} · /demo/run/start {title} · /demo/merge {title} · /demo/focus/backdate {ms}
 // POST /demo/disconnect {ms} — SSE 를 끊고 ms 동안 다시 못 붙게(캐릭터가 흐려지고 잠든 모습)
 // /proposals/demo-*/merge|decline-merge|ask — 데모 PR 머지 승인(✓/✗/추가질문)
 const merges = new Map();
@@ -495,6 +495,7 @@ export async function route(req, res, url, ctx) {
   if (p === '/demo/emit') { emit(body.event, body.data ?? {}); json(res, 200, { ok: true }); return true; }
   if (p === '/demo/brain') { ctx.brain?.({ ready: body.ready !== false, provider: body.provider }); json(res, 200, { ok: true }); return true; } // 뇌 연결 끊기·붙이기
   if (p === '/demo/mood') { ctx.mood(body.mood ?? 'idle'); json(res, 200, { ok: true }); return true; }
+  if (p === '/demo/focus/backdate') { json(res, 200, { ok: true, focus: ctx.focus?.backdate(Number(body.ms) || 0) ?? null }); return true; } // 집중 중인 것을 앞당겨 시작한 셈 치기
   if (p === '/demo/run/start') { const r = ctx.runs.start(body.title || RUN_TITLE); json(res, 200, { ok: true, id: r.run.id }); return true; }
   if (p === '/demo/disconnect') {
     downUntil = Date.now() + (Number(body.ms) || 6000);

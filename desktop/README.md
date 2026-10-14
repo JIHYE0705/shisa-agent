@@ -21,6 +21,7 @@ CY_AGENT_PORT=47900 npm run fake-daemon & CY_AGENT_PORT=47900 npm run dev
 ```
 
 fake-daemon 채팅은 이렇게 반응합니다: "프로젝트/커밋" → `show: projects`, "할 일" → `show: todos`, "자세히" → 긴 답(말풍선 잘림), "오늘 할 일" → SSE `open_panel`, "에러" → `error`. `todoId`를 달고 "없애/지워" → 그 할 일 삭제, "끝났어" → 완료, "미뤄/내일" → 메모·P3.
+집중하기(`/focus`, `/focus/stats`, SSE `focus`)는 `scripts/fake-focus.mjs`가 메모리에서 흉내 냅니다. 기록 보기가 비어 보이지 않도록 지난 10주 정도의 집중 기록(날마다 양이 다르고 쉬는 날도 있습니다)을 넣고 시작합니다.
 
 종료는 ⌘Q(앱 메뉴 "cy 종료"), Dock 아이콘 우클릭 → 종료, 메뉴바 아이콘 → 종료 중 아무거나 쓰면 됩니다.
 
@@ -76,14 +77,16 @@ npm run demo -- --exit --shots <dir>  # 끝나면 닫기 + 장면마다 스크�
 | 7 | overview | 개요(통계·브리핑 마크다운) → 프로젝트 카드 → 숨기기 → 숨긴 프로젝트 펼치기 |
 | 8 | todos | 한 번 눌러 펼침(커밋 원본) · 두 번 눌러 그 자리에서 제목·설명 고치기 → Enter 저장 · 규칙 칩 → 목록 · 꾹 눌러 끌기(P2→P1, →백로그) · 체크 → 최근 완료 + "자동" 칩 |
 | 9 | today | 오늘 할 일 · 우선순위 묶음 · 추가 · 체크 |
-| 10 | chat | 질문 입력 → 단계 → 표·콜아웃·색·형광펜 답 → "프로젝트 현황 보여줘" → 프로젝트 탭 |
-| 11 | hover | 캐릭터 더블클릭 → 입력창 → 생각 중 캡션 → 답 말풍선 → 패널에서 보기 |
-| 12 | run | 공부 영상 + 수정 진행 보고 → 캐릭터 클릭 → 작업 세션 창(스트리밍 기록·도구 줄·Edit diff) → 메시지 보내기 → 테스트 통과 → PR |
-| 13 | merge | `merge` 스티커 "머지할까?" → 추가질문 → 답 → ✓ → `merge_complete` "머지했어 🎉" |
-| 14 | settings | ⚙ 설정 창: 모델·브리핑 출처·오늘 할 일 알림·일정 알림·자동 머지·문구·연결 상태 |
-| 15 | meeting | 춤 영상 + "일정 10분 전이에요!" (Teams 참가) |
-| 16 | day | `daily_half_complete` · 제안 승인 · 오류 말풍선 · `daily` · `daily_all_complete` |
-| 17 | outro | 작별 → 연결 끊김(흐림·눈 감음·z) → 다시 연결 |
+| 10 | focus | 할 일 탭 [▶ 집중하기] → 캐릭터가 공부 영상, 머리 위 「집중 중 25:0x」 말풍선(일시정지·그만하기) → 일시정지 → 다시 시작 |
+| 11 | focus-stats | 맨 아래 「오늘 집중」 → 주 막대(날짜 누르면 「총 … · 최대 연속 …」) → 월 잔디(지난달, 진한 날·연한 날·쉰 날) → 그만하기 → 「N분 집중했어요」 |
+| 12 | chat | 질문 입력 → 단계 → 표·콜아웃·색·형광펜 답 → "프로젝트 현황 보여줘" → 프로젝트 탭 |
+| 13 | hover | 캐릭터 더블클릭 → 입력창 → 생각 중 캡션 → 답 말풍선 → 패널에서 보기 |
+| 14 | run | 공부 영상 + 수정 진행 보고 → 캐릭터 클릭 → 작업 세션 창(스트리밍 기록·도구 줄·Edit diff) → 메시지 보내기 → 테스트 통과 → PR |
+| 15 | merge | `merge` 스티커 "머지할까?" → 추가질문 → 답 → ✓ → `merge_complete` "머지했어 🎉" |
+| 16 | settings | ⚙ 설정 창: 모델·브리핑 출처·오늘 할 일 알림·일정 알림·자동 머지·문구·연결 상태 |
+| 17 | meeting | 춤 영상 + "일정 10분 전이에요!" (Teams 참가) |
+| 18 | day | `daily_half_complete` · 제안 승인 · 오류 말풍선 · `daily` · `daily_all_complete` |
+| 19 | outro | 작별 → 연결 끊김(흐림·눈 감음·z) → 다시 연결 |
 
 ## 캐릭터 바꾸기
 
@@ -154,6 +157,6 @@ renderer/          index.html · style.css · renderer.js (오버레이)
                    panel.html · panel.css · panel.js (패널). 번들러 없음, CSP 적용
 renderer/vendor/   marked.js · purify.js: npm 패키지를 그대로 복사(`npm run vendor`), CDN 없음
 src/               순수 로직: sse, bubbles, geometry, dashboard(뷰모델·상대 시각), chat(리듀서), markdown
-scripts/           fake-daemon.mjs, make-assets.mjs, vendor.mjs, make-icon.mjs(앱 아이콘), package.mjs(cy.app), dist.mjs(시사.app·dmg)
+scripts/           fake-daemon.mjs(+ fake-focus.mjs 등), make-assets.mjs, vendor.mjs, make-icon.mjs(앱 아이콘), package.mjs(cy.app), dist.mjs(시사.app·dmg)
 test/              node --test
 ```
