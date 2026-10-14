@@ -203,7 +203,7 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
     const connected = sisa.connected || [];
     const kids = [];
     if (!connected.length) {
-      kids.push(h('div.card.empty', null,
+      kids.push(h('div.card.models-card.empty', null,
         h('p', { text: '연결된 AI 없음' }),
         h('button.primary', { type: 'button', text: '설치 열기', onclick: gotoSetup })));
     } else {
