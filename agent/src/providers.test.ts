@@ -7,7 +7,7 @@ import { HOME_DIR, loadConfig } from "./config.ts";
 import { SCHEMA, ask, think } from "./brain.ts";
 import { Store } from "./store.ts";
 import {
-  ANTHROPIC_URL, MISSING_ANTHROPIC_KEY, GEMINI_DEFAULT_MODEL, MISSING_CODEX, MISSING_GEMINI_KEY, MISSING_OPENAI_KEY, OPENAI_DEFAULT_MODEL, OPENAI_URL,
+  ANTHROPIC_URL, MISSING_ANTHROPIC_KEY, GEMINI_DEFAULT_MODEL, bestGeminiFlash, MISSING_CODEX, MISSING_GEMINI_KEY, MISSING_OPENAI_KEY, OPENAI_DEFAULT_MODEL, OPENAI_URL,
   type ExecFileLike, type FetchLike, parseCodexStdout, resolveHttpModel, brainAuthFailed, resetBrainAuth, onBrainAuthChange, BrainAuthError,
 } from "./providers.ts";
 
@@ -63,7 +63,7 @@ test("HTTP 모델: general이 Claude 기본이면 싼 공식 모델, 직접 지�
   assert.equal(resolveHttpModel("gemini", "gemini-2.5-pro"), "gemini-2.5-pro");
   assert.equal(resolveHttpModel("openai", "gpt-4.1"), "gpt-4.1");
   assert.equal(resolveHttpModel("gemini", "claude-sonnet-5-5", "gemini-2.0-flash"), "gemini-2.0-flash");
-  assert.equal(GEMINI_DEFAULT_MODEL, "gemini-2.5-flash");
+  assert.equal(GEMINI_DEFAULT_MODEL, "gemini-3.8-flash");
   assert.equal(OPENAI_DEFAULT_MODEL, "gpt-4.1-mini");
 });
 
@@ -71,7 +71,7 @@ test("gemini: URL·헤더만, 도구 없음, 키는 오류에 없다", async () 
   let calls = 0;
   const fetch: FetchLike = async (url, init) => {
     calls++;
-    assert.equal(url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
+    assert.equal(url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
     assert.equal(url.includes(KEY), false);
     assert.equal(init?.method, "POST");
     assert.equal(init?.headers?.["x-goog-api-key"], KEY);
@@ -85,6 +85,39 @@ test("gemini: URL·헤더만, 도구 없음, 키는 오류에 없다", async () 
   const out = await ask<{ reply_md: string }>(cfgOf("gemini"), "브리핑 표식", SCHEMA, undefined, { deps: { fetch, env: { CY_AGENT_GEMINI_API_KEY: KEY } } });
   assert.equal(calls, 1);
   assert.equal(out.reply_md, "본문");
+});
+
+test("gemini: 기본 모델이 404면 목록에서 가장 새 flash로 한 번 더 보내고, 다음부터는 그 모델", async () => {
+  const urls: string[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    urls.push(`${init?.method} ${url}`);
+    if (url.includes("gemini-3.8-flash:")) return new Response("{}", { status: 404 });
+    if (init?.method === "GET") {
+      assert.equal(url.includes(KEY), false);
+      assert.equal(init?.headers?.["x-goog-api-key"], `${KEY}-404`);
+      return new Response(JSON.stringify({ models: [
+        { name: "models/gemini-4-flash", supportedGenerationMethods: ["generateContent"] },
+        { name: "models/gemini-4.1-flash-lite", supportedGenerationMethods: ["generateContent"] },
+        { name: "models/gemini-4-flash-embed", supportedGenerationMethods: ["embedContent"] },
+        { name: "models/gemini-9-flash", supportedGenerationMethods: ["embedContent"] },
+      ] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: thoughtJson() }] } }] }), { status: 200 });
+  };
+  const key = `${KEY}-404`;
+  const opts = { deps: { fetch, env: { CY_AGENT_GEMINI_API_KEY: key } } };
+  const out = await ask<{ reply_md: string }>(cfgOf("gemini"), "x", SCHEMA, undefined, opts);
+  assert.equal(out.reply_md, "본문");
+  assert.equal(urls.length, 3);
+  assert.match(urls[2], /models\/gemini-4-flash:generateContent$/);
+  urls.length = 0;
+  await ask(cfgOf("gemini"), "x", SCHEMA, undefined, opts);
+  assert.deepEqual(urls.map((u) => u.split("/").pop()), ["gemini-4-flash:generateContent"]);
+});
+
+test("bestGeminiFlash: 일반 flash 중 가장 새 것", () => {
+  assert.equal(bestGeminiFlash(["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.10-flash", "gemini-9-flash-lite", "gemini-3.8-pro"]), "gemini-3.10-flash");
+  assert.equal(bestGeminiFlash(["gemini-pro"]), undefined);
 });
 
 test("gemini: 키가 없으면 한국어 오류, fetch도 local 폴백도 없다", async () => {

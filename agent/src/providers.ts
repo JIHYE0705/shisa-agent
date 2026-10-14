@@ -26,8 +26,9 @@ export type ProviderDeps = {
   env?: NodeJS.ProcessEnv;
 };
 
-// 출처: https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash — Model code `gemini-2.5-flash`
-export const GEMINI_DEFAULT_MODEL = "gemini-2.5-flash";
+// 출처: https://ai.google.dev/gemini-api/docs/changelog — 새 프로젝트는 3.8 Flash 권장(2.5 는 예전에 쓰던 계정만 열려 새 사용자는 404)
+// 기본 모델이 404 면 키로 목록을 받아 가장 새 flash 로 한 번 더 보낸다(geminiJson)
+export const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash";
 // 출처: https://developers.openai.com/api/docs/models/gpt-4.1-mini — Model ID `gpt-4.1-mini`
 export const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
 
@@ -144,6 +145,37 @@ async function readError(res: Response, fail: string, auth?: { provider: KeyProv
   throw new Error(`${fail} (HTTP ${res.status}).`);
 }
 
+const geminiPicked = new Map<string, string>(); // 키 → 기본 대신 쓰는 모델(이 실행 동안만)
+
+// 'gemini-3.8-flash' 같은 일반 flash 중 가장 새 것. lite·preview·image·tts 등은 뺀다.
+export function bestGeminiFlash(ids: string[]): string | undefined {
+  const ver = (id: string) => (/^gemini-(\d+(?:\.\d+)*)-flash$/.exec(id)?.[1] ?? "").split(".").filter(Boolean).map(Number);
+  const cmp = (a: number[], b: number[]) => {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const d = (b[i] ?? 0) - (a[i] ?? 0);
+      if (d) return d;
+    }
+    return 0;
+  };
+  return ids.filter((id) => (ver(id)[0] ?? 0) > 0).sort((a, b) => cmp(ver(a), ver(b)))[0];
+}
+
+// 출처: https://ai.google.dev/api/models#method:-models.list — GET /v1beta/models, generateContent 되는 것만
+async function newestGeminiFlash(key: string, fetchImpl: FetchLike): Promise<string | undefined> {
+  try {
+    const res = await fetchImpl(`${GEMINI_URL}?pageSize=1000`, { method: "GET", headers: { "x-goog-api-key": key } });
+    if (!res.ok) return undefined;
+    const data = asRecord(tryParse(await res.text()));
+    const models = Array.isArray(data?.models) ? data.models as { name?: string; supportedGenerationMethods?: string[] }[] : [];
+    const ids = models
+      .filter((m) => m?.supportedGenerationMethods?.includes("generateContent"))
+      .map((m) => String(m?.name ?? "").replace(/^models\//, ""));
+    return bestGeminiFlash(ids);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function geminiJson(
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
   opts: { system?: string; model?: string; fetch?: FetchLike; env?: NodeJS.ProcessEnv } = {},
@@ -151,23 +183,35 @@ export async function geminiJson(
   const env = opts.env ?? process.env;
   const key = geminiKey(cfg, env);
   if (!key) throw new Error(MISSING_GEMINI_KEY);
-  const model = resolveHttpModel("gemini", cfg.models?.general, opts.model);
-  // 키는 헤더에만. URL 쿼리에 넣지 않는다(로그·에러에 남기 쉬움).
-  const url = `${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`;
+  const chosen = resolveHttpModel("gemini", cfg.models?.general, opts.model);
+  const picked = chosen === GEMINI_DEFAULT_MODEL ? geminiPicked.get(key) : undefined;
   const fetchImpl = opts.fetch ?? fetch;
-  let res: Response;
-  try {
-    res = await fetchImpl(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        ...(opts.system ? { systemInstruction: { parts: [{ text: opts.system }] } } : {}),
-        contents: [{ role: "user", parts: [{ text: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }] }],
-        generationConfig: { responseMimeType: "application/json", responseJsonSchema: schema },
-      }),
-    });
-  } catch {
-    throw new Error("Gemini 요청을 보내지 못했어요.");
+  const body = JSON.stringify({
+    ...(opts.system ? { systemInstruction: { parts: [{ text: opts.system }] } } : {}),
+    contents: [{ role: "user", parts: [{ text: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }] }],
+    generationConfig: { responseMimeType: "application/json", responseJsonSchema: schema },
+  });
+  // 키는 헤더에만. URL 쿼리에 넣지 않는다(로그·에러에 남기 쉬움).
+  const send = async (model: string) => {
+    try {
+      return await fetchImpl(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body,
+      });
+    } catch {
+      throw new Error("Gemini 요청을 보내지 못했어요.");
+    }
+  };
+  let res = await send(picked ?? chosen);
+  // 기본 모델이 이 계정에 없으면(404) 목록에서 가장 새 flash 를 골라 한 번 더
+  if (res.status === 404 && chosen === GEMINI_DEFAULT_MODEL && !picked) {
+    const best = await newestGeminiFlash(key, fetchImpl);
+    if (best && best !== chosen) {
+      await res.text().catch(() => "");
+      res = await send(best);
+      if (res.ok) geminiPicked.set(key, best);
+    }
   }
   if (!res.ok) return readError(res, "Gemini 요청이 실패했어요", { provider: "gemini", key });
   markAuth("gemini", key, false);
