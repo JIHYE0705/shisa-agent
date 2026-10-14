@@ -37,6 +37,9 @@ import { isFocusCmd, DAY_RE } from './src/focus.js';
 import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
 import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
+import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, loginItemPlan, loginItemHint, defaultLoginPref, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
+import { createDaemonHost } from './src/daemon-host.js';
+import { RELEASES_API, checkDue, latestRelease, shouldNotify, updateBubble } from './src/update-check.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CY_AGENT_PORT) || 47823;
@@ -48,6 +51,9 @@ const OLD_WIDTH = 360; // 예전 창 너비 — 넓어진 만큼의 절반을 �
 const USER_ASSETS = path.join(process.env.CY_AGENT_HOME ?? path.join(os.homedir(), '.cy-agent'), 'assets');
 // 레포 assets/(설치 때 USER_ASSETS 로 복사하는 원본). 홈에 없을 때 대신 읽는다
 const REPO_ASSETS = path.join(__dirname, '..', 'assets');
+// 앱 번들(dmg)이면 Contents/Resources 의 데몬(agent/)·그림(assets/). 개발 실행이면 데몬은 레포에서 따로(CY_BUNDLED_DAEMON=1 이면 레포 agent/ 를 띄움)
+const BUNDLE = bundlePaths({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appDir: __dirname, env: process.env }, path.join);
+const AGENT_HOME = process.env.CY_AGENT_HOME ?? path.join(os.homedir(), '.cy-agent');
 const PANEL_SIZE = { width: 900, height: 640 }; // 채팅 탭: 대화 목록 + 대화가 나란히
 const SESSION_SIZE = { width: 900, height: 700 };
 const DEBUG = !!process.env.CY_DEBUG;
@@ -56,7 +62,8 @@ attachConsole(logRing, console, process);
 
 // 기본 포트가 아니면 따로 노는 인스턴스(가짜 데몬 등) — 저장소·단일 인스턴스 잠금을 분리.
 // 앱 이름은 "cy"(메뉴·정보 창). userData 는 이름이 바뀌어도 원래 자리(cy-agent-desktop[-포트])에 고정.
-const userData = app.getPath('userData');
+// 앱 번들 이름(시사)·productName 이 바뀌어도 같은 자리를 쓰게 package.json name 으로 고정
+const userData = path.join(app.getPath('appData'), 'cy-agent-desktop');
 app.setName('시사 비서');
 app.setPath('userData', PORT !== 47823 ? `${userData}-${PORT}` : userData);
 
@@ -648,6 +655,10 @@ function onCharacterClick() {
 let attempt = 0;
 let retryOverride = null;
 let currentAbort = null;
+let wakeSleep = null; // 기다리는 중인 재연결을 앞당긴다(앱이 데몬을 막 띄웠을 때)
+function wakeConnect(ms) {
+  setTimeout(() => { attempt = 0; wakeSleep?.(); }, ms);
+}
 
 // 캐릭터 캡션 "에이전트 N개 실행 중": 대화별 돌고 있는 서브에이전트 수(SSE agents 가 오면 그 대화만 다시 센다)
 const agentCounts = new Map(); // threadId → 수
@@ -670,6 +681,7 @@ function setConnected(v) {
   sendSession('connection', { connected: v });
   rebuildTrayMenu();
   if (v) refreshStatus(); // 뇌·Claude Code·커넥터 연결 상태
+  if (v) loginDefaultFromDaemon();
   else pushBrain();
 }
 
@@ -697,7 +709,8 @@ async function connectLoop() {
     if (quitting) break;
     const delay = retryOverride ?? backoffDelay(attempt++);
     retryOverride = null;
-    await new Promise((r) => setTimeout(r, delay));
+    await new Promise((r) => { wakeSleep = r; setTimeout(r, delay); });
+    wakeSleep = null;
   }
 }
 
@@ -1051,6 +1064,7 @@ function setupIPC() {
     disconnectBrain: (p) => disconnectBrain(p),
     disconnectConnector: (cap) => disconnectConnector(cap),
     copyText: (text) => { clipboard.writeText(text); return { ok: true }; },
+    appPrefs,
     preload: path.join(__dirname, 'preload-settings.cjs'),
     html: path.join(__dirname, 'renderer', 'settings.html'),
   });
@@ -1234,6 +1248,7 @@ function setupIPC() {
     const r = await request('PUT', '/settings', p);
     if (!r.ok) return { ok: false, error: r.data?.error ?? r.error ?? '저장하지 못했어요' };
     refreshStatus();
+    if (p.onboarded) setLoginDefault(true); // 마법사를 마침 → 로그인할 때 켜기 기본 켬(정한 적 없을 때만)
     return { ok: true, ...setupView(r.data?.settings) };
   });
   ipcMain.handle('pick-folder', async (e) => {
@@ -1592,7 +1607,7 @@ function registerAssetProtocol() {
     const a = req.method === 'GET' ? resolveAsset(req.url) : null;
     if (!a) return new Response('not found', { status: 404 });
     // 홈에 없으면(install.sh 를 안 거친 새 사용자) 레포 assets/ 를 그대로 쓴다
-    const file = assetCandidates(a.rel, { user: USER_ASSETS, repo: REPO_ASSETS, bundled: path.join(__dirname, 'assets') }, path.join).find((f) => fs.existsSync(f));
+    const file = assetCandidates(a.rel, { user: USER_ASSETS, repo: app.isPackaged ? null : REPO_ASSETS, bundle: app.isPackaged ? BUNDLE.assetsDir : null, bundled: path.join(__dirname, 'assets') }, path.join).find((f) => fs.existsSync(f));
     if (!file) return new Response('not found', { status: 404 });
     // Range(영상): 206 + Content-Range. 그림은 예전처럼 통째로
     const size = (await fs.promises.stat(file)).size;
@@ -1612,6 +1627,140 @@ function registerAssetProtocol() {
   });
 }
 
+// ---- 앱 안의 데몬(src/bundle.js · src/daemon-host.js): dmg 로 깐 시사는 데몬을 자식 프로세스로 띄운다 ----
+// 이미 그 포트에 데몬이 있거나(터미널로 띄움) launchd 가 맡고 있으면(ops/install.sh) 띄우지 않는다. 로그: ~/.cy-agent/logs/(daemon.log · com.cy-agent.daemon.log)
+let daemonHost = null;
+let daemonStopping = false;
+const launchdPlist = () => fs.existsSync(path.join(os.homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_DAEMON}.plist`));
+
+async function daemonAlive() {
+  try {
+    await fetch(`${BASE}/status`, { signal: AbortSignal.timeout(1500), headers: { Accept: 'application/json' } });
+    return true; // 무슨 답이든 오면 누가 그 포트에 있다
+  } catch {
+    return false;
+  }
+}
+
+function spawnDaemon(entry, dir) {
+  const logs = path.join(AGENT_HOME, 'logs');
+  fs.mkdirSync(AGENT_HOME, { recursive: true, mode: 0o700 }); // 수집한 메시지·토큰이 들어가니 나만(install.sh 와 같게)
+  fs.mkdirSync(logs, { recursive: true });
+  const fd = fs.openSync(path.join(logs, DAEMON_LOG), 'a', 0o600);
+  try {
+    return spawn(process.execPath, [entry], {
+      cwd: dir,
+      env: daemonEnv(process.env, { port: PORT, home: os.homedir() }),
+      stdio: ['ignore', fd, fd],
+    });
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+async function startDaemonHost() {
+  const dir = BUNDLE.daemonDir;
+  const entry = dir ? path.join(dir, 'src', 'main.ts') : null;
+  const d = spawnDecision({ daemonDir: dir, hasEntry: !!entry && fs.existsSync(entry), env: process.env, launchd: launchdOwns({ plistExists: launchdPlist(), env: process.env }) });
+  if (!d.spawn) {
+    if (dir) console.log(`[daemon] 앱이 데몬을 띄우지 않아요(${d.reason})`);
+    return;
+  }
+  daemonHost = createDaemonHost({
+    spawn: () => spawnDaemon(entry, dir),
+    probe: daemonAlive,
+    now: Date.now,
+    setTimeout,
+    clearTimeout,
+    log: (m) => console.log(`[daemon] ${m}`),
+    onSpawn: () => wakeConnect(1200),
+  });
+  // 앱이 갑자기 끝나도(앱 종료 처리를 못 거쳐도) 데몬을 남기지 않는다
+  process.on('exit', () => { const pid = daemonHost?.pid; if (pid) try { process.kill(pid, 'SIGTERM'); } catch { /* 이미 꺼짐 */ } });
+  // kill·로그아웃으로 앱이 신호를 받으면 보통 종료처럼(데몬도 끄고)
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => app.quit());
+  await daemonHost.start();
+}
+
+// ---- 로그인할 때 자동 실행(app.setLoginItemSettings) — dmg 로 깐 앱만. 터미널 설치·개발·시험 실행은 건드리지 않는다 ----
+const loginPlan = () => loginItemPlan({ platform: process.platform, packaged: app.isPackaged, launchd: launchdPlist(), env: process.env, pref: state.openAtLogin });
+
+function applyLoginItem() {
+  const p = loginPlan();
+  if (!p.manage || typeof p.openAtLogin !== 'boolean') return;
+  try {
+    if (app.getLoginItemSettings().openAtLogin !== p.openAtLogin) app.setLoginItemSettings({ openAtLogin: p.openAtLogin });
+  } catch (e) {
+    console.error('[login-item]', e?.message ?? e);
+  }
+}
+
+// 정한 적이 없으면 마법사를 마쳤을 때 켠다. 그 뒤로는 사용자가 정한 대로(시스템 설정에서 끈 것도 존중: 켜고 끌 때만 바꾼다)
+function setLoginDefault(onboarded) {
+  if (loginPlan().reason !== 'unset') return;
+  const next = defaultLoginPref(state.openAtLogin, onboarded);
+  if (typeof next !== 'boolean') return;
+  state.openAtLogin = next;
+  saveState();
+  applyLoginItem();
+}
+
+// 마법사를 예전에 마친 사용자가 dmg 앱으로 처음 켰을 때도 기본값을 채운다
+async function loginDefaultFromDaemon() {
+  if (loginPlan().reason !== 'unset') return;
+  const r = await request('GET', '/settings');
+  if (r.ok && r.data?.onboarded === true) setLoginDefault(true);
+}
+
+// ---- 새 버전 알림(src/update-check.js): 하루 한 번 GitHub Releases 최신판을 본다 ----
+const isCheckout = () => !app.isPackaged || launchdPlist(); // 터미널 설치(레포 체크아웃)는 ./ops/update.sh 로 받는다
+
+async function checkForUpdate() {
+  const now = Date.now();
+  if (!checkDue({ enabled: state.updateCheck !== false, lastCheck: state.updateCheckedAt, now })) return;
+  state.updateCheckedAt = now;
+  saveState();
+  try {
+    const r = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'shisa-agent-desktop' }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return; // 아직 릴리스가 없으면 404
+    const rel = latestRelease(await r.json());
+    if (!rel || !shouldNotify({ latest: rel.version, current: app.getVersion(), notified: state.updateNotified })) return;
+    state.updateNotified = rel.version;
+    saveState();
+    send('bubble', updateBubble({ version: rel.version, url: rel.url, checkout: isCheckout() }));
+  } catch (e) {
+    if (DEBUG) console.error('[update]', e?.message ?? e);
+  }
+}
+
+// 설정 창 「이 앱」 칸
+const appPrefs = {
+  get() {
+    const p = loginPlan();
+    let on = false;
+    if (p.manage) {
+      try { on = app.getLoginItemSettings().openAtLogin === true; } catch { on = state.openAtLogin === true; }
+    }
+    return { ok: true, version: app.getVersion(), openAtLogin: { available: p.manage, on, hint: loginItemHint(p.reason) }, updateCheck: state.updateCheck !== false };
+  },
+  set(patch) {
+    if ('openAtLogin' in patch) {
+      const p = loginPlan();
+      if (!p.manage) return { ok: false, error: loginItemHint(p.reason) };
+      state.openAtLogin = patch.openAtLogin;
+      saveState();
+      applyLoginItem();
+    }
+    if ('updateCheck' in patch) {
+      state.updateCheck = patch.updateCheck;
+      if (patch.updateCheck) state.updateCheckedAt = 0; // 다시 켜면 바로 한 번
+      saveState();
+      if (patch.updateCheck) checkForUpdate();
+    }
+    return appPrefs.get();
+  },
+};
+
 // ---- 시작 ----
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -1627,7 +1776,10 @@ if (!app.requestSingleInstanceLock()) {
     registerDebugShortcut();
     createWindow();
     createTray();
+    startDaemonHost().catch((e) => console.error('[daemon]', e?.message ?? e));
     connectLoop();
+    setTimeout(checkForUpdate, 30_000);
+    setInterval(checkForUpdate, 60 * 60 * 1000);
     refreshCaps(true);
     if (openSetupAtLaunch({ firstRun, env: process.env })) setTimeout(() => showPanel('setup'), 400);
 
@@ -1654,6 +1806,12 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
     currentAbort?.abort();
     globalShortcut.unregisterAll();
+    // 앱이 띄운 데몬은 같이 끈다(남의 데몬·launchd 데몬은 그대로)
+    if (daemonHost?.pid && !daemonStopping) {
+      daemonStopping = true;
+      e.preventDefault();
+      daemonHost.stop().finally(() => app.quit());
+    }
   });
   app.on('will-quit', () => globalShortcut.unregisterAll());
   // 창 닫혀도 계속 — 종료는 ⌘Q·Dock·트레이 메뉴에서만

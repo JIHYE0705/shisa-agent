@@ -1,0 +1,81 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  bundlePaths, launchdOwns, spawnDecision, daemonEnv, restartDelay, nextFailures, STABLE_MS,
+  loginItemPlan, loginItemHint, defaultLoginPref, DEFAULT_PORT,
+} from '../src/bundle.js';
+
+test('bundlePaths: 앱 번들은 Resources/agent·assets, 개발 실행은 데몬 없음(CY_BUNDLED_DAEMON=1 이면 레포 agent/)', () => {
+  const res = '/Applications/시사.app/Contents/Resources';
+  assert.deepEqual(bundlePaths({ packaged: true, resourcesPath: res, appDir: `${res}/app.asar` }), { daemonDir: `${res}/agent`, assetsDir: `${res}/assets` });
+  assert.deepEqual(bundlePaths({ packaged: true, resourcesPath: res, env: { CY_BUNDLED_DAEMON: '0' } }), { daemonDir: null, assetsDir: `${res}/assets` });
+  assert.deepEqual(bundlePaths({ packaged: false, appDir: '/r/desktop', env: {} }), { daemonDir: null, assetsDir: '/r/desktop/../assets' });
+  assert.deepEqual(bundlePaths({ packaged: false, appDir: '/r/desktop', env: { CY_BUNDLED_DAEMON: '1' } }).daemonDir, '/r/desktop/../agent');
+  assert.deepEqual(bundlePaths({ packaged: true }), { daemonDir: null, assetsDir: null });
+});
+
+test('launchdOwns: launchd 데몬은 기본 포트·기본 홈일 때만 그 자리를 맡는다', () => {
+  assert.equal(launchdOwns({ plistExists: true, env: {} }), true);
+  assert.equal(launchdOwns({ plistExists: true, env: { CY_AGENT_PORT: String(DEFAULT_PORT) } }), true);
+  assert.equal(launchdOwns({ plistExists: true, env: { CY_AGENT_PORT: '48300' } }), false);
+  assert.equal(launchdOwns({ plistExists: true, env: { CY_AGENT_HOME: '/tmp/h' } }), false);
+  assert.equal(launchdOwns({ plistExists: false, env: {} }), false);
+});
+
+test('spawnDecision: 번들 없음·launchd·이미 떠 있음이면 띄우지 않는다', () => {
+  const base = { daemonDir: '/R/agent', hasEntry: true, env: {} };
+  assert.deepEqual(spawnDecision(base), { spawn: true, reason: 'spawn' });
+  assert.equal(spawnDecision({ ...base, daemonDir: null }).reason, 'no-bundle');
+  assert.equal(spawnDecision({ ...base, hasEntry: false }).reason, 'no-bundle'); // install.sh 로 만든 cy.app(데몬 없음)
+  assert.equal(spawnDecision({ ...base, env: { CY_AGENT_SUPERVISED: '1' } }).reason, 'launchd');
+  assert.equal(spawnDecision({ ...base, launchd: true }).reason, 'launchd');
+  assert.equal(spawnDecision({ ...base, alive: true }).reason, 'running');
+});
+
+test('daemonEnv: 앱 환경을 넘기고 Node 로 실행·재시작 허용·포트를 박고 PATH 를 채운다', () => {
+  const env = daemonEnv({ PATH: '/usr/bin:/bin', CY_AGENT_HOME: '/tmp/h', CY_AGENT_PORT: '48300', FOO: 'x' }, { home: '/Users/me' });
+  assert.equal(env.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(env.CY_AGENT_SUPERVISED, '1');
+  assert.equal(env.CY_AGENT_HOME, '/tmp/h');
+  assert.equal(env.CY_AGENT_PORT, '48300');
+  assert.equal(env.FOO, 'x');
+  const parts = env.PATH.split(':');
+  assert.deepEqual(parts.slice(0, 2), ['/usr/bin', '/bin']); // 원래 순서가 먼저
+  for (const d of ['/Users/me/.local/bin', '/opt/homebrew/bin', '/usr/local/bin']) assert.ok(parts.includes(d), d);
+  assert.equal(new Set(parts).size, parts.length); // 중복 없음
+  assert.equal(daemonEnv({}, { port: 47823 }).CY_AGENT_PORT, '47823');
+  assert.ok(!daemonEnv({}, {}).PATH.includes('~')); // 홈을 모르면 ~ 경로는 뺀다
+});
+
+test('restartDelay·nextFailures: 빨리 죽을수록 점점 길게, 오래 살았으면 처음부터', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7].map((n) => restartDelay(n)), [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]);
+  assert.equal(restartDelay(-3), 1000);
+  assert.equal(restartDelay(1000), 60000);
+  assert.equal(nextFailures(0, 500), 1);
+  assert.equal(nextFailures(3, 2000), 4);
+  assert.equal(nextFailures(5, STABLE_MS), 0);
+  assert.equal(nextFailures(undefined, 10), 1);
+});
+
+test('loginItemPlan: dmg 앱만, 시험·터미널 설치·개발 실행은 건드리지 않는다', () => {
+  const ok = { platform: 'darwin', packaged: true, env: {} };
+  assert.deepEqual(loginItemPlan({ ...ok, pref: true }), { manage: true, reason: 'ok', openAtLogin: true });
+  assert.deepEqual(loginItemPlan({ ...ok, pref: false }), { manage: true, reason: 'ok', openAtLogin: false });
+  assert.deepEqual(loginItemPlan({ ...ok }), { manage: true, reason: 'unset' });
+  assert.equal(loginItemPlan({ ...ok, packaged: false, pref: true }).reason, 'dev');
+  assert.equal(loginItemPlan({ ...ok, launchd: true, pref: true }).reason, 'launchd');
+  assert.equal(loginItemPlan({ ...ok, env: { CY_AGENT_SUPERVISED: '1' }, pref: true }).reason, 'launchd');
+  for (const env of [{ CY_AGENT_HOME: '/tmp/h' }, { CY_AGENT_PORT: '48300' }, { CY_NO_LOGIN_ITEM: '1' }]) {
+    assert.equal(loginItemPlan({ ...ok, env, pref: true }).manage, false, JSON.stringify(env));
+  }
+  assert.equal(loginItemPlan({ ...ok, platform: 'linux', pref: true }).reason, 'platform');
+  assert.match(loginItemHint('launchd'), /launchd/);
+  assert.equal(loginItemHint('ok'), '');
+});
+
+test('defaultLoginPref: 정한 값은 그대로, 없으면 마법사를 마친 뒤에만 켬', () => {
+  assert.equal(defaultLoginPref(undefined, false), undefined);
+  assert.equal(defaultLoginPref(undefined, true), true);
+  assert.equal(defaultLoginPref(false, true), false);
+  assert.equal(defaultLoginPref(true, false), true);
+});

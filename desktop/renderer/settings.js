@@ -149,6 +149,42 @@ function renderBrains() {
   }
 }
 
+// ---- 이 앱(로그인할 때 켜기 · 새 버전 알림) ----
+let appPrefs = null;
+function renderAppPrefs() {
+  const box = $('app-prefs');
+  box.replaceChildren();
+  if (!appPrefs) return;
+  $('app-version').textContent = appPrefs.version ? `지금 버전 v${appPrefs.version}` : '';
+  const login = appPrefs.openAtLogin ?? {};
+  const rows = [
+    { key: 'openAtLogin', on: login.on === true, label: '로그인할 때 시사 켜기', disabled: !login.available },
+    { key: 'updateCheck', on: appPrefs.updateCheck !== false, label: '새 버전이 나오면 알려 주기 (하루 한 번 확인)' },
+  ];
+  for (const r of rows) {
+    const lab = el('label', `toggle${r.on ? '' : ' off'}`);
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = r.on;
+    cb.disabled = !!r.disabled;
+    cb.addEventListener('change', async () => {
+      cb.disabled = true;
+      const res = await cy.setAppPrefs?.({ [r.key]: cb.checked }).catch(() => null);
+      if (res?.ok) { appPrefs = res; flash('저장했어요'); }
+      renderAppPrefs();
+    });
+    lab.append(cb, document.createTextNode(r.label));
+    box.append(lab);
+  }
+  const hint = $('app-hint');
+  hint.textContent = login.hint || '';
+  hint.hidden = !login.hint;
+}
+async function loadAppPrefs() {
+  const r = await cy.getAppPrefs?.().catch(() => null);
+  if (r?.ok) { appPrefs = r; renderAppPrefs(); }
+}
+
 // ---- 브리핑 출처 ----
 function renderSources() {
   const box = $('sources');
@@ -497,6 +533,7 @@ async function load() {
   }
 }
 
+loadAppPrefs();
 const guidelines = mountGuidelines(document, cy, flash); // 행동 지침(src/guidelines.js)
 guidelines.load();
 $('check-all').addEventListener('click', checkAll);

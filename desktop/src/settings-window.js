@@ -1,13 +1,14 @@
 // 설정 창(메인 프로세스 쪽): 창 하나 + 이 창에서만 받는 IPC. 일렉트론 객체는 main.js 가 넘긴다(시험은 가짜로).
 // 모델·브리핑 출처 저장(PUT /settings) · 연결 상태(GET /connections, POST /connections/check) · 패널의 설치 안내·모델 탭 열기.
-import { sanitizeSettingsPatch, okCheckId, okPanelTarget } from './settings.js';
+import { sanitizeSettingsPatch, sanitizeAppPrefs, okCheckId, okPanelTarget } from './settings.js';
 import { sanitizeGuidelineAdd, sanitizeGuidelinePatch, okGuidelineId } from './guidelines.js';
 import { okBrainId, okCap } from './disconnect.js';
 
 export const SETTINGS_SIZE = { width: 720, height: 760 };
 
 // deps: { BrowserWindow, ipcMain, shell, request(method, path, body?, timeoutMs?), preload, html, fromOurs(e), debug?, openPanel?(section), caps?(),
-//         sisa?() 앱의 AI 저장(publicView), disconnectBrain?(id), disconnectConnector?(cap), copyText?(text) }
+//         sisa?() 앱의 AI 저장(publicView), disconnectBrain?(id), disconnectConnector?(cap), copyText?(text),
+//         appPrefs?: { get() → { version, openAtLogin: { available, on, hint }, updateCheck }, set(patch) } 「이 앱」 칸 }
 export function setupSettings(deps) {
   let win = null;
 
@@ -72,6 +73,13 @@ export function setupSettings(deps) {
   // [설치 안내]·[AI 고르기] → 패널의 그 탭
   ipcMain.on('settings-open-panel', (e, section) => {
     if (isMine(e) && okPanelTarget(section)) deps.openPanel?.(section);
+  });
+
+  // 「이 앱」: 로그인할 때 켜기 · 새 버전 알림(앱의 state.json)
+  ipcMain.handle('settings-app-get', (e) => (isMine(e) && deps.appPrefs ? deps.appPrefs.get() : denied()));
+  ipcMain.handle('settings-app-set', (e, patch) => {
+    const p = isMine(e) && deps.appPrefs ? sanitizeAppPrefs(patch) : null;
+    return p ? deps.appPrefs.set(p) : denied();
   });
 
   // 사용법 다시 보기

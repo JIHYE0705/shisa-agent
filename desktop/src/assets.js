@@ -32,11 +32,13 @@ export function resolveAsset(url) {
 }
 
 // 실제로 읽을 파일 후보(앞에서부터): 홈(CY_AGENT_HOME/assets, 사용자가 바꾼 그림) → 레포 assets/(설치 스크립트를 안 거친 새 사용자·테스트 홈)
-// → character.png 만 앱 번들 플레이스홀더. dirs: { user, repo, bundled } — 없는 것은 건너뛴다
+// → 앱 번들 assets/(dmg 로 깐 앱: Contents/Resources/assets) → character.png 만 앱 번들 플레이스홀더.
+// dirs: { user, repo, bundle, bundled } — 없는 것은 건너뛴다
 export function assetCandidates(rel, dirs, join = (a, b) => `${a.replace(/\/$/, '')}/${b}`) {
   const out = [];
   if (dirs?.user) out.push(join(dirs.user, rel));
   if (dirs?.repo) out.push(join(dirs.repo, rel));
+  if (dirs?.bundle) out.push(join(dirs.bundle, rel));
   if (rel === 'character.png' && dirs?.bundled) out.push(join(dirs.bundled, 'character.png'));
   return out;
 }

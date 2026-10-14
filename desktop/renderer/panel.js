@@ -2992,6 +2992,7 @@ cy.onConnection(({ connected: c }) => {
   el.textContent = connected ? '시사 켜짐' : '시사 꺼짐';
   el.title = connected ? '시사 켜짐' : '시사 꺼짐';
   el.classList.toggle('off', !connected);
+  if (connected && !was && section === 'setup') loadSetupSettings(); // 앱이 데몬을 막 띄웠으면 마법사 칸을 채운다
   if (connected && !was) { load(); focusView.load(); loadThreads(); loadPermissions(); loadChatModels(); loadAgents(); loadQueue(); }
   if (!connected) { chat = { ...chat, pending: {} }; renderChat(); renderThreadList(); renderBadges(); }
 });

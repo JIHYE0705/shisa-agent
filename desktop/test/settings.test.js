@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  sanitizeSettingsPatch, okPanelTarget, needsSetupHint, okCheckId, dotClass, agoText, latencyText, groupRows, pendingChecks, mergeRows, toggleExclude, metaText,
+  sanitizeAppPrefs, sanitizeSettingsPatch, okPanelTarget, needsSetupHint, okCheckId, dotClass, agoText, latencyText, groupRows, pendingChecks, mergeRows, toggleExclude, metaText,
   phraseGroups, phraseText, phraseCustom, phraseSaveValue, phraseProblem, repoSlugFrom, autoMergeNext,
   cleanReminder, parseTimes, reminderSummary, REMINDER_DEFAULT,
   cleanCalendarAlert, alertMinutesNext, parseAlertMinutes, alertChoices, calendarAlertSummary, ALERT_DEFAULT,
@@ -245,4 +245,10 @@ test('일정 알림: 저장 본문 거르기 · 칩 켜고 끄기 · 직접 적�
   const js = readFileSync(new URL('../renderer/settings.js', import.meta.url), 'utf8');
   assert.match(js, /renderCalAlert\(\);/);
   assert.match(js, /calendarAlert: \{ minutesBefore \}/);
+});
+
+test('sanitizeAppPrefs: 로그인할 때 켜기·새 버전 알림만, 참/거짓만', () => {
+  assert.deepEqual(sanitizeAppPrefs({ openAtLogin: true }), { openAtLogin: true });
+  assert.deepEqual(sanitizeAppPrefs({ updateCheck: false, openAtLogin: false }), { updateCheck: false, openAtLogin: false });
+  for (const bad of [null, [], {}, { openAtLogin: 'yes' }, { other: true }, { openAtLogin: true, x: 1 }]) assert.equal(sanitizeAppPrefs(bad), null, JSON.stringify(bad));
 });

@@ -268,7 +268,7 @@ function fillEl(item, b) {
     n.textContent = b.note;
     meta.append(n);
   }
-  if (b.link) meta.append(button(linkLabel(b.link), 'link', () => cy.openLink(b.link)));
+  if (b.link) meta.append(button(b.linkLabel ?? linkLabel(b.link), 'link', () => cy.openLink(b.link)));
   if (b.open) meta.append(button(b.openLabel ?? '패널에서 보기', 'link', () => { cy.openItem(b.open.section, b.open.id ?? null); if (!isWaitingApproval(current(b.id) ?? b)) dismiss(b.id); }));
   else if (b.panelSection) meta.append(button('패널에서 보기', 'link', () => { cy.openPanel(b.panelSection); dismiss(b.id); }));
   // 추가질문 입력줄은 머지 말풍선에서만

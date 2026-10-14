@@ -36,6 +36,15 @@ KeepAlive라서 ⌘Q로 꺼도 launchd가 30초 뒤에 다시 띄웁니다. 완�
 
 `npm start`(개발 실행)도 Dock·Cmd+Tab에 뜨지만 이름은 "Electron"으로 나옵니다(Cmd+Tab 이름은 번들의 `CFBundleName`에서 오기 때문입니다). Dock 아이콘은 런타임에 `assets/icon.png`로 바꿔 줍니다.
 
+### 배포용 앱 (시사.app, dmg)
+
+```bash
+npm run dist         # → dist/시사-<버전>-<arch>.dmg  (데몬·캐릭터 그림까지 든 시사.app, ad-hoc 서명)
+npm run dist:x64     # 인텔 맥용
+```
+
+`npm run package`(터미널 설치용 cy.app)와 달리 데몬(`agent/`)과 그 의존성, 레포 `assets/`를 앱 안에 넣고, 앱이 켜질 때 데몬을 자식 프로세스로 띄웁니다. 자세한 내용은 [../docs/release.md](../docs/release.md)에 있습니다.
+
 ## 녹화용 데모
 
 목업 데이터(지어낸 프로젝트·사람·메시지, 링크는 example.*)로 캐릭터·말풍선·패널·작업 세션을 천천히 한 바퀴 보여 줍니다. 화면 녹화용입니다.
@@ -145,6 +154,6 @@ renderer/          index.html · style.css · renderer.js (오버레이)
                    panel.html · panel.css · panel.js (패널). 번들러 없음, CSP 적용
 renderer/vendor/   marked.js · purify.js: npm 패키지를 그대로 복사(`npm run vendor`), CDN 없음
 src/               순수 로직: sse, bubbles, geometry, dashboard(뷰모델·상대 시각), chat(리듀서), markdown
-scripts/           fake-daemon.mjs, make-assets.mjs, vendor.mjs, make-icon.mjs(앱 아이콘), package.mjs(cy.app)
+scripts/           fake-daemon.mjs, make-assets.mjs, vendor.mjs, make-icon.mjs(앱 아이콘), package.mjs(cy.app), dist.mjs(시사.app·dmg)
 test/              node --test
 ```

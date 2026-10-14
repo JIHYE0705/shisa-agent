@@ -74,3 +74,10 @@ test('cy-asset: 홈에 없으면 레포 assets/ 로, character.png 만 번들 �
   assert.deepEqual(assetCandidates('character.png', dirs), ['/h/.cy-agent/assets/character.png', '/r/assets/character.png', '/app/assets/character.png']);
   assert.deepEqual(assetCandidates('reactions/merge.jpg', { user: '/h/a/' }), ['/h/a/reactions/merge.jpg']);
 });
+
+test('assetCandidates: 앱 번들(dmg) 그림은 홈 다음, 플레이스홀더 앞', () => {
+  const dirs = { user: '/h/.cy-agent/assets', bundle: '/A/시사.app/Contents/Resources/assets', bundled: '/A/app.asar/assets' };
+  assert.deepEqual(assetCandidates('character/eyes_open.png', dirs), ['/h/.cy-agent/assets/character/eyes_open.png', '/A/시사.app/Contents/Resources/assets/character/eyes_open.png']);
+  assert.deepEqual(assetCandidates('character.png', dirs), ['/h/.cy-agent/assets/character.png', '/A/시사.app/Contents/Resources/assets/character.png', '/A/app.asar/assets/character.png']);
+  assert.deepEqual(assetCandidates('reactions/merge.jpg', { user: null, repo: null, bundle: '/R/assets' }), ['/R/assets/reactions/merge.jpg']);
+});

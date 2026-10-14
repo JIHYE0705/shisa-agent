@@ -260,3 +260,16 @@ export function toggleExclude(exclude, source, included) {
 export function metaText(row, now = new Date()) {
   return [latencyText(row?.latencyMs), row?.checkedAt ? `${agoText(row.checkedAt, now)} 확인` : ''].filter(Boolean).join(' · ');
 }
+
+// 설정 창 「이 앱」 칸(앱이 state.json 에 두는 값): { openAtLogin?: boolean, updateCheck?: boolean } — 그 밖의 키·모양이면 null
+export function sanitizeAppPrefs(p) {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+  const keys = Object.keys(p);
+  if (!keys.length || !keys.every((k) => k === 'openAtLogin' || k === 'updateCheck')) return null;
+  const out = {};
+  for (const k of keys) {
+    if (typeof p[k] !== 'boolean') return null;
+    out[k] = p[k];
+  }
+  return out;
+}

@@ -43,6 +43,8 @@ export function normalizeBubble(raw) {
     if (raw.actions === 'permission' && raw.always === true) b.always = true;
   }
   if (typeof raw.link === 'string' && isSafeLink(raw.link)) b.link = raw.link;
+  // 링크 버튼 이름을 정해 줄 때(새 버전 알림의 「받으러 가기」 등). 없으면 linkLabel(url)
+  if (b.link && typeof raw.linkLabel === 'string' && raw.linkLabel.trim()) b.linkLabel = raw.linkLabel.trim().slice(0, 20);
   if (b.open && typeof raw.openLabel === 'string' && raw.openLabel.trim()) b.openLabel = raw.openLabel.trim().slice(0, 20);
   // 사용법 둘러보기(tour.js) 장면: [다음]/[끝] · [그만 볼래요]
   const t = raw.tour;

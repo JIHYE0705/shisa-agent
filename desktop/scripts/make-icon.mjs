@@ -9,6 +9,9 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets');
+// 배포용(npm run dist): CY_ICON_OUT=<폴더> 면 그 폴더에 만들고, 개인 그림(~/.cy-agent/assets)은 보지 않고 레포 그림만 쓴다
+const OUT = process.env.CY_ICON_OUT || ASSETS;
+const REPO_ONLY = !!process.env.CY_ICON_OUT;
 const S = 1024; // 캔버스
 const BODY = 824; // 맥 아이콘 그리드: 1024 캔버스 안 824 둥근 사각형
 const RADIUS = 185;
@@ -118,11 +121,10 @@ function main() {
     const home = process.env.CY_AGENT_HOME ?? path.join(os.homedir(), '.cy-agent');
     const repoChar = path.join(ASSETS, '..', '..', 'assets', 'character');
     const picks = [
-      path.join(home, 'assets', 'character', 'eyes_open@2x.png'),
-      path.join(home, 'assets', 'character', 'eyes_open.png'),
+      ...(REPO_ONLY ? [] : [path.join(home, 'assets', 'character', 'eyes_open@2x.png'), path.join(home, 'assets', 'character', 'eyes_open.png')]),
       path.join(repoChar, 'eyes_open@2x.png'),
       path.join(repoChar, 'eyes_open.png'),
-      path.join(home, 'assets', 'character.png'),
+      ...(REPO_ONLY ? [] : [path.join(home, 'assets', 'character.png')]),
       path.join(ASSETS, 'character.png'),
     ];
     let src = picks.find((p) => fs.existsSync(p));
@@ -166,7 +168,7 @@ function main() {
         out[i] = Math.round(r); out[i + 1] = Math.round(g); out[i + 2] = Math.round(b); out[i + 3] = Math.round(a * 255);
       }
     }
-    const iconPng = path.join(ASSETS, 'icon.png');
+    const iconPng = path.join(OUT, 'icon.png');
     fs.writeFileSync(iconPng, encodePNG(S, S, out));
 
     // 3) iconset → icns
@@ -176,7 +178,7 @@ function main() {
       run('sips', ['-z', String(n), String(n), iconPng, '--out', path.join(set, `icon_${n}x${n}.png`)]);
       run('sips', ['-z', String(n * 2), String(n * 2), iconPng, '--out', path.join(set, `icon_${n}x${n}@2x.png`)]);
     }
-    run('iconutil', ['-c', 'icns', set, '-o', path.join(ASSETS, 'icon.icns')]);
+    run('iconutil', ['-c', 'icns', set, '-o', path.join(OUT, 'icon.icns')]);
     console.log('✓ assets/icon.png, assets/icon.icns');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
