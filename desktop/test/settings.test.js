@@ -217,19 +217,21 @@ test('이 맥에서 읽는 것: 작업 기록 읽기는 켜고 끄기만, 레포
 test('일정 알림: 저장 본문 거르기 · 칩 켜고 끄기 · 직접 적기 · 한 줄 요약, 설정 창에 칸이 있다', () => {
   assert.deepEqual(sanitizeSettingsPatch({ calendarAlert: { minutesBefore: [5, 15, 5] } }), { calendarAlert: { minutesBefore: [15, 5] } });
   assert.deepEqual(sanitizeSettingsPatch({ calendarAlert: { minutesBefore: [] } }), { calendarAlert: { minutesBefore: [] } });
-  for (const bad of [{ minutesBefore: [0] }, { minutesBefore: [121] }, { minutesBefore: [2.5] }, { minutesBefore: ['10'] }, { minutesBefore: [1, 2, 3, 4] }, { minutesBefore: 10 }, { off: true }, [10], null]) {
+  assert.deepEqual(sanitizeSettingsPatch({ calendarAlert: { minutesBefore: [1, 2, 3, 4, 1440] } }), { calendarAlert: { minutesBefore: [1440, 4, 3, 2, 1] } }, '개수·크기 상한 없음');
+  for (const bad of [{ minutesBefore: [0] }, { minutesBefore: [-5] }, { minutesBefore: [2.5] }, { minutesBefore: ['10'] }, { minutesBefore: 10 }, { off: true }, [10], null]) {
     assert.equal(sanitizeSettingsPatch({ calendarAlert: bad }), null, JSON.stringify(bad));
   }
   assert.deepEqual(cleanCalendarAlert(ALERT_DEFAULT), { minutesBefore: [10] });
   assert.deepEqual(alertMinutesNext([10], 5, true), { minutesBefore: [10, 5] });
   assert.deepEqual(alertMinutesNext([10, 5], 10, false), { minutesBefore: [5] });
   assert.deepEqual(alertMinutesNext([10], 10, false), { minutesBefore: [] }, '마지막 것을 끄면 알림 끔');
-  assert.match(alertMinutesNext([30, 15, 10], 5, true).error, /3개까지/);
+  assert.deepEqual(alertMinutesNext([30, 15, 10], 5, true), { minutesBefore: [30, 15, 10, 5] });
   assert.deepEqual(parseAlertMinutes(' 45 '), { mins: 45 });
   assert.deepEqual(parseAlertMinutes('20분 전'), { mins: 20 });
-  assert.match(parseAlertMinutes('0').error, /1~120/);
-  assert.match(parseAlertMinutes('열').error, /1~120/);
-  assert.match(parseAlertMinutes('200').error, /1~120/);
+  assert.deepEqual(parseAlertMinutes('1440'), { mins: 1440 });
+  assert.match(parseAlertMinutes('0').error, /1 이상/);
+  assert.match(parseAlertMinutes('열').error, /1 이상/);
+  assert.match(parseAlertMinutes('-3').error, /1 이상/);
   assert.deepEqual(alertChoices([10]), [5, 10, 15, 30]);
   assert.deepEqual(alertChoices([45, 3]), [3, 5, 10, 15, 30, 45]);
   assert.equal(calendarAlertSummary(ALERT_DEFAULT), '일정 10분 전에 춤추며 알려요.');

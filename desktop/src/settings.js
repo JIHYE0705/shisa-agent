@@ -83,34 +83,29 @@ export function sanitizeSettingsPatch(p) {
 }
 
 // ---- 일정 알림(GET /settings calendarAlert) ----
-// 데몬 agent/src/calendar-alert.ts 와 같은 규칙: 1~120분 정수, 세 개까지, 큰 것부터. [] = 알림 끔
+// 데몬 agent/src/calendar-alert.ts 와 같은 규칙: 양의 정수 분(몇 개든·얼마든), 큰 것부터. [] = 알림 끔
 export const ALERT_DEFAULT = { minutesBefore: [10] };
 export const ALERT_PRESETS = [5, 10, 15, 30];
-export const ALERT_MIN = 1;
-export const ALERT_MAX = 120;
-export const ALERT_MAX_COUNT = 3;
-const okAlertMin = (x) => typeof x === 'number' && Number.isInteger(x) && x >= ALERT_MIN && x <= ALERT_MAX;
+const okAlertMin = (x) => typeof x === 'number' && Number.isSafeInteger(x) && x > 0;
 const sortMins = (xs) => [...new Set(xs)].sort((a, b) => b - a);
 export function cleanCalendarAlert(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   if (Object.keys(v).some((k) => k !== 'minutesBefore')) return null;
   const xs = v.minutesBefore;
   if (!Array.isArray(xs) || !xs.every(okAlertMin)) return null;
-  const out = sortMins(xs);
-  return out.length > ALERT_MAX_COUNT ? null : { minutesBefore: out };
+  return { minutesBefore: sortMins(xs) };
 }
-// 칩을 켜고 끄기 → 새 목록. 세 개가 넘으면 { error }
+// 칩을 켜고 끄기 → 새 목록
 export function alertMinutesNext(list, mins, on) {
   const cur = Array.isArray(list) ? list.filter(okAlertMin) : [];
   const next = on ? sortMins([...cur, mins]) : cur.filter((x) => x !== mins);
-  if (next.length > ALERT_MAX_COUNT) return { error: `알림은 ${ALERT_MAX_COUNT}개까지 고를 수 있어요. 하나를 먼저 꺼 주세요` };
   return { minutesBefore: sortMins(next) };
 }
 // 직접 적은 분 → 숫자. 못 읽으면 { error }
 export function parseAlertMinutes(text) {
   const t = String(text ?? '').trim().replace(/\s*분(\s*전)?$/, '');
-  const n = /^\d{1,3}$/.test(t) ? Number(t) : NaN;
-  if (!okAlertMin(n)) return { error: `${ALERT_MIN}~${ALERT_MAX} 사이 숫자(분)로 적어 주세요` };
+  const n = /^\d+$/.test(t) ? Number(t) : NaN;
+  if (!okAlertMin(n)) return { error: '1 이상 숫자(분)로 적어 주세요. 예: 20, 하루 전은 1440' };
   return { mins: n };
 }
 // 칩으로 보일 분들: 기본 넷 + 지금 고른 것 중 그 밖의 것

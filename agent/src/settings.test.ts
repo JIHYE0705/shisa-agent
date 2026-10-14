@@ -263,6 +263,9 @@ test("Settings: 일정 알림: 기본 10분 전, 여러 번·끔, 파일·메모
   const changed: string[][] = [];
   const s = new Settings(cfg, { path: p, env: {}, onChange: (k) => changed.push(k) });
   assert.deepEqual(s.view().calendarAlert, { minutesBefore: [10] });
+  const big = s.put({ calendarAlert: { minutesBefore: [1, 2, 3, 4, 1440] } });
+  assert.equal(big.ok, true, "개수·크기 상한 없음(하루 전도)");
+  assert.deepEqual(cfg.calendarAlert, { minutesBefore: [1440, 4, 3, 2, 1] });
   const r = s.put({ calendarAlert: { minutesBefore: [5, 15, 5] } });
   assert.equal(r.ok, true);
   if (r.ok) assert.deepEqual(r.settings.calendarAlert, { minutesBefore: [15, 5] });
@@ -276,7 +279,7 @@ test("Settings: 일정 알림: 기본 10분 전, 여러 번·끔, 파일·메모
   assert.equal(s.put({ calendarAlert: { minutesBefore: [] } }).ok, true);
   assert.deepEqual(cfg.calendarAlert, { minutesBefore: [] });
   assert.deepEqual(cfgOf(JSON.parse(readFileSync(p, "utf8"))).calendarAlert, { minutesBefore: [] });
-  for (const bad of [{ minutesBefore: [0] }, { minutesBefore: [121] }, { minutesBefore: [2.5] }, { minutesBefore: ["10"] }, { minutesBefore: [1, 2, 3, 4] }, { minutes: [10] }, { minutesBefore: 10 }, [10], null]) {
+  for (const bad of [{ minutesBefore: [0] }, { minutesBefore: [-1] }, { minutesBefore: [2.5] }, { minutesBefore: ["10"] }, { minutes: [10] }, { minutesBefore: 10 }, [10], null]) {
     const e = s.put({ calendarAlert: bad });
     assert.equal(e.ok, false, JSON.stringify(bad));
     if (!e.ok) assert.equal(e.status, 400);
@@ -285,7 +288,7 @@ test("Settings: 일정 알림: 기본 10분 전, 여러 번·끔, 파일·메모
 });
 
 test("config: calendarAlert 읽기, 이상한 값은 빼고 모양이 틀리면 기본", () => {
-  assert.deepEqual(cfgOf({ calendarAlert: { minutesBefore: [30, "x", 0, 5, 5] } }).calendarAlert, { minutesBefore: [30, 5] });
+  assert.deepEqual(cfgOf({ calendarAlert: { minutesBefore: [30, "x", 0, 5, 5, 2880, 60, 1] } }).calendarAlert, { minutesBefore: [2880, 60, 30, 5, 1] });
   assert.deepEqual(cfgOf({ calendarAlert: "loud" }).calendarAlert, { minutesBefore: [10] });
   assert.deepEqual(cfgOf({ calendarAlert: { minutesBefore: [] } }).calendarAlert, { minutesBefore: [] });
 });

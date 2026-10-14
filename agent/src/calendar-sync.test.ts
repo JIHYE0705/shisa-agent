@@ -180,6 +180,9 @@ test("planAlerts: 여러 번([15, 5]), 끔([]), 설정을 바꿔도 이미 지�
   assert.deepEqual(fires(min(5), 10, [5]).fire.map((x) => x.mins), [5]);
   // 기본값은 10분 전
   assert.deepEqual(planAlerts([a], min(10), none).fire.map((x) => x.mins), [10]);
+  // 상한 없음: 하루 전(1440분)도
+  assert.deepEqual(fires(min(2000), undefined, [1440, 10]), { fire: [], nextAt: min(1440) });
+  assert.deepEqual(fires(min(1440), undefined, [1440, 10]).fire.map((x) => x.mins), [1440]);
 });
 
 function eventsOf(data: unknown): CalEvent[] {

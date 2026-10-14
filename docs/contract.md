@@ -82,7 +82,7 @@ type Bubble = {
   "repoRoots": ["/Users/me/code"],                        // 절대 경로만
   "readSessions": true,                                   // 작업 기록 읽기 켜고 끄기
   "onboarded": true,                                      // 설치 마법사를 마침(마법사가 보낸다)
-  "calendarAlert": { "minutesBefore": [15, 5] }           // 일정 몇 분 전(1~120 정수, 3개까지). [] = 알림 끔, 기본 [10]
+  "calendarAlert": { "minutesBefore": [15, 5] }           // 일정 몇 분 전(양의 정수, 개수·크기 상한 없음). [] = 알림 끔, 기본 [10]
 }
 ```
 

@@ -224,7 +224,7 @@ cd ~/shisa-agent && ./ops/uninstall.sh
 | `models.quick` / `.general` / `.code` / `.light` | `CY_AGENT_MODEL_QUICK` / `_GENERAL` / `_CODE` / `_LIGHT` | Sonnet / Sonnet / Opus / Haiku | 더블클릭 대화 / 브리핑·채팅 / 코드 고치기 / 가벼운 일 (Claude Code일 때) |
 | `autoMerge` |  | `[]` | 묻지 않고 머지까지 할 레포(`owner/name`). 설정 창이나 채팅으로 바꿀 수 있습니다 |
 | `briefing.exclude` |  | `[]` | 브리핑에서 뺄 출처(`mail`·`calendar`·`slack`·`issues`·`sessions`) |
-| `calendarAlert.minutesBefore` |  | `[10]` | 일정 몇 분 전에 알릴지(1~120분, 3개까지, 예: `[15, 5]`). `[]`이면 알림을 끕니다. 설정 창 「일정 알림」에서 고칩니다 |
+| `calendarAlert.minutesBefore` |  | `[10]` | 일정 몇 분 전에 알릴지(양의 정수 분, 몇 개든, 예: `[15, 5]`, 하루 전은 `[1440]`). `[]`이면 알림을 끕니다. 설정 창 「일정 알림」에서 고칩니다 |
 | `phrases` |  | 기본 문구 | 캐릭터가 하는 정해진 말. 설정 창 「문구」에서 고칩니다 |
 | `gitAuthor.name` / `.email` | `CY_AGENT_GIT_NAME` / `CY_AGENT_GIT_EMAIL` | `git config --global` | "내 커밋" 판정과 자동 수정 커밋의 작성자 |
 | `briefingIntervalMin` · `ingestIntervalMin` · `slackIngestIntervalMin` |  | 60 · 10 · 5 | 주기(분) |
