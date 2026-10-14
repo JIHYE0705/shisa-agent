@@ -26,12 +26,17 @@ else
   # 직접 고친 파일이 있으면 덮어쓰지 않고 멈춘다
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "✗ 이 폴더에 직접 고친 파일이 있어 멈춥니다:"; git status --short --untracked-files=no
-    echo "  고친 걸 버려도 되면: cd $DIR && git checkout -- . 후 다시 실행해 주세요."
+    echo "  고친 걸 버려도 되면: cd \"$DIR\" && git checkout -- . 후 다시 실행해 주세요."
     exit 1
   fi
   BEFORE=$(git rev-parse --short HEAD)
   echo "→ 최신 버전 받는 중…"
-  git pull -q --ff-only
+  git symbolic-ref -q HEAD >/dev/null || { echo "✗ 지금 브랜치 위에 있지 않습니다. cd \"$DIR\" && git checkout main 후 다시 실행해 주세요."; exit 1; }
+  if ! git pull -q --ff-only; then
+    echo "✗ 최신 버전을 받지 못했습니다. 인터넷 연결을 확인해 주세요."
+    echo "  이 폴더에서 직접 커밋을 만들었거나, 새 버전과 이름이 같은 파일을 직접 넣어 두었다면 그것 때문일 수 있습니다(위 영어 메시지 참고)."
+    exit 1
+  fi
   AFTER=$(git rev-parse --short HEAD)
   if [ "$BEFORE" = "$AFTER" ]; then echo "→ 이미 최신입니다($AFTER). 그래도 다시 설치하고 띄웁니다."
   else echo "→ $BEFORE → $AFTER 바뀐 것:"; git log --oneline "$BEFORE..$AFTER" | sed 's/^/   /'; fi

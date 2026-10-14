@@ -8,7 +8,11 @@ DRY=0
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 HOME_DIR="$HOME/.cy-agent"
 LA="$HOME/Library/LaunchAgents"
-NODE=$(command -v node)
+# Node.js 26 이상(데몬이 node:sqlite·TypeScript 바로 실행을 쓴다). 없거나 낮으면 안내하고 멈춘다
+NODE=$(command -v node || true)
+[ -n "$NODE" ] || { echo "✗ Node.js 가 없습니다. 터미널에 brew install node 를 입력해 설치한 뒤 다시 실행해 주세요."; exit 1; }
+NODE_MAJOR=$("$NODE" -p 'process.versions.node.split(".")[0]')
+[ "$NODE_MAJOR" -ge 26 ] || { echo "✗ Node.js $("$NODE" -v) 는 너무 낮습니다(26 이상 필요). brew upgrade node 로 올린 뒤 다시 실행해 주세요."; exit 1; }
 PATH_ENV="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 APPS="$HOME/Applications"
 APP="$APPS/cy.app"
@@ -44,11 +48,13 @@ register_jobs() {
 if [ "$DRY" = 1 ]; then register_jobs; exit 0; fi
 
 mkdir -p "$HOME_DIR/logs" "$LA" "$APPS"
+# 수집한 메시지·토큰이 들어 있으니 이 맥의 다른 계정은 못 열게
+chmod 700 "$HOME_DIR"
 
+# 설정 파일은 만들지 않는다: 처음 켜지면 데몬이 새 설치로 알아보고 설치 마법사를 연다(예시 파일은 ops/config.example.json 참고용)
 CONFIG="$HOME_DIR/config.json"
-[ -f "$CONFIG" ] || { cp "$ROOT/ops/config.example.json" "$CONFIG"; echo "→ $CONFIG 에 토큰·ICS 주소(connectors)를 채우고 다시 실행해줘 — docs/connect/"; }
 # 토큰·비공개 ICS 주소가 들어 있으니 나만 읽게(이미 있던 파일도 매번 맞춘다)
-chmod 600 "$CONFIG"
+[ -f "$CONFIG" ] && chmod 600 "$CONFIG"
 
 (cd "$ROOT/agent" && npm ci --silent)
 (cd "$ROOT/desktop" && npm ci --silent && node node_modules/electron/install.js >/dev/null)

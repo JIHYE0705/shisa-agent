@@ -126,6 +126,9 @@ cd ~/shisa-agent && ./ops/install.sh
 | `command not found: brew` | 1번 끝에 나온 Next steps 두 줄을 실행했는지 확인하고, 터미널을 껐다 다시 열어 보세요 |
 | `command not found: git` | 터미널에 `xcode-select --install`을 입력해 설치하거나, Download ZIP으로 받아 주세요(3단계) |
 | `node -v`가 26보다 낮게 나옴 | `brew upgrade node` |
+| `./ops/install.sh`가 「Node.js 가 없습니다」나 「너무 낮습니다」라며 멈춤 | 2단계로 돌아가 `brew install node` 또는 `brew upgrade node` |
+| `permission denied: ./ops/install.sh` | `sh ops/install.sh`로 실행해 주세요(ZIP으로 받으면 실행 권한이 빠질 수 있습니다) |
+| `./ops/update.sh`가 「최신 버전을 받지 못했습니다」라며 멈춤 | 인터넷 연결을 확인하고, 레포 폴더에 직접 만든 커밋이나 파일이 있으면 정리한 뒤 다시 실행해 주세요 |
 | 캐릭터가 안 보임 | `open ~/Applications/cy.app` |
 | 그래도 안 됨 | `tail -50 ~/.cy-agent/logs/*.log` 결과를 [의견 보내기](#의견-보내기)로 보내 주세요 |
 

@@ -22,5 +22,8 @@
     "dompurify": "3.4.16",
     "electron": "44.7.0",
     "marked": "18.0.14"
+  },
+  "engines": {
+    "node": ">=26"
   }
 }

@@ -49,6 +49,9 @@ try {
   if (markFreshInstall(join(HOME_DIR, "config.json"), process.env, existsSync(process.env.CY_AGENT_DB ?? join(HOME_DIR, "cy.db"))))
     console.log("[onboarding] 새 설치: 설치 마법사를 마칠 때까지 작업 기록·레포를 읽지 않고 모델도 부르지 않아요");
 } catch (e: any) { console.warn("[onboarding] 설정 파일에 표시하지 못했어요:", e?.message ?? e); }
+// 놓친 거부(예: 틀린 Slack 토큰으로 라이브러리가 뒤에서 던진 오류)로 늘 켜져 있어야 할 데몬이 죽지 않게: 경고만 남긴다
+process.on("unhandledRejection", (e: any) => console.warn("[cy-agent] 처리 안 된 오류:", e?.data?.error ?? e?.message ?? e));
+
 const cfg = loadConfig();
 if (!modelWorkAllowed(cfg)) console.log("[onboarding] 설치 마법사를 마치기 전: 브리핑·정리 작업은 쉬어요");
 console.log(`[onboarding] 작업 기록(Claude Code·Codex) 읽기: ${sessionsAllowed(cfg) ? "켬" : "끔"} · 레포 폴더 ${cfg.repoRoots.length}개`);
@@ -79,7 +82,7 @@ const cliSync = new CliSync({ runs, db: store.db, store, onThread: (id) => bus.t
 // 대화 속 서브에이전트·작업 세션 카드: 바뀌면 ≈1초 모아 SSE agents {threadId} → 패널이 다시 가져온다
 new AgentsNotifier(runs, (threadId) => bus.agents(threadId));
 let agent!: Agent;
-const slack = createSlack(cfg, () => agent);
+let slack = createSlack(cfg, () => agent);
 // 채팅 슬래시 명령 목록: 처음 물을 때 SDK 에서(모델 턴 없이), 10분마다 새로
 const commands = new SlashCommands(() => loadCommands());
 agent = new Agent(cfg, store, bus, slack?.port, { retitle: suggestTitle, commands, mergePr,
@@ -257,16 +260,23 @@ console.log(`[cy-agent] 버스 http://127.0.0.1:${cfg.port}`);
 const canvas = new TodoCanvas(store, { userId: cfg.slackUserId });
 let dm: Promise<string> | undefined;
 const syncCanvas = () => {
-  if (!slack) return;
-  dm ??= openDm(slack.app.client, cfg.slackUserId!).catch((e) => { dm = undefined; throw e; });
-  dm.then((ch) => canvas.sync(slack.app.client, ch)).catch((e) => console.warn("[canvas]", e?.data?.error ?? e?.message ?? e));
+  const s = slack;
+  if (!s) return;
+  dm ??= openDm(s.app.client, cfg.slackUserId!).catch((e) => { dm = undefined; throw e; });
+  dm.then((ch) => canvas.sync(s.app.client, ch)).catch((e) => console.warn("[canvas]", e?.data?.error ?? e?.message ?? e));
 };
 agent.onChange(syncCanvas);
 
 if (slack) {
-  await slack.app.start();
-  console.log("[cy-agent] Slack Socket Mode 연결");
-  syncCanvas();
+  // 토큰이 틀려도 데몬 전체가 죽지 않게: 경고만 남기고 말풍선으로 계속
+  try {
+    await slack.app.start();
+    console.log("[cy-agent] Slack Socket Mode 연결");
+    syncCanvas();
+  } catch (e: any) {
+    console.warn(`[cy-agent] Slack 연결 실패(${e?.data?.error ?? e?.message ?? e}) — 토큰을 확인해 주세요. 말풍선만 사용`);
+    slack = undefined;
+  }
 } else {
   console.log("[cy-agent] Slack 토큰 없음 — 말풍선만 사용 (~/.cy-agent/config.json 참고)");
 }
