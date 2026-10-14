@@ -25,6 +25,8 @@
   --add-bg: rgba(48, 177, 88, 0.15);
   --pop: #ffffff;
   --pop-shadow: 0 10px 30px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  --grass: #2da44e;       /* 집중 기록 잔디(진할수록 오래 집중) */
+  --grass-0: rgba(0, 0, 0, 0.06);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -46,6 +48,8 @@
     --add-bg: rgba(48, 209, 88, 0.17);
     --pop: #2a2a2d;
     --pop-shadow: 0 12px 34px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    --grass: #39d353;
+    --grass-0: rgba(255, 255, 255, 0.07);
   }
 }
 
@@ -1370,3 +1374,78 @@ body.has-undo #sec-todos, body.has-undo #sec-today { padding-bottom: 64px; }
 .setup-summary .sum-mark { color: var(--faint); font-weight: 700; }
 .setup-summary li.ok .sum-mark { color: var(--ok); }
 .setup-summary .sum-label { font-weight: 650; }
+
+/* ---- 집중하기(focus-view.js): [집중하기] 줄 · 「오늘 집중」 · 주·월 기록(잔디) ---- */
+.focus-bar { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+#sec-today .today-head .focus-bar { align-self: center; }
+button.focus-start { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 12px; font-weight: 600;
+  background: color-mix(in srgb, var(--grass) 16%, transparent); color: color-mix(in srgb, var(--grass) 80%, var(--fg)); }
+button.focus-start:hover:not(:disabled) { background: color-mix(in srgb, var(--grass) 24%, transparent); filter: none; }
+.focus-ico { font-size: 9px; }
+.focus-live { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px;
+  background: color-mix(in srgb, var(--grass) 14%, transparent); color: var(--fg); }
+.focus-live b { font-variant-numeric: tabular-nums; font-weight: 650; }
+.focus-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--grass); animation: focus-dot 2s ease-in-out infinite; }
+.focus-live.paused { background: color-mix(in srgb, var(--p2) 14%, transparent); }
+.focus-live.paused .focus-dot { background: var(--p2); animation: none; }
+.focus-live.paused b { color: var(--muted); }
+@keyframes focus-dot { 50% { opacity: 0.35; } }
+.focus-err { color: var(--err); }
+
+.focus-foot { margin-top: 22px; }
+button.focus-today { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 14px; border-radius: 10px; text-align: left;
+  background: var(--card); border: 1px solid var(--line); }
+button.focus-today:hover { background: color-mix(in srgb, var(--grass) 8%, var(--card)); filter: none; }
+.focus-today-label { color: var(--muted); }
+button.focus-today b { font-variant-numeric: tabular-nums; }
+.focus-more { margin-left: auto; color: var(--faint); font-size: 11.5px; }
+.focus-more::after { content: " ›"; }
+button.focus-today[aria-expanded="true"] .focus-more::after { content: " ⌄"; }
+
+.focus-stats { margin-top: 8px; }
+.focus-stats-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.focus-tabs { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--code); }
+button.focus-tab { padding: 3px 14px; font-size: 12px; background: none; color: var(--muted); border-radius: 6px; }
+button.focus-tab.on { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.focus-nav { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.focus-range { min-width: 120px; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
+.focus-sum { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 12px; font-size: 12.5px; }
+.focus-empty { padding: 20px 0; text-align: center; }
+
+/* 잔디 단계: 0 = 빈 칸, 1~4 = 점점 진하게 */
+.lv-0 { background: var(--grass-0); }
+.lv-1 { background: color-mix(in srgb, var(--grass) 30%, var(--grass-0)); }
+.lv-2 { background: color-mix(in srgb, var(--grass) 55%, var(--grass-0)); }
+.lv-3 { background: color-mix(in srgb, var(--grass) 78%, var(--grass-0)); }
+.lv-4 { background: var(--grass); }
+
+/* 주: 요일별 막대 */
+.focus-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+.fw-col { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; cursor: default; }
+.fw-time { height: 16px; font-size: 11px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fw-track { position: relative; width: 100%; max-width: 36px; height: 110px; border-radius: 6px; background: var(--grass-0); overflow: hidden; }
+.fw-bar { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 6px; min-height: 0; transition: height 0.25s ease; }
+.fw-bar.lv-0 { display: none; }
+.fw-bar:not(.lv-0) { min-height: 4px; }
+.fw-day { display: flex; flex-direction: column; align-items: center; line-height: 1.25; font-size: 11.5px; color: var(--muted); }
+.fw-day b { font-weight: 600; color: var(--fg); }
+.fw-col.today .fw-day b, .fw-col.today .fw-day span { color: var(--grass); }
+.fw-col.today .fw-track { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--grass) 60%, transparent); }
+.fw-col.future { opacity: 0.45; }
+
+/* 월: 달력 잔디 */
+.focus-month { display: flex; flex-direction: column; gap: 5px; max-width: 420px; }
+.fm-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.fm-head span { text-align: center; font-size: 11px; color: var(--muted); }
+.fm-cell { position: relative; aspect-ratio: 1; border-radius: 6px; display: flex; align-items: flex-start; justify-content: flex-end; padding: 3px 5px; cursor: default; }
+.fm-cell.blank { background: none; }
+.fm-num { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fm-cell.lv-3 .fm-num, .fm-cell.lv-4 .fm-num { color: #fff; }
+@media (prefers-color-scheme: dark) { .fm-cell.lv-4 .fm-num { color: rgba(0, 0, 0, 0.7); } }
+.fm-cell.today { box-shadow: 0 0 0 1.5px var(--fg); }
+.fm-cell.future { opacity: 0.4; }
+.fm-cell:not(.blank):hover { outline: 1.5px solid color-mix(in srgb, var(--fg) 40%, transparent); outline-offset: 1px; }
+
+.focus-legend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 12px; }
+.fl-sw { width: 11px; height: 11px; border-radius: 3px; }
+@media (prefers-reduced-motion: reduce) { .focus-dot { animation: none; } .fw-bar { transition: none; } }

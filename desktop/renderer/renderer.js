@@ -9,6 +9,7 @@ import { createMarkdown } from '../src/markdown.js';
 import { initialChat, chatReducer, isBusy, summarizeReply, stopTargets, busyCaption } from '../src/chat.js';
 import { createAttachTray } from './attach-tray.js';
 import { hasFiles, filesFromTransfer, ATTACH_ERRORS } from '../src/attachments.js';
+import { normFocus, focusBubble } from '../src/focus.js';
 import { CHAR_DIR, STILL_SRCS, VIDEOS, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf } from '../src/character.js';
 
 const cy = window.cy;
@@ -522,12 +523,63 @@ cy.onState((p) => { setMood(p?.mood); dispatchActivity({ type: 'state', activity
 cy.onConnection(({ connected }) => {
   wrap.classList.toggle('sleepy', !connected);
   dispatchActivity({ type: 'connection', connected: !!connected });
+  if (connected) loadFocus();
+  else setFocus(null); // 끊기면 집중 말풍선도 걷는다(다시 붙으면 데몬 상태로)
   if (!connected) {
     setMood('idle');
     chat = { ...chat, pending: {} }; // 끊기면 진행 중 표시 정리
     syncChat();
   }
 });
+
+// ---- 집중하기: 캐릭터 위 말풍선(경과 시간 1초마다) · 일시정지/다시 시작 · 그만하기. 상태는 데몬(SSE focus) ----
+const focusEl = document.getElementById('focus');
+const focusLabel = document.getElementById('focus-label');
+const focusTime = document.getElementById('focus-time');
+const focusToggle = document.getElementById('focus-toggle');
+const focusStopBtn = document.getElementById('focus-stop');
+let focus = null;
+let focusTick = null;
+let focusBusy = false;
+function drawFocus() {
+  const v = focusBubble(focus);
+  const was = !focusEl.hidden;
+  focusEl.hidden = !v;
+  if (v) {
+    focusEl.classList.toggle('paused', v.paused);
+    focusLabel.textContent = v.label;
+    focusTime.textContent = v.time;
+    focusToggle.textContent = v.toggle.label;
+    focusToggle.dataset.cmd = v.toggle.cmd;
+    focusToggle.disabled = focusStopBtn.disabled = focusBusy;
+  }
+  if (was !== !!v) requestAnimationFrame(recheckHit);
+}
+function setFocus(raw) {
+  focus = raw ? normFocus(raw) : null;
+  dispatchActivity({ type: 'focus', active: !!focus?.active, paused: !!focus?.active?.paused });
+  clearInterval(focusTick);
+  focusTick = focus?.active && !focus.active.paused ? setInterval(drawFocus, 1000) : null;
+  drawFocus();
+}
+async function focusCmd(cmd) {
+  if (focusBusy || !cy.focusCmd) return;
+  focusBusy = true;
+  drawFocus();
+  let r;
+  try { r = await cy.focusCmd(cmd); } catch { r = { ok: false }; }
+  focusBusy = false;
+  if (r?.ok && r.data) setFocus(r.data); // SSE focus 도 곧 온다(같은 모양)
+  else drawFocus();
+}
+async function loadFocus() {
+  const r = await cy.focusGet?.().catch(() => null);
+  if (r?.ok && r.data) setFocus(r.data);
+}
+focusToggle.addEventListener('click', (e) => { e.stopPropagation(); focusCmd(focusToggle.dataset.cmd === 'resume' ? 'resume' : 'pause'); });
+focusStopBtn.addEventListener('click', (e) => { e.stopPropagation(); focusCmd('stop'); });
+cy.onFocus?.((p) => setFocus(p));
+loadFocus();
 
 // ---- 채팅: 생각 중 표시 + 내 질문의 답은 말풍선 ----
 const caption = document.getElementById('caption');

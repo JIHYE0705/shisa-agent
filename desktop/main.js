@@ -34,6 +34,7 @@ import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, w
 import { personaFor } from './src/persona.js';
 import { normStatus, brainView, sameView } from './src/brain-state.js';
 import { isAskId } from './src/quick-ask.js';
+import { isFocusCmd, DAY_RE } from './src/focus.js';
 import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
 import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
@@ -279,6 +280,8 @@ let debugWin = null;
 let lastDebug = { text: '', qr: '', fileName: '', speech: '' };
 let sessionPick = null; // 창 로드 전에 요청된 run
 let lastState = null;
+let lastFocus = null; // 마지막 SSE focus(집중하기) — 앱을 끌 때 집중 중이면 그만하고 끈다
+let focusStopped = false;
 let activeRuns = [];
 let state = { bubblesHidden: false };
 let connected = false;
@@ -459,7 +462,7 @@ let winLoaded = false;
 const early = [];
 function send(channel, payload) {
   if (!win || win.isDestroyed()) return;
-  if (!winLoaded && (channel === 'bubble' || channel === 'state' || channel === 'clear')) { early.push([channel, payload]); if (early.length > 50) early.shift(); return; }
+  if (!winLoaded && (channel === 'bubble' || channel === 'state' || channel === 'clear' || channel === 'focus')) { early.push([channel, payload]); if (early.length > 50) early.shift(); return; }
   win.webContents.send(channel, payload);
 }
 
@@ -726,6 +729,11 @@ function onSSE({ event, data }) {
     sendPanel('action', payload);
   }
   else if (event === 'dashboard') sendPanel('dashboard', {});
+  else if (event === 'focus') {
+    lastFocus = payload;
+    send('focus', payload);
+    sendPanel('focus', payload);
+  }
   else if (event === 'open_panel') showPanel(normalizeSection(payload?.section));
   else if (event === 'status') { lastStatus = normStatus(payload?.status); pushBrain(); }
 }
@@ -1202,6 +1210,11 @@ function setupIPC() {
     if (!r.ok) console.warn('[local-ask] 실패:', id, r.status ?? '', r.error ?? r.data?.error ?? ''); // 칩 답이 「못 가져왔어요」 일 때 까닭
     return r;
   });
+  // 집중하기(포커스 타이머): 상태 · 시작/일시정지/다시 시작/그만 · 날마다 집중한 시간(from~to, 로컬 YYYY-MM-DD). AI 없이도 된다
+  ipcMain.handle('focus-get', (e) => (fromOurs(e) ? request('GET', '/focus') : denied()));
+  ipcMain.handle('focus-cmd', (e, cmd) => (fromOurs(e) && isFocusCmd(cmd) ? post(`/focus/${cmd}`) : denied()));
+  ipcMain.handle('focus-stats', (e, from, to) => (fromOurs(e) && DAY_RE.test(String(from)) && DAY_RE.test(String(to))
+    ? request('GET', `/focus/stats?from=${from}&to=${to}`) : denied()));
   // 사용법 둘러보기: 캐릭터 말풍선 [다음]/[그만] · 패널(설치 끝 화면) · 설정 창
   ipcMain.on('tour', (e, cmd) => {
     if (e.sender !== win?.webContents) return;
@@ -1652,7 +1665,14 @@ if (!app.requestSingleInstanceLock()) {
     });
   });
 
-  app.on('before-quit', () => {
+  app.on('before-quit', (e) => {
+    // 집중 중에 앱을 끄면 그때까지를 기록하고 끝낸다(데몬만 남아 혼자 세지 않게). 잠깐만 기다린다
+    if (lastFocus?.active && connected && !focusStopped) {
+      focusStopped = true;
+      e.preventDefault();
+      post('/focus/stop', {}, 1500).finally(() => app.quit());
+      return;
+    }
     quitting = true;
     currentAbort?.abort();
     globalShortcut.unregisterAll();

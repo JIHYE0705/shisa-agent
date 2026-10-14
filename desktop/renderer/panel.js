@@ -7,6 +7,7 @@ import { needsSetup, stepForCap } from '../src/setup.js';
 import { isFeature, isAgent, buildWalk, agentSteps } from '../src/setup-flow.js';
 import { renderSetup, clearApiDraft, readSlot } from './setup-view.js';
 import { mountModels } from './models-view.js';
+import { createFocusView } from './focus-view.js';
 import { connectorAction, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
 import { CANNED, cannedReply, connectSteps, hubItem, slotOk, EXTRAS } from '../src/ai-onboard.js';
 import { SETUP_FLOW_VERSION, isSetupPhase, phaseAfterBrain, backPhase, restorePhase, agentFrom, NO_AI } from '../src/setup-plan.js';
@@ -76,6 +77,9 @@ function h(sel, props, ...kids) {
   for (const c of kids.flat()) if (c != null && c !== false) el.append(c);
   return el;
 }
+// 집중하기: 할 일 목록의 [집중하기] · 맨 아래 「오늘 집중」 · 주·월 기록(focus-view.js)
+const focusView = createFocusView({ h, cy });
+
 // replaceChildren 에 null 을 넣으면 화면에 "null" 글자가 찍힌다
 function fill(el, ...kids) {
   el.replaceChildren(...kids.flat().filter((c) => c != null && c !== false));
@@ -1270,6 +1274,7 @@ function todoListKids() {
   }
   const trash = trashGroup(); // 휴지통이 비면 null — replaceChildren 에 넘기면 "null" 글자가 찍힌다
   if (trash) kids.push(trash);
+  kids.push(focusView.foot('todos')); // 오늘 집중 N → 누르면 주·월 기록
   return kids;
 }
 
@@ -1281,7 +1286,8 @@ function todayListKids() {
   const kids = [
     h('div.today-head', null,
       h('h2', { text: t.date ? `${t.date} 오늘 할 일` : '오늘 할 일' }),
-      h('span.muted', { text: total ? `남은 ${open} · 전체 ${total}` : '아직 없어요. 일정을 보고 적어 보세요.' })),
+      h('span.muted', { text: total ? `남은 ${open} · 전체 ${total}` : '아직 없어요. 일정을 보고 적어 보세요.' }),
+      focusView.bar('today')),
     addForm('today'),
   ];
   if (todoMsg) kids.push(h(`div.result.${todoMsg.ok ? 'ok' : 'err'}`, { role: 'status', text: todoMsg.text }));
@@ -1293,6 +1299,7 @@ function todayListKids() {
       h('div.card.todos', null, vm.todayDone.map(doneRow))));
   }
   if (!total) kids.push(h('div.muted.small', { text: '할 일 탭에서 줄의 「오늘」을 눌러 골라도 돼요.' }));
+  kids.push(focusView.foot('today'));
   return kids;
 }
 
@@ -1336,7 +1343,7 @@ function rulesBar() {
     title: '할 일 규칙',
     onclick: () => { rulesOpen = !rulesOpen; renderTodos(); },
   });
-  const bar = h('div.todo-tools', null, chip, vm.stats.backlogTodos ? h('span.muted.small', { text: `백로그 ${vm.stats.backlogTodos}개` }) : null);
+  const bar = h('div.todo-tools', null, chip, vm.stats.backlogTodos ? h('span.muted.small', { text: `백로그 ${vm.stats.backlogTodos}개` }) : null, focusView.bar('todos'));
   if (!rulesOpen) return bar;
   const list = rules.length
     ? rules.map((r) => h(`div.rule-row${r.enabled ? '' : '.off'}`, { dataset: { id: r.id } },
@@ -3181,7 +3188,7 @@ cy.onConnection(({ connected: c }) => {
   el.textContent = connected ? '시사 켜짐' : '시사 꺼짐';
   el.title = connected ? '시사 켜짐' : '시사 꺼짐';
   el.classList.toggle('off', !connected);
-  if (connected && !was) { load(); loadThreads(); loadPermissions(); loadChatModels(); loadAgents(); loadQueue(); }
+  if (connected && !was) { load(); focusView.load(); loadThreads(); loadPermissions(); loadChatModels(); loadAgents(); loadQueue(); }
   if (!connected) { chat = { ...chat, pending: {} }; renderChat(); renderThreadList(); renderBadges(); }
 });
 

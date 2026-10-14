@@ -41,6 +41,7 @@ import { statusOf } from "./status.ts";
 import { featureBrain, NEEDS_CLAUDE_MCP, NEEDS_CODER, withMcpBrain } from "./feature-brain.ts";
 import { mergePr } from "./fixer.ts";
 import { askBtw } from "./btw.ts";
+import { Focus, focusApi, focusDoneText } from "./focus.ts";
 
 installFileLog();
 // 새 설치면 config.json 에 "onboarded": false 를 남긴다: 설치 마법사를 마칠 때까지 아무것도 읽지 않고 모델도 부르지 않는다(onboarding.ts)
@@ -65,6 +66,11 @@ const store = new Store(cfg.dbPath);
 runs.attach(store.db); // 작업 세션 기록(세션 창)을 cy.db 에
 const bus = new Bus();
 bus.activity.bindRuns(runs); // 돌고 있는 run(대화 제외) → 캐릭터 "공부 중"
+// 집중하기(포커스 타이머): 기록은 cy.db, 바뀌면 SSE focus · 그만하면 「N분 집중했어요」 말풍선. AI 없이도 돈다
+const focus = new Focus(store);
+focus.onChange = (v) => bus.focusChanged(v);
+focus.onStop = (sec) => { if (sec > 0) bus.bubble({ id: "focus:done", text: focusDoneText(sec), kind: "done", ttlMs: 8000 }); };
+focus.startTimer();
 // 일정 알림(설정 calendarAlert, 기본 10분 전): 오늘·내일 일정(커넥터 calendar: ICS·MCP, 읽기 전용). 30분마다·깨어날 때 다시 가져온다
 const calendar = new CalendarSync(cfg, store, { wrapRun: (fn) => withRun({ kind: "calendar", title: "캘린더 동기화", model: cfg.models.light }, fn) });
 calendar.onChange = () => bus.dashboardChanged();
@@ -226,6 +232,7 @@ await bus.listen(cfg.port, {
     calendar: () => ({ enabled: calendar.enabled, meetings: calendar.enabled ? calendar.upcoming() : [] }),
   }),
   guidelines: agent.guidelinesApi(),
+  focus: focusApi(focus),
   connections: { ids: CHECK_IDS, list: () => connections.list(), recheck: async (id) => { const r = await connections.recheck(id as CheckId | undefined); bus.statusChanged(status()); return r; } },
   status: () => {
     if (connections.claudeLoggedIn() === undefined) void probeClaude(); // 코드 기능(Claude Code)도 이걸로 가른다
@@ -423,6 +430,7 @@ function onboardedNow() {
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, async () => {
   stopCalendar();
+  try { focus.checkpoint(); } catch { /* 꺼지는 중 */ }
   await canvas.flush().catch(() => {});
   bus.close();
   process.exit(0);

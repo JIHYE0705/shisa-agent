@@ -2,6 +2,7 @@
 // 정지 그림: 눈 뜬 그림이 기본, 랜덤 간격으로 잠깐 눈 감은 그림(가끔 두 번 깜빡).
 // 활동: 데몬 state { activity, runs, danceId } → 보여줄 것 'idle'(정지 그림) | 'studying'(공부 영상) | 'dancing'(춤 영상).
 // 우선순위 dancing > studying > idle. 춤이 끝나면(데몬이 알리거나 로컬 상한) 그 전 상태로 돌아간다.
+// 집중하기(focus.js): 집중 중이면 공부 영상, 일시정지면 기본 그림(데몬이 다른 일로 공부 중이면 그대로 공부 영상).
 
 export const CHAR_DIR = 'cy-asset://app/character';
 // 정지 그림 대체 순서: 눈 뜬 그림 → 예전 개인 그림 → 번들 그림 → 번들 svg
@@ -44,6 +45,7 @@ export function initialActivity() {
 }
 
 // action: { type:'state', activity, runs, danceId } | { type:'danceEnd' } | { type:'connection', connected } | { type:'localDance', on }
+//       | { type:'focus', active, paused }
 export function activityReducer(s, a) {
   switch (a?.type) {
     case 'state': {
@@ -64,6 +66,8 @@ export function activityReducer(s, a) {
     // 앱이 스스로 추는 짧은 춤(뇌 연결 전 더블클릭 등) — 데몬과 끊겨 있어도 춘다
     case 'localDance':
       return { ...s, localDance: !!a.on };
+    case 'focus':
+      return { ...s, focus: a.active ? (a.paused ? 'paused' : 'on') : null };
     case 'connection':
       return a.connected ? { ...s, connected: true } : { ...initialActivity(), connected: false, endedDance: s.endedDance };
     default:
@@ -74,5 +78,5 @@ export function activityReducer(s, a) {
 export function viewOf(s) {
   if (s.localDance) return 'dancing';
   if (!s.connected) return 'idle';
-  return s.dancing ? 'dancing' : s.studying ? 'studying' : 'idle';
+  return s.dancing ? 'dancing' : s.studying || s.focus === 'on' ? 'studying' : 'idle';
 }

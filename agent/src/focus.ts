@@ -1,0 +1,245 @@
+// 집중하기(포커스 타이머): 할 일 목록의 [집중하기] → 캐릭터가 공부 영상, 말풍선에 경과 시간 · 일시정지 · 그만하기.
+// 기록은 cy.db 에 세션(focus_sessions)과 실제로 집중한 구간(focus_spans)으로 남긴다. 일시정지 = 구간 끝, 다시 시작 = 새 구간.
+// 그래서 일시정지 시간은 빠지고, 자정을 넘긴 구간도 날마다 나눠 셀 수 있다. 날짜는 이 맥의 로컬 시간 기준 하루.
+// 돌고 있는 구간은 주기적으로(checkpoint) 끝 시각을 저장한다. 데몬이 꺼졌다 켜지면 마지막 저장 시각까지는 남기고,
+// 금방 다시 켜진 거면(재시작) 같은 세션을 이어 간다. 오래 꺼져 있었으면 마지막 저장 시각에 끝낸다.
+// AI(뇌) 연결과 무관한 로컬 기능이다.
+import { randomUUID } from "node:crypto";
+import type { Store } from "./store.ts";
+
+export const FOCUS_CMDS = ["start", "pause", "resume", "stop"] as const;
+export type FocusCmd = (typeof FOCUS_CMDS)[number];
+export const CHECKPOINT_MS = 30e3; // 돌고 있는 구간 끝 시각을 이만큼마다 저장
+export const RESUME_GAP_MS = 3 * 60e3; // 데몬이 이 안에 다시 켜지면 같은 세션을 이어 간다(재시작)
+
+// 지금 집중 중인 세션. base = 끝난 구간들 합(초 아님, ms) · since = 지금 구간 시작(일시정지면 null)
+export type FocusActive = { id: string; startedAt: number; paused: boolean; baseMs: number; since: number | null; seconds: number };
+export type FocusView = { active: FocusActive | null; day: string; today: number; now: number };
+export type FocusDay = { date: string; seconds: number };
+
+// ---- 로컬 날짜 ----
+const pad = (n: number) => String(n).padStart(2, "0");
+export function localDay(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+export const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+// 그날 0시(로컬). 잘못된 날짜면 NaN
+export function dayStart(day: string): number {
+  if (!DAY_RE.test(day)) return NaN;
+  const [y, m, d] = day.split("-").map(Number);
+  const t = new Date(y, m - 1, d);
+  return t.getFullYear() === y && t.getMonth() === m - 1 && t.getDate() === d ? t.getTime() : NaN;
+}
+// 다음 날 0시(서머타임이 있어도 하루가 24시간이 아닐 수 있으니 날짜로 더한다)
+export function nextDayStart(ms: number): number {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+}
+
+// 구간들 [start, end) 을 날마다 나눠 더한다 → { 날짜: ms }
+export function splitByDay(spans: { start: number; end: number }[], from = -Infinity, to = Infinity): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const s of spans) {
+    let a = Math.max(s.start, from);
+    const b = Math.min(s.end, to);
+    while (a < b) {
+      const cut = Math.min(b, nextDayStart(a));
+      const k = localDay(a);
+      out.set(k, (out.get(k) ?? 0) + (cut - a));
+      a = cut;
+    }
+  }
+  return out;
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS focus_sessions (id TEXT PRIMARY KEY, started INTEGER NOT NULL, ended INTEGER, seconds INTEGER NOT NULL DEFAULT 0,
+  paused INTEGER NOT NULL DEFAULT 0, seen INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS focus_spans (n INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL,
+  open INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS focus_spans_end ON focus_spans(end);
+CREATE INDEX IF NOT EXISTS focus_spans_session ON focus_spans(session_id);
+`;
+
+type Deps = { now?: () => number };
+
+export class Focus {
+  private store: Store;
+  private now: () => number;
+  private timer?: ReturnType<typeof setInterval>;
+  onChange?: (v: FocusView) => void; // 시작·일시정지·다시 시작·그만 → SSE focus
+  onStop?: (seconds: number) => void; // 그만했을 때 집중한 초(마무리 말풍선)
+
+  constructor(store: Store, deps: Deps = {}) {
+    this.store = store;
+    this.now = deps.now ?? Date.now;
+    store.db.exec(SCHEMA);
+    this.recover();
+  }
+
+  // ---- 저장소 ----
+  private current(): { id: string; started: number; paused: number; seen: number } | undefined {
+    return this.store.db.prepare("SELECT id, started, paused, seen FROM focus_sessions WHERE ended IS NULL ORDER BY started DESC LIMIT 1").get() as any;
+  }
+  private openSpan(id: string): { n: number; start: number; end: number } | undefined {
+    return this.store.db.prepare("SELECT n, start, end FROM focus_spans WHERE session_id = ? AND open = 1 ORDER BY n DESC LIMIT 1").get(id) as any;
+  }
+  private closedMs(id: string): number {
+    const r = this.store.db.prepare("SELECT COALESCE(SUM(end - start), 0) AS ms FROM focus_spans WHERE session_id = ? AND open = 0").get(id) as any;
+    return Number(r?.ms ?? 0);
+  }
+  private sessionMs(id: string, at: number): number {
+    const open = this.openSpan(id);
+    return this.closedMs(id) + (open ? Math.max(0, at - open.start) : 0);
+  }
+  // 세션 끝내기: 열린 구간을 end 에 닫고 초를 적는다. 0초면 지운다(잘못 누른 것)
+  private finish(id: string, end: number): number {
+    const db = this.store.db;
+    db.prepare("UPDATE focus_spans SET end = MAX(start, ?), open = 0 WHERE session_id = ? AND open = 1").run(end, id);
+    const sec = Math.round(this.closedMs(id) / 1000);
+    if (sec <= 0) {
+      db.prepare("DELETE FROM focus_spans WHERE session_id = ?").run(id);
+      db.prepare("DELETE FROM focus_sessions WHERE id = ?").run(id);
+      return 0;
+    }
+    db.prepare("UPDATE focus_sessions SET ended = ?, seconds = ?, paused = 0, seen = ? WHERE id = ?").run(end, sec, end, id);
+    return sec;
+  }
+
+  // 켜질 때: 끝나지 않은 세션 정리. 맨 마지막 것은 금방 다시 켜졌으면 이어 가고, 아니면 마지막 저장 시각에 끝낸다
+  recover() {
+    const now = this.now();
+    const rows = this.store.db.prepare("SELECT id, paused, seen FROM focus_sessions WHERE ended IS NULL ORDER BY started DESC").all() as any[];
+    rows.forEach((r, i) => {
+      const seen = Number(r.seen);
+      if (i > 0 || now - seen > RESUME_GAP_MS) { this.finish(r.id, seen); return; }
+      // 이어 가기: 꺼져 있던 동안은 빼고, 돌던 중이면 새 구간
+      const open = this.openSpan(r.id);
+      if (open) {
+        this.store.db.prepare("UPDATE focus_spans SET end = MAX(start, ?), open = 0 WHERE n = ?").run(seen, open.n);
+        this.store.db.prepare("INSERT INTO focus_spans (session_id, start, end, open) VALUES (?, ?, ?, 1)").run(r.id, now, now);
+      }
+      this.store.db.prepare("UPDATE focus_sessions SET seen = ? WHERE id = ?").run(now, r.id);
+    });
+  }
+
+  // 돌고 있는 구간 끝 시각·세션 초를 저장(꺼져도 여기까지는 남는다)
+  checkpoint() {
+    const cur = this.current();
+    if (!cur) return;
+    const now = this.now();
+    this.store.db.prepare("UPDATE focus_spans SET end = MAX(start, ?) WHERE session_id = ? AND open = 1").run(now, cur.id);
+    this.store.db.prepare("UPDATE focus_sessions SET seen = ?, seconds = ? WHERE id = ?").run(now, Math.round(this.sessionMs(cur.id, now) / 1000), cur.id);
+  }
+  startTimer(ms = CHECKPOINT_MS) {
+    this.stopTimer();
+    this.timer = setInterval(() => { try { this.checkpoint(); } catch (e: any) { console.warn("[focus] 저장:", e?.message ?? e); } }, ms);
+    this.timer.unref?.();
+  }
+  stopTimer() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
+  }
+
+  // ---- 동작(같은 걸 두 번 눌러도 안전) ----
+  start(): FocusView {
+    if (!this.current()) {
+      const now = this.now(), id = `fs-${randomUUID().slice(0, 8)}`;
+      this.store.db.prepare("INSERT INTO focus_sessions (id, started, paused, seen) VALUES (?, ?, 0, ?)").run(id, now, now);
+      this.store.db.prepare("INSERT INTO focus_spans (session_id, start, end, open) VALUES (?, ?, ?, 1)").run(id, now, now);
+      this.changed();
+    }
+    return this.view();
+  }
+  pause(): FocusView {
+    const cur = this.current();
+    if (cur && !cur.paused) {
+      const now = this.now();
+      this.store.db.prepare("UPDATE focus_spans SET end = MAX(start, ?), open = 0 WHERE session_id = ? AND open = 1").run(now, cur.id);
+      this.store.db.prepare("UPDATE focus_sessions SET paused = 1, seen = ?, seconds = ? WHERE id = ?").run(now, Math.round(this.closedMs(cur.id) / 1000), cur.id);
+      this.changed();
+    }
+    return this.view();
+  }
+  resume(): FocusView {
+    const cur = this.current();
+    if (cur && cur.paused) {
+      const now = this.now();
+      this.store.db.prepare("INSERT INTO focus_spans (session_id, start, end, open) VALUES (?, ?, ?, 1)").run(cur.id, now, now);
+      this.store.db.prepare("UPDATE focus_sessions SET paused = 0, seen = ? WHERE id = ?").run(now, cur.id);
+      this.changed();
+    }
+    return this.view();
+  }
+  // 그만하기 → { stopped: { id, seconds } | null, ...view }
+  stop(): FocusView & { stopped: { id: string; seconds: number } | null } {
+    const cur = this.current();
+    if (!cur) return { ...this.view(), stopped: null };
+    const sec = this.finish(cur.id, this.now());
+    this.changed();
+    try { this.onStop?.(sec); } catch (e: any) { console.warn("[focus] onStop:", e?.message ?? e); }
+    return { ...this.view(), stopped: { id: cur.id, seconds: sec } };
+  }
+  act(cmd: FocusCmd) {
+    return cmd === "start" ? this.start() : cmd === "pause" ? this.pause() : cmd === "resume" ? this.resume() : this.stop();
+  }
+
+  // ---- 보기 ----
+  view(): FocusView {
+    const now = this.now();
+    const cur = this.current();
+    let active: FocusActive | null = null;
+    if (cur) {
+      const open = cur.paused ? undefined : this.openSpan(cur.id);
+      const baseMs = this.closedMs(cur.id);
+      active = { id: cur.id, startedAt: Number(cur.started), paused: !!cur.paused, baseMs, since: open ? Number(open.start) : null,
+        seconds: Math.floor((baseMs + (open ? Math.max(0, now - open.start) : 0)) / 1000) };
+    }
+    const day = localDay(now);
+    return { active, day, today: this.stats(day, day)?.total ?? 0, now };
+  }
+
+  // 날마다 집중한 초(from~to, 로컬 날짜, 양끝 포함). 지금 집중 중인 구간은 지금까지 친다. 날짜가 틀리면 undefined
+  stats(from: string, to: string): { from: string; to: string; days: FocusDay[]; total: number } | undefined {
+    const a = dayStart(from), z = dayStart(to);
+    if (Number.isNaN(a) || Number.isNaN(z) || a > z) return undefined;
+    const end = nextDayStart(z), now = this.now();
+    const rows = this.store.db.prepare("SELECT start, end, open FROM focus_spans WHERE start < ? AND (end > ? OR open = 1)").all(end, a) as any[];
+    const spans = rows.map((r) => ({ start: Number(r.start), end: r.open ? Math.max(Number(r.end), now) : Number(r.end) }));
+    const ms = splitByDay(spans, a, end);
+    const days: FocusDay[] = [];
+    let total = 0;
+    for (let t = a; t < end; t = nextDayStart(t)) {
+      const date = localDay(t), seconds = Math.floor((ms.get(date) ?? 0) / 1000);
+      days.push({ date, seconds });
+      total += seconds;
+    }
+    return { from, to, days, total };
+  }
+
+  private changed() {
+    try { this.onChange?.(this.view()); } catch (e: any) { console.warn("[focus] onChange:", e?.message ?? e); }
+  }
+}
+
+// 마무리 말: 「25분 집중했어요」
+export function focusDuration(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  if (s < 60) return `${s}초`;
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? (m ? `${h}시간 ${m}분` : `${h}시간`) : `${m}분`;
+}
+export function focusDoneText(sec: number): string {
+  return `${focusDuration(sec)} 집중했어요. 수고했어요!`;
+}
+
+// ---- HTTP (bus.ts 가 헤더 검사 뒤 부른다) ----
+export type FocusApi = {
+  view(): unknown;
+  stats(from: string, to: string): unknown | undefined; // 날짜가 틀리면 undefined → 400
+  act(cmd: FocusCmd): unknown;
+};
+export function focusApi(f: Focus): FocusApi {
+  return { view: () => f.view(), stats: (from, to) => f.stats(from, to), act: (cmd) => f.act(cmd) };
+}

@@ -43,4 +43,8 @@ contextBridge.exposeInMainWorld('cy', {
   onBrain: on('brain'),
   // 사용법 둘러보기 말풍선 버튼: 'next' | 'stop'
   tour: (cmd) => ipcRenderer.send('tour', cmd === 'stop' ? 'stop' : 'next'),
+  // 집중하기: SSE focus · 지금 상태(GET /focus) · cmd = 'start' | 'pause' | 'resume' | 'stop'
+  onFocus: on('focus'),
+  focusGet: () => ipcRenderer.invoke('focus-get'),
+  focusCmd: (cmd) => ipcRenderer.invoke('focus-cmd', String(cmd)),
 });

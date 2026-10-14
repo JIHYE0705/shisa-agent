@@ -8,6 +8,7 @@ import { ActivityTracker } from "./activity.ts";
 import { RUN_STATUSES, type RunRegistry, type RunStatus } from "./runs.ts";
 import { ACTION_STATUSES, type ActionStatus, type ConfirmOut } from "./actions.ts";
 import type { GuidelinesApi } from "./guidelines.ts";
+import { FOCUS_CMDS, DAY_RE, type FocusApi, type FocusCmd } from "./focus.ts";
 import { createReadStream, statSync } from "node:fs";
 import { extname } from "node:path";
 import { ATTACH_ID, ATTACH_LIMITS, attachmentInput, attachmentRef, type Attachment, type ContentBlock } from "./attachments.ts";
@@ -128,6 +129,8 @@ export type BusHandlers = {
   connectorDisconnect?: (cap: unknown) => { ok: true; [k: string]: unknown } | { ok: false; status: number; error: string };
   // 행동 지침(guidelines.ts): GET/POST /guidelines · GET/PUT/DELETE /guidelines/:id. 없으면 503
   guidelines?: GuidelinesApi;
+  // 집중하기(focus.ts): GET /focus · GET /focus/stats?from&to · POST /focus/start|pause|resume|stop. 없으면 503
+  focus?: FocusApi;
 };
 export type SettingsApi ={ get(): unknown; put(body: unknown): { ok: true; [k: string]: unknown } | { ok: false; status: number; error: string } };
 export type ConnectionsApi = { ids: readonly string[]; list(): Promise<unknown>; recheck(id?: string): Promise<unknown> };
@@ -229,6 +232,11 @@ export class Bus {
     this.send("status", { status: s });
   }
 
+
+  // 집중하기 상태가 바뀜(시작·일시정지·다시 시작·그만) — SSE focus(GET /focus 와 같은 모양)
+  focusChanged(v: unknown) {
+    this.send("focus", v);
+  }
 
   private send(event: string, data: unknown) {
     const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -399,6 +407,17 @@ export class Bus {
       const r = await h.todoDetail(id);
       return r ? json(res, 200, r) : json(res, 404, { error: "no such todo" });
     }
+    if (req.method === "GET" && url.pathname === "/focus") {
+      return h.focus ? json(res, 200, h.focus.view()) : json(res, 503, { error: "focus unavailable" });
+    }
+    if (req.method === "GET" && url.pathname === "/focus/stats") {
+      if (!h.focus) return json(res, 503, { error: "focus unavailable" });
+      const from = url.searchParams.get("from"), to = url.searchParams.get("to");
+      if (!from || !to || !DAY_RE.test(from) || !DAY_RE.test(to)) throw new BadRequest("from, to must be YYYY-MM-DD");
+      const r = h.focus.stats(from, to);
+      if (!r) throw new BadRequest("bad range");
+      return json(res, 200, r);
+    }
     if (req.method === "GET" && url.pathname === "/events") {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
       res.write("retry: 3000\n\n");
@@ -407,6 +426,7 @@ export class Bus {
       for (const b of this.waiting.values()) if (!this.recent.some((x) => x.id === b.id)) res.write(`event: bubble\ndata: ${JSON.stringify(b)}\n\n`);
       for (const b of this.recent) res.write(`event: bubble\ndata: ${JSON.stringify(b)}\n\n`);
       if (h.runs) res.write(`event: runs\ndata: ${JSON.stringify({ active: h.runs.active() })}\n\n`);
+      if (h.focus) res.write(`event: focus\ndata: ${JSON.stringify(h.focus.view())}\n\n`);
       try { this.onOverlay?.(); } catch (e: any) { console.warn("[bus] onOverlay:", e?.message ?? e); }
       const ping = setInterval(() => res.write(": ping\n\n"), 25e3);
       req.on("close", () => { clearInterval(ping); this.clients.delete(res); });
@@ -461,6 +481,14 @@ export class Bus {
         if (!p) return json(res, 404, { error: "no such attachment" });
         h.attachments.open(p);
         return json(res, 200, { ok: true });
+      }
+      // 집중하기: 본문 없음 → 바뀐 상태(GET /focus 모양, stop 은 stopped 도)
+      const fc = url.pathname.match(/^\/focus\/(\w+)$/);
+      if (fc) {
+        if (!h.focus) return json(res, 503, { error: "focus unavailable" });
+        if (!(FOCUS_CMDS as readonly string[]).includes(fc[1])) return json(res, 404, { error: "not found" });
+        await readJson(req, true);
+        return json(res, 200, h.focus.act(fc[1] as FocusCmd));
       }
       // AI 없이 고르는 질문: { id } → { ok, answer: { id, text, kind, detail?, open? } }
       if (url.pathname === "/local/ask") {

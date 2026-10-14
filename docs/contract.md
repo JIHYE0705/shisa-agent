@@ -26,6 +26,7 @@
 | `action` | `{ action }` | 확인 카드 상태 변화(pending → running → done\|failed, cancelled, expired) |
 | `run` | `{ id, seq, event }` | 작업 세션 이벤트 한 줄 |
 | `runs` | `{ run?, active: [run] }` | run 시작·끝·상태 변화 |
+| `focus` | `FocusView`(아래 「집중하기」) | 집중하기 시작·일시정지·다시 시작·그만. 접속 직후에도 한 번 |
 
 ```ts
 type Bubble = {
@@ -169,6 +170,23 @@ type Bubble = {
 - `GET /dashboard` 의 `todos[].today`, `today: { date, asked, items: [{ id, title, done, priority, source }] }`
 - 예전 `POST /today` 표 저장은 없다. 예전 표의 오늘 줄은 데몬이 켜질 때 할 일로 옮긴다
 - 알림: 설정 `todayReminder: { mode: "auto" | "off", everyHours, times: ["HH:MM"] }` (`PUT /settings`, 바로 반영). 기본은 영업일 아침 첫 실행 때 한 번. 모델 없이 정해진 말로 알린다
+
+### 집중하기
+
+할 일 목록의 [집중하기]. 캐릭터가 공부 영상을 틀고 말풍선에 경과 시간을 보인다. 기록은 cy.db 의 `focus_sessions`(세션: 시작·끝·집중한 초)와 `focus_spans`(실제로 집중한 구간)에 둔다. 일시정지한 동안은 구간이 없으니 빠진다. 날짜는 이 맥의 로컬 시간 기준 하루이고, 자정을 넘긴 구간은 날마다 나눠 센다. 돌고 있는 구간은 30초마다 저장하고, 데몬이 꺼졌다 3분 안에 다시 켜지면 같은 세션을 이어 간다(꺼진 동안은 뺀다). 더 오래 꺼져 있었으면 마지막 저장 시각에 끝낸다. AI 연결과 무관하다.
+
+- `GET /focus` → `FocusView`
+- `POST /focus/start` · `/focus/pause` · `/focus/resume` · `/focus/stop` → `FocusView`(같은 걸 두 번 눌러도 안전). `stop`은 `stopped: { id, seconds } | null`도 주고, 1초 이상이면 「25분 집중했어요」 말풍선을 띄운다
+- `GET /focus/stats?from=YYYY-MM-DD&to=YYYY-MM-DD` → `{ from, to, days: [{ date, seconds }], total }` (양끝 포함, 집중 중인 것은 지금까지)
+
+```ts
+type FocusView = {
+  active: null | { id: string; startedAt: number; paused: boolean; baseMs: number; since: number | null; seconds: number };
+  day: string; today: number; now: number; // today = 오늘 집중한 초(집중 중인 것 포함)
+};
+```
+
+지금 경과 = `(baseMs + (since ? 지금 - since : 0)) / 1000`초.
 
 ## 채팅
 

@@ -112,5 +112,10 @@ contextBridge.exposeInMainWorld('cy', {
   onOpenOrigin: on('open-origin'),
   // 팝오버 지난 문답(GET /todos/:id/thread/last)
   todoLastAsk: (id) => ipcRenderer.invoke('todo-last-ask', String(id)),
+  // 집중하기: SSE focus · 지금 상태 · cmd('start'|'pause'|'resume'|'stop') · 날마다 집중한 초(from·to = 로컬 YYYY-MM-DD)
+  onFocus: on('focus'),
+  focusGet: () => ipcRenderer.invoke('focus-get'),
+  focusCmd: (cmd) => ipcRenderer.invoke('focus-cmd', String(cmd)),
+  focusStats: (from, to) => ipcRenderer.invoke('focus-stats', String(from), String(to)),
   close: () => ipcRenderer.send('close-panel'),
 });
