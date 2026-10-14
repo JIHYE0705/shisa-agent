@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { phraseLines } from "./phrases.ts";
 import { autoMergeList } from "./auto-merge.ts";
+import { todayReminderOf, type TodayReminder } from "./daily-plan.ts";
 
 export const HOME_DIR = process.env.CY_AGENT_HOME ?? join(homedir(), ".cy-agent");
 
@@ -34,6 +35,8 @@ export type Config = {
   // ✓ 없이 머지까지 하는 레포(owner/name, auto-merge.ts). 채팅에서 「이 레포는 알아서 머지까지 해」·설정 창에서 고친다.
   // config.json 에 없으면 빈 목록. loadConfig 는 늘 채운다
   autoMerge?: string[];
+  // 오늘 할 일 알림(설정 창 「오늘 할 일 알림」). 없으면 영업일 아침 한 번(daily-plan.ts DEFAULT_TODAY_REMINDER)
+  todayReminder?: TodayReminder;
   // 지식그래프 2단계(엔티티·관계 추출) 모델. 1단계(업무 판정)는 늘 경량. 기본은 경량(대량 작업이라 비용 우선)
   kgModel: string;
   // 대화 에이전트의 로컬 도구(Bash·Edit/Write·파일 읽기)를 승인 카드 없이 허용(permissions.ts 2-1). 하드 차단은 그대로. 기본 켜짐
@@ -164,6 +167,7 @@ export function loadConfig(env = process.env, f: Partial<Config> & Record<string
     briefing: { exclude: Array.isArray((f.briefing as any)?.exclude) ? ((f.briefing as any).exclude as unknown[]).filter((x): x is string => typeof x === "string") : [] },
     phrases: phrasesOf(f.phrases),
     autoMerge: autoMergeList(f.autoMerge),
+    todayReminder: todayReminderOf(f.todayReminder),
     kgModel: env.CY_AGENT_KG_MODEL ?? (f.kgModel as string) ?? (env.CY_AGENT_MODEL_LIGHT ?? (f.models as any)?.light ?? "claude-haiku-5-5"),
     localAutoAllow: env.CY_AGENT_LOCAL_ASK === "1" ? false : f.localAutoAllow !== false,
     repoRoots: (f.repoRoots as string[]) ?? [join(homedir(), "code")],

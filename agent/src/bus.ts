@@ -2,7 +2,6 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { parseNew, parseOps, parsePatch, type NewTodo, type TodoOp } from "./todos.ts";
-import { parsePlanItems, type PlanItem } from "./daily-plan.ts";
 import type { TodoPatch } from "./store.ts";
 import { parseRulePatch } from "./todo-rules.ts";
 import { ActivityTracker } from "./activity.ts";
@@ -79,7 +78,6 @@ export type BusHandlers = {
   chatEditQueued?(chatId: string, text: string): { error: string; [k: string]: unknown } | Record<string, unknown>;
   todoExists?(id: string): boolean; // POST /chat 의 todoId 확인용(없는 id면 404)
   chatHistory(): unknown;
-  todaySave?(items: PlanItem[]): unknown;
   profileFacts?(): unknown;
   profileRemember?(text: string, category?: string): unknown;
   profileForget?(idOrText: string): boolean;
@@ -833,15 +831,6 @@ export class Bus {
         const key = id || text;
         if (!key) throw new BadRequest("id or text required");
         return h.profileForget(key) ? json(res, 200, { ok: true }) : json(res, 404, { error: "no such fact" });
-      }
-      if (url.pathname === "/today") {
-        if (!h.todaySave) return json(res, 503, { error: "today plan unavailable" });
-        const body = await readJson(req);
-        const p = parsePlanItems(body.items);
-        if ("error" in p) throw new BadRequest(p.error);
-        const r = (await h.todaySave(p.items)) as { ok?: boolean; message?: string } | undefined;
-        if (r && r.ok === false) return json(res, 400, { ok: false, error: r.message ?? "invalid items" });
-        return json(res, 200, r && typeof r === "object" ? r : { ok: true });
       }
     }
     json(res, 404, { error: "not found" });

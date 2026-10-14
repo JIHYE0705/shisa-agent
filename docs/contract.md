@@ -152,9 +152,15 @@ type Bubble = {
   - `POST /todo-rules/:id { enabled?, text? }`
   - `POST /todo-rules/:id/delete`
 
-### 오늘 할 일(로컬 표)
+### 오늘 할 일
 
-`POST /today { items: [{ id?, title, done? }] }` → 200 `{ ok, plan }`. 이 맥의 SQLite에만 둔다. 80개를 넘거나 모르는 키가 있으면 400.
+따로 표를 두지 않고 할 일에 "오늘로 고른 날"(`today`, KST `YYYY-MM-DD`)을 단다. 패널 '오늘 할 일' 탭은 할 일 탭과 같은 줄·우선순위 묶음(P1·P2·P3·백로그)으로 그날 고른 것만 보인다. 이 맥의 SQLite에만 둔다.
+
+- 새로 적기: `POST /todos { title, priority?, today: true }`
+- 고르기·빼기: `POST /todos/:id { today: true | false | null }` (빼도 할 일은 남는다)
+- `GET /dashboard` 의 `todos[].today`, `today: { date, asked, items: [{ id, title, done, priority, source }] }`
+- 예전 `POST /today` 표 저장은 없다. 예전 표의 오늘 줄은 데몬이 켜질 때 할 일로 옮긴다
+- 알림: 설정 `todayReminder: { mode: "auto" | "off", everyHours, times: ["HH:MM"] }` (`PUT /settings`, 바로 반영). 기본은 영업일 아침 첫 실행 때 한 번. 모델 없이 정해진 말로 알린다
 
 ## 채팅
 

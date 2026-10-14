@@ -1,6 +1,7 @@
 // 데몬 엔트리포인트: 버스 + Slack + 주기 작업(세션·Slack 수집, 프로필 학습, 브리핑)
 import { installFileLog } from "./log.ts";
 import { loadConfig } from "./config.ts";
+import { DEFAULT_TODAY_REMINDER } from "./daily-plan.ts";
 import { Store } from "./store.ts";
 import { Bus } from "./bus.ts";
 import { runs } from "./runs.ts";
@@ -76,20 +77,23 @@ const safe = (name: string, fn: () => unknown) => async () => {
 // 이전 데몬이 답하다 꺼진 턴(배포·재시작)을 닫는다 — 물음만 덩그러니 남지 않게
 safe("close-dangling", () => { const k = agent.closeDanglingTurns(); if (k) console.log(`[chat] 끊긴 대화 ${k}개 닫음`); })();
 
-function askMorningPlan() {
-  const s = agent.dailyPlan().askMorning();
-  if (!s) return;
+// 오늘 할 일 알림: 설정(todayReminder)대로, 모델 없이 정해진 말로(뇌가 없거나 local 이어도 뜬다)
+// 아침 안내(ask)는 예전처럼 패널 '오늘 할 일'도 연다. 오버레이가 붙을 때(앱 첫 실행)와 1분마다 확인
+function remindToday(opened = false) {
+  const r = agent.dailyPlan().remind(cfg.todayReminder ?? DEFAULT_TODAY_REMINDER, { opened });
+  if (!r) return;
   bus.bubble({
-    id: `today:${s.date}`,
-    text: "오늘 할 일을 적어 주세요~ 표에 적으면 돼요 (스이시~사)",
+    id: `today:${r.plan.date}`,
+    text: r.text,
     kind: "todo",
     ttlMs: 60e3,
     open: { section: "today" },
   });
   bus.dashboardChanged();
-  bus.openPanel("today");
+  if (r.kind === "ask") bus.openPanel("today");
 }
-bus.onOverlay = () => askMorningPlan();
+bus.onOverlay = () => remindToday(true);
+setInterval(() => { try { remindToday(false); } catch (e: any) { console.warn("[today] 알림:", e?.message ?? e); } }, 60e3).unref?.();
 
 // 설정 창: 모델·브리핑 출처(바로 반영 + config.json) · 연결 상태(읽기만). KG 상태는 아래에서 kgBackfill 이 생긴 뒤에 붙는다
 // 뇌·이름·레포 폴더를 바꾸면 바로 반영되고(재시작 불필요) 데스크톱에 SSE status 로 알린다
@@ -155,11 +159,6 @@ await bus.listen(cfg.port, {
     file: (threadId, file) => agent.attachmentPath(threadId, file),
     open: (p) => { execFile("/usr/bin/open", [p], () => {}); }, // 기본 앱으로(경로는 bus 가 첨부 폴더 안인지 확인한 것)
     claimRun: (runId, ids) => (runs.getRun(runId, Number.MAX_SAFE_INTEGER) ? agent.claimRunAttachments(runId, ids) : { error: "no such run" }),
-  },
-  todaySave: (items) => {
-    const r = agent.dailyPlan().save(items);
-    if (r.ok) bus.dashboardChanged();
-    return r;
   },
   profileFacts: () => agent.memories(),
   profileRemember: (text, category) => agent.remember(text, category),

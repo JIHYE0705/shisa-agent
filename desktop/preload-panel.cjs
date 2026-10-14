@@ -38,7 +38,6 @@ contextBridge.exposeInMainWorld('cy', {
   todoRules: () => ipcRenderer.invoke('todo-rules'),
   todoRuleEdit: (id, patch) => ipcRenderer.invoke('todo-rule-edit', String(id), patch),
   todoRuleDelete: (id) => ipcRenderer.invoke('todo-rule-delete', String(id)),
-  todaySave: (items) => ipcRenderer.invoke('today-save', Array.isArray(items) ? items : []),
   // opts: { threadId?, todoId?, model?, clientId? } — threadId 없으면 새 대화(todoId 면 그 할 일의 대화). 결과 { ok, chatId, threadId, queued?, position? }
   chatStop: (chatId) => ipcRenderer.invoke('chat-stop', String(chatId)), // 답하던 것 멈추기 → POST /chat/:chatId/stop
   chatNow: (chatId) => ipcRenderer.invoke('chat-now', String(chatId)), // 기다리던 말 지금 보내기(답하던 건 멈춤) → POST /chat/:chatId/now

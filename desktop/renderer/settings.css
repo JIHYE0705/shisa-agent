@@ -139,3 +139,8 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
   .conn { grid-template-columns: 14px 1fr; }
   .conn .acts { grid-column: 2; justify-content: flex-start; }
 }
+
+/* 오늘 할 일 알림 */
+.rem-auto { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.rem-auto[hidden] { display: none; }
+.rem-line { display: inline-flex; align-items: center; gap: 6px; }

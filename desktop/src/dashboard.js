@@ -74,6 +74,7 @@ export function groupTodos(todos) {
       ...(t.appliedRule && str(t.appliedRule.text) ? { appliedRule: { id: str(t.appliedRule.id), text: t.appliedRule.text } } : {}), // 적용된 할 일 규칙
       ...(str(t.progress) ? { progress: t.progress, progressAt: str(t.progressAt) } : {}), // 어디까지 됐는지(데몬 진행 확인)
       ...(typeof t.doing === 'boolean' ? { doing: t.doing } : {}), // 사용자가 누른 (진행중) 토글
+      ...(str(t.today) ? { today: t.today } : {}), // 오늘 할 일로 고른 날(KST)
     });
   }
   return [...groups.entries()]
@@ -179,9 +180,18 @@ export function shapeDashboard(raw, now = Date.now()) {
   const b = r.briefing && typeof r.briefing === 'object' ? r.briefing : null;
   const today = r.today && typeof r.today === 'object' ? r.today : null;
   const connectors = shapeConnectors(r.connectors);
-  const todayItems = arr(today?.items)
-    .filter((it) => it && typeof it === 'object' && str(it.title))
-    .map((it) => ({ id: str(it.id), title: str(it.title), done: it.done === true }));
+  // 오늘 할 일 = 할 일 중 오늘로 고른 것. 열린 건 할 일 탭과 같은 우선순위 묶음(낙관적 반영 포함), 끝낸 건 '오늘 끝냄'
+  const todayDate = str(today?.date);
+  const todayGroups = todayDate ? groupTodos(arr(r.todos).filter((t) => t && t.today === todayDate)) : [];
+  const todayOpen = todayGroups.flatMap((g) => g.items);
+  const openIds = new Set(todayOpen.map((t) => t.id));
+  const todayDone = arr(today?.items)
+    .filter((it) => it && typeof it === 'object' && str(it.id) && str(it.title) && it.done === true && !openIds.has(it.id))
+    .map((it) => ({ id: it.id, title: it.title, source: str(it.source), priority: [1, 2, 3, 4].includes(it.priority) ? it.priority : 2, today: todayDate, auto: false, doneRel: '' }));
+  const todayItems = [
+    ...todayOpen.map((t) => ({ id: t.id, title: t.title, done: false, priority: t.priority })),
+    ...todayDone.map((t) => ({ id: t.id, title: t.title, done: true, priority: t.priority })),
+  ];
 
   return {
     generatedAt: str(r.generatedAt),
@@ -192,7 +202,7 @@ export function shapeDashboard(raw, now = Date.now()) {
       backlogTodos,
       activeProjects: projects.filter((p) => isActiveProject(p, now)).length,
       pendingProposals: proposals.filter((p) => p.status === 'pending').length,
-      todayOpen: todayItems.filter((it) => !it.done).length,
+      todayOpen: todayOpen.length,
       todayTotal: todayItems.length,
     },
     briefing: b ? { at: str(b.at), time: clockTime(b.at), rel: relativeTime(b.at, now), bubble: str(b.bubble), md: str(b.replyMd) } : null,
@@ -204,6 +214,8 @@ export function shapeDashboard(raw, now = Date.now()) {
     proposals,
     connectors,
     notReady: connectors.filter((c) => !c.ready).map((c) => c.cap),
-    today: { date: str(today?.date), items: todayItems, asked: today?.asked === true },
+    today: { date: todayDate, items: todayItems, asked: today?.asked === true },
+    todayGroups,
+    todayDone,
   };
 }

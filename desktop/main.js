@@ -1319,24 +1319,6 @@ function setupIPC() {
     if (!fromOurs(e) || !okRuleId(id)) return denied();
     return post(`/todo-rules/${encodeURIComponent(id)}/delete`);
   });
-  const cleanPlanItems = (b) => {
-    if (!Array.isArray(b) || b.length > 80) return null;
-    const out = [];
-    for (const x of b) {
-      if (!x || typeof x !== 'object') return null;
-      const title = typeof x.title === 'string' ? x.title : '';
-      if (!title.trim()) continue;
-      if (title.length > 300) return null;
-      const id = typeof x.id === 'string' ? x.id.slice(0, 80) : '';
-      out.push({ ...(id ? { id } : {}), title, done: x.done === true });
-    }
-    return out;
-  };
-  ipcMain.handle('today-save', (e, items) => {
-    const b = cleanPlanItems(items);
-    if (!fromOurs(e) || !b) return denied();
-    return post('/today', { items: b });
-  });
 
   // ---- 채팅: 스레드(대화 창)별. 오버레이(캐릭터 호버)에서 한 말은 늘 새 스레드(kind hover) ----
   // 패널: opts = { threadId?, todoId? } — threadId 없으면 새 대화(todoId 면 그 할 일의 대화)

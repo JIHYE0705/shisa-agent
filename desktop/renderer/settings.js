@@ -1,9 +1,10 @@
-// 설정 창: AI·모델 · 브리핑 출처 · 자동 머지 레포 · 문구 · 행동 지침 · 연결 상태. 데몬은 메인 프로세스를 거쳐서만(window.cy)
+// 설정 창: AI·모델 · 브리핑 출처 · 오늘 할 일 알림 · 자동 머지 레포 · 문구 · 행동 지침 · 연결 상태. 데몬은 메인 프로세스를 거쳐서만(window.cy)
 // Claude Code 가 없는 컴퓨터(Gemini·GPT 키·로컬)에서는 Claude 세부 모델·자동 머지 칸을 안내로 바꾼다
 import {
   groupRows, pendingChecks, mergeRows, toggleExclude, dotClass, metaText, STATE_LABEL,
   phraseGroups, phraseText, phraseDefaultText, phraseCustom, phraseSaveValue, phraseProblem,
   repoSlugFrom, autoMergeNext, needsSetupHint,
+  REMINDER_DEFAULT, REMINDER_HOURS, cleanReminder, parseTimes, reminderSummary,
 } from '../src/settings.js';
 import { mountGuidelines } from '../src/guidelines.js';
 
@@ -120,6 +121,49 @@ function renderSources() {
     box.append(lab);
   }
 }
+
+// ---- 오늘 할 일 알림 ----
+const reminder = () => cleanReminder(settings?.todayReminder) ?? REMINDER_DEFAULT;
+async function saveReminder(patch) {
+  $('rem-err').textContent = '';
+  const ok = await save({ todayReminder: { ...reminder(), ...patch } });
+  renderReminder();
+  return ok;
+}
+function renderReminder() {
+  if (!settings) return;
+  const r = reminder();
+  const box = $('rem-mode');
+  box.replaceChildren();
+  for (const [mode, label] of [['auto', '자동으로 알리기'], ['off', '안 알리기']]) {
+    const lab = el('label', 'toggle');
+    const rb = el('input');
+    rb.type = 'radio';
+    rb.name = 'rem-mode';
+    rb.checked = r.mode === mode;
+    rb.addEventListener('change', () => { if (rb.checked) saveReminder({ mode }); });
+    lab.append(rb, document.createTextNode(label));
+    box.append(lab);
+  }
+  $('rem-auto').hidden = r.mode === 'off';
+  const sel = $('rem-every');
+  const hours = REMINDER_HOURS.includes(r.everyHours) ? REMINDER_HOURS : [...REMINDER_HOURS, r.everyHours].sort((a, b) => a - b);
+  sel.replaceChildren(...hours.map((h) => { const o = el('option', null, h ? `${h}시간` : '안 함'); o.value = String(h); return o; }));
+  sel.value = String(r.everyHours);
+  if (document.activeElement !== $('rem-times')) $('rem-times').value = r.times.join(', ');
+  $('rem-summary').textContent = reminderSummary(r);
+}
+$('rem-every').addEventListener('change', (e) => saveReminder({ everyHours: Number(e.target.value) || 0 }));
+async function saveTimes() {
+  const p = parseTimes($('rem-times').value);
+  if (p.error) { $('rem-err').textContent = p.error; return; }
+  $('rem-times-save').disabled = true;
+  $('rem-times').blur();
+  await saveReminder({ times: p.times });
+  $('rem-times-save').disabled = false;
+}
+$('rem-times-save').addEventListener('click', saveTimes);
+$('rem-times').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); saveTimes(); } });
 
 // ---- 자동 머지 레포 ----
 function renderAutoMerge() {
@@ -292,7 +336,7 @@ async function load() {
   if (k && typeof k === 'object' && typeof k.claude === 'boolean') caps = { claude: k.claude, codex: k.codex === true };
   if (!s?.ok || !c?.ok) banner('시사에 연결되지 않았어요. 시사가 켜져 있는지 확인해 주세요.');
   else banner(null);
-  if (s?.ok) { settings = s.data; renderModels(); renderSources(); renderAutoMerge(); renderPhrases(); }
+  if (s?.ok) { settings = s.data; renderModels(); renderSources(); renderReminder(); renderAutoMerge(); renderPhrases(); }
   if (c?.ok) {
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];
     renderRows();

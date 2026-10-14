@@ -90,6 +90,7 @@ export function sanitizeTodoPatch(v, { allowStatus = true } = {}) {
   for (const k of ['link', 'note']) if (v[k] === null || typeof v[k] === 'string') out[k] = v[k] === null ? null : v[k];
   if (v.description === null || typeof v.description === 'string') out.description = v.description === null ? null : v.description;
   if (v.doing === null || typeof v.doing === 'boolean') out.doing = v.doing; // (진행중) 토글: true·false·null(자동)
+  if (v.today === null || typeof v.today === 'boolean') out.today = v.today; // 오늘 할 일로 고르기(true)·빼기(false·null)
   if (allowStatus && (v.status === 'open' || v.status === 'done')) out.status = v.status;
   return Object.keys(out).length ? out : null;
 }
@@ -117,3 +118,15 @@ export function descriptionPatch(current, draft) {
 
 // (진행중)인가: 사용자가 누른 토글(doing)이 먼저, 없으면 비서가 작업 세션에서 본 진척(progress)이 있을 때
 export const isDoing = (t) => (t?.doing === true || t?.doing === false ? t.doing : !!t?.progress);
+
+// 대시보드 today(오늘 할 일)를 응답 전에 맞춰 둔다: change 가 null 이면 뺀다, 객체면 있는 줄에 합치고 없으면(제목이 있을 때) 덧붙인다
+export function patchToday(today, id, change) {
+  if (!today || typeof today !== 'object' || !Array.isArray(today.items)) return today;
+  if (change === null) return { ...today, items: today.items.filter((x) => x?.id !== id) };
+  if (!change || typeof change !== 'object') return today;
+  if (today.items.some((x) => x?.id === id)) return { ...today, items: today.items.map((x) => (x?.id === id ? { ...x, ...change } : x)) };
+  return typeof change.title === 'string' && change.title ? { ...today, items: [...today.items, { id, done: false, priority: 2, ...change }] } : today;
+}
+
+// 이 줄이 오늘 할 일인가(오늘 날짜로 골랐나)
+export const isToday = (t, date) => !!date && t?.today === date;

@@ -105,8 +105,8 @@ const projects = D.projects ?? [
 ];
 
 let todos = D.todos ?? [
-  { id: 'mail:1', title: '디자인 리뷰 전에 피그마 코멘트 3개 정리', source: 'mail', link: 'https://outlook.office.com/mail/', priority: 1, note: '코멘트는 #design 스레드에', userEdited: true },
-  { id: 'jira:CY-12', title: 'CY-12 패널 접근성 점검', source: 'jira', link: 'https://example.atlassian.net/browse/CY-12', priority: 1 },
+  { id: 'mail:1', title: '디자인 리뷰 전에 피그마 코멘트 3개 정리', source: 'mail', link: 'https://outlook.office.com/mail/', priority: 1, note: '코멘트는 #design 스레드에', userEdited: true, today: today() },
+  { id: 'jira:CY-12', title: 'CY-12 패널 접근성 점검', source: 'jira', link: 'https://example.atlassian.net/browse/CY-12', priority: 1, today: today() },
   { id: 'slack:3', title: '#cy-agent 어제 질문에 답장', source: 'slack', link: 'slack://channel?team=T1&id=C1', priority: 2 },
   { id: 'cal:4', title: '내일 1:1 안건 적기', source: 'calendar', link: null, priority: 3 },
   { id: 'local:5', title: '노트 레포 정리', source: 'local', priority: 4 },
@@ -155,14 +155,11 @@ const proposals = D.proposals ?? [
   { id: 'p0', title: '버튼 대비 올리기', repo: 'ui-kit', status: 'done', result: 'https://github.com/example/ui-kit/pull/42' },
 ];
 
-// 오늘 할 일(로컬 표). 서버에 올리지 않는다.
-let todayPlan = D.today ?? {
-  date: today(),
-  asked: true,
-  items: [
-    { id: 't1', title: '디자인 리뷰 준비', done: false },
-    { id: 't2', title: '패널 접근성 점검', done: false },
-  ],
+// 오늘 할 일: 할 일 중 오늘로 고른 것(today 날짜). 데몬 daily-plan.ts 처럼 열림·끝냄을 모아 내려준다
+const todayPlan = () => {
+  const date = today();
+  const pick = (list, done) => list.filter((x) => x.today === date).map((x) => ({ id: x.id, title: x.title, done, priority: x.priority, source: x.source }));
+  return D.today ?? { date, asked: true, items: [...pick(todos, false), ...pick(doneTodos, true)] };
 };
 const briefing = D.briefing ?? {
   at: ago(38),
@@ -180,7 +177,7 @@ function dashboard() {
     todos,
     recentDone: autoDone,
     proposals,
-    today: todayPlan,
+    today: todayPlan(),
     todoRules: fakeRules.list(),
     trash: trash.slice(0, 50).map(({ id, title, priority, source, trashedAt }) => ({ id, title, priority, source, trashedAt })),
     trashCount: trash.length,
@@ -538,7 +535,7 @@ function readJSON(req) {
 
 // 뇌·이름·레포 폴더(GET /status · GET/PUT /settings) — FAKE_BRAIN=none 이면 뇌 없이 시작(더블클릭 춤·연결 안내·설치 마법사 보기)
 const BRAIN_LABELS = { 'claude-code': 'Claude Code', codex: 'Codex', anthropic: 'Claude API', gemini: 'Gemini', openai: 'OpenAI', local: '로컬(모델 없음)' };
-const fakeCfg = { provider: process.env.FAKE_BRAIN === 'none' ? 'openai' : 'gemini', ready: process.env.FAKE_BRAIN !== 'none', model: 'claude-sonnet-5-5', name: '', repoRoots: [] };
+const fakeCfg = { provider: process.env.FAKE_BRAIN === 'none' ? 'openai' : 'gemini', ready: process.env.FAKE_BRAIN !== 'none', model: 'claude-sonnet-5-5', name: '', repoRoots: [], todayReminder: { mode: 'auto', everyHours: 0, times: [] } };
 function fakeStatus() {
   const local = fakeCfg.provider === 'local';
   const label = BRAIN_LABELS[fakeCfg.provider] ?? fakeCfg.provider;
@@ -564,6 +561,7 @@ const fakeSettings = () => ({
   modelRoles: [], modelOptions: [], envLocked: [], briefing: { exclude: [], sources: [] }, phrases: [], autoMerge: [],
   brain: { provider: fakeCfg.provider, model: fakeCfg.model, keys: { gemini: fakeCfg.provider === 'gemini', openai: false, anthropic: fakeCfg.provider === 'anthropic' } },
   user: fakeCfg.name ? { name: fakeCfg.name } : {}, repoRoots: [...fakeCfg.repoRoots], configPath: '(가짜)',
+  todayReminder: { ...fakeCfg.todayReminder },
 });
 
 const server = http.createServer(async (req, res) => {
@@ -599,6 +597,7 @@ const server = http.createServer(async (req, res) => {
     if (b.brain && 'model' in b.brain) fakeCfg.model = b.brain.model || 'claude-sonnet-5-5';
     if (b.user) fakeCfg.name = b.user.name || '';
     if (Array.isArray(b.repoRoots)) fakeCfg.repoRoots = b.repoRoots;
+    if (b.todayReminder) fakeCfg.todayReminder = { ...fakeCfg.todayReminder, ...b.todayReminder };
     if (b.brain || b.user) emit('status', { status: fakeStatus() });
     return json(res, 200, { ok: true, settings: fakeSettings(), applied: 'live', restartNeeded: false });
   }
@@ -702,7 +701,7 @@ const server = http.createServer(async (req, res) => {
     return later(() => {
       if (FAIL.test(title)) return json(res, 500, { error: '가짜 실패' });
       const id = `user:${Date.now().toString(36)}`;
-      todos = [fakeRules.applyToNew({ id, title, source: 'user', priority: body.priority ?? 2, ...(body.link ? { link: body.link } : {}), ...(body.note ? { note: body.note } : {}), userEdited: false }), ...todos];
+      todos = [fakeRules.applyToNew({ id, title, source: 'user', priority: body.priority ?? 2, ...(body.link ? { link: body.link } : {}), ...(body.note ? { note: body.note } : {}), ...(body.today === true ? { today: today() } : {}), userEdited: false }), ...todos];
       todos.sort((a, b) => a.priority - b.priority);
       json(res, 201, { id });
       emit('dashboard', {});
@@ -901,6 +900,7 @@ const server = http.createServer(async (req, res) => {
           Object.assign((ORIGINS[id] ??= {}), { description: body.description?.trim() || null, userEdited: true }); // 지운 설명은 다시 안 만듦
           cur.userEdited = true;
         }
+        if (body.today !== undefined) { if (body.today === true) cur.today = today(); else delete cur.today; } // 오늘 할 일 고르기·빼기
         for (const k of ['title', 'priority', 'link', 'note']) {
           if (body[k] === undefined) continue;
           if (body[k] === null || body[k] === '') delete cur[k];
@@ -954,21 +954,6 @@ const server = http.createServer(async (req, res) => {
     return json(res, 202, { chatId, threadId: t.id });
   }
 
-  if (p === '/today') {
-    if (!Array.isArray(body.items)) return json(res, 400, { error: 'items must be an array' });
-    const items = [];
-    for (const it of body.items) {
-      if (!it || typeof it !== 'object') continue;
-      const title = String(it.title ?? '').replace(/\s+/g, ' ').trim();
-      if (!title) continue;
-      items.push({ id: typeof it.id === 'string' && it.id ? it.id : `t${items.length + 1}`, title: title.slice(0, 300), done: it.done === true });
-    }
-    if (items.length > 80) return json(res, 400, { error: 'too many items' });
-    todayPlan = { date: todayPlan.date, asked: true, items };
-    json(res, 200, { ok: true, plan: todayPlan });
-    emit('dashboard', {});
-    return;
-  }
 
   json(res, 404, { error: 'not found' });
 });

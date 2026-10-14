@@ -124,7 +124,8 @@ export class Agent {
     this.deps = { think: realThink, runFix: realRunFix, mergePr: realMergePr, converse: realConverse, askTodo: realAskTodo, describe: realDescribe, prStatus: realPrStatus, mergeCommit: realMergeCommit, ...deps };
     this.attachments = this.deps.attachments ?? new AttachmentStore();
     this.rules = new TodoRules(store);
-    this.plan = new DailyPlanService(store);
+    // 오늘 할 일은 할 일에 날을 단 것. 바꿀 때 같은 길(규칙·갱신 신호·진행률 반응)로
+    this.plan = new DailyPlanService(store, { ports: { add: (t) => this.addTodo(t), edit: (id, patch) => this.editTodo(id, patch) } });
     this.guidelines = new Guidelines(store);
     setGuidelineStore(store); // 코드 작업(fixer.ts — store 를 안 받는다)이 읽는 지침
     this.actions = new Actions(cfg, store, this.deps.actions);
@@ -401,7 +402,12 @@ export class Agent {
   private changed() {
     this.bus.dashboardChanged();
     for (const fn of this.listeners) { try { fn(); } catch {} }
-    try { this.reactions?.todoProgress(this.store.openTodos(), this.store.doneTodos(100)); } catch {}
+    // 하루 진행률(절반·다 완료 말풍선): 오늘 할 일을 골라 뒀으면 그걸로, 없으면 예전처럼 할 일 탭 전체로(같은 응원이 두 번 나오지 않게)
+    try {
+      const today = this.plan?.state().items ?? [];
+      if (today.length) this.reactions?.todayProgress(today);
+      else this.reactions?.todoProgress(this.store.openTodos(), this.store.doneTodos(100));
+    } catch {}
   }
 
   // 캐릭터 반응(reactions.ts): main 이 붙인다. 없으면(테스트) 예전 말풍선 그대로
@@ -607,7 +613,7 @@ export class Agent {
         if (saved.ok) this.changed();
       }
       const t = await this.deps.think(this.cfg, this.store,
-        `사용자가 Slack DM으로 말했다:\n"""${text}"""\n질문이면 reply_md로 답하라. 코드 구현/수정 요청이면 대상 레포(프로젝트 목록·세션 맥락으로 판단)와 구체적 계획을 proposals에 하나 넣어라(이 경우 크기 제한 없음, 사용자가 실행 버튼으로 확정한다). 레포가 애매하면 proposals는 비우고 reply_md로 되물어라.\n할 일을 추가·수정·완료·되살리기·삭제해 달라는 말이면 todo_ops에 넣고(이때 todos·done_todo_ids는 비운다) reply_md로 무엇을 바꿨는지 한 줄로 말하라. 어느 할 일인지 애매하면 todo_ops는 비우고 되물어라.\n자기 정보("내 이름은 홍길동이야, 기억해줘")는 memory_ops remember에 사실 문장만 넣는다. 이미 저장됐으면 memory_ops는 비우고 짧게 확인만 한다.\n${RULE_GUIDE} 규칙은 바로 저장되고 맞는 기존 할 일에도 적용된다. 오늘 할 일 표는 plan_ops로 채운다.
+        `사용자가 Slack DM으로 말했다:\n"""${text}"""\n질문이면 reply_md로 답하라. 코드 구현/수정 요청이면 대상 레포(프로젝트 목록·세션 맥락으로 판단)와 구체적 계획을 proposals에 하나 넣어라(이 경우 크기 제한 없음, 사용자가 실행 버튼으로 확정한다). 레포가 애매하면 proposals는 비우고 reply_md로 되물어라.\n할 일을 추가·수정·완료·되살리기·삭제해 달라는 말이면 todo_ops에 넣고(이때 todos·done_todo_ids는 비운다) reply_md로 무엇을 바꿨는지 한 줄로 말하라. 어느 할 일인지 애매하면 todo_ops는 비우고 되물어라.\n자기 정보("내 이름은 홍길동이야, 기억해줘")는 memory_ops remember에 사실 문장만 넣는다. 이미 저장됐으면 memory_ops는 비우고 짧게 확인만 한다.\n${RULE_GUIDE} 규칙은 바로 저장되고 맞는 기존 할 일에도 적용된다. 오늘 할 일(할 일 중 오늘로 고른 것)은 plan_ops로 채운다.
 ${WRITE_GUIDE} 승인 카드는 이 Slack 스레드에 [허용]/[항상 허용]/[거부] 버튼으로 간다.
 ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없음 — 필요하면 연결된 캘린더 도구로 읽는다)"}`,
         undefined, { todoOps: true, context: this.cfg.contextMode === "inline" ? "inline" : "tools", ctx: { dashboard: () => this.dashboard() }, interactive: { origin: { via: "slack", ...(threadTs ? { slackTs: threadTs } : {}) } } });

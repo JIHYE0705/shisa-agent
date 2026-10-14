@@ -6,7 +6,7 @@ export type TodoOp = {
   id?: string; title?: string; priority?: number; link?: string | null; note?: string | null;
   description?: string; source_ref?: string; // add 전용: 설명·원본 참조(원문은 데몬이 찾는다)
 };
-export type NewTodo = { title: string; priority?: number; link?: string | null; note?: string | null };
+export type NewTodo = { title: string; priority?: number; link?: string | null; note?: string | null; today?: boolean | string };
 
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -43,7 +43,7 @@ function cleanPriority(v: unknown): Result<number> {
 // POST /todos/:id 본문. 모르는 키는 400
 export function parsePatch(body: Record<string, unknown>): Result<TodoPatch> {
   const out: TodoPatch = {};
-  for (const k of Object.keys(body)) if (!["title", "priority", "link", "note", "status", "description", "doing"].includes(k)) return fail(`unknown field: ${k}`);
+  for (const k of Object.keys(body)) if (!["title", "priority", "link", "note", "status", "description", "doing", "today"].includes(k)) return fail(`unknown field: ${k}`);
   if (body.title !== undefined) { const r = cleanTitle(body.title); if (!r.ok) return r; out.title = r.value; }
   if (body.priority !== undefined) { const r = cleanPriority(body.priority); if (!r.ok) return r; out.priority = r.value; }
   if (body.link !== undefined) { const r = cleanLink(body.link); if (!r.ok) return r; out.link = r.value; }
@@ -58,6 +58,11 @@ export function parsePatch(body: Record<string, unknown>): Result<TodoPatch> {
     if (body.doing !== null && typeof body.doing !== "boolean") return fail("doing must be boolean or null");
     out.doing = body.doing as boolean | null;
   }
+  if (body.today !== undefined) {
+    // 오늘 할 일로 고르기(true)·빼기(false·null)
+    if (body.today !== null && typeof body.today !== "boolean") return fail("today must be boolean or null");
+    out.today = body.today === true;
+  }
   if (body.status !== undefined) {
     if (body.status !== "open" && body.status !== "done") return fail("status must be open or done");
     out.status = body.status;
@@ -67,10 +72,10 @@ export function parsePatch(body: Record<string, unknown>): Result<TodoPatch> {
 
 // POST /todos 본문
 export function parseNew(body: Record<string, unknown>): Result<NewTodo> {
-  for (const k of Object.keys(body)) if (!["title", "priority", "link", "note"].includes(k)) return fail(`unknown field: ${k}`);
+  for (const k of Object.keys(body)) if (!["title", "priority", "link", "note", "today"].includes(k)) return fail(`unknown field: ${k}`);
   const p = parsePatch({ ...body, title: body.title ?? "" });
   if (!p.ok) return p;
-  return { ok: true, value: { title: p.value.title!, priority: p.value.priority ?? 2, link: p.value.link ?? null, note: p.value.note ?? null } };
+  return { ok: true, value: { title: p.value.title!, priority: p.value.priority ?? 2, link: p.value.link ?? null, note: p.value.note ?? null, ...(p.value.today ? { today: true } : {}) } };
 }
 
 // 모델이 낸 op 한 개 → 패치. 모델은 안 쓰는 필드를 ""로 채우기도 하니 ""는 '안 바꿈', null만 '지우기'

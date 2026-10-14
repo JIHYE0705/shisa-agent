@@ -30,7 +30,7 @@ export const PHRASE_MAX_LINES = 10; // 데몬(agent/src/phrases.ts)과 같은 �
 export function sanitizeSettingsPatch(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
   const out = {};
-  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge') return null;
+  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder') return null;
   if (p.models !== undefined) {
     if (!p.models || typeof p.models !== 'object' || Array.isArray(p.models)) return null;
     const m = {};
@@ -62,7 +62,50 @@ export function sanitizeSettingsPatch(p) {
     if (!Array.isArray(p.autoMerge) || p.autoMerge.length > AUTO_MERGE_MAX || !p.autoMerge.every(okRepoSlug)) return null;
     out.autoMerge = [...new Set(p.autoMerge)];
   }
+  // 오늘 할 일 알림: { mode: auto|off, everyHours: 0 이상, times: [HH:MM] }
+  if (p.todayReminder !== undefined) {
+    const r = cleanReminder(p.todayReminder);
+    if (!r) return null;
+    out.todayReminder = r;
+  }
   return Object.keys(out).length ? out : null;
+}
+
+// ---- 오늘 할 일 알림(GET /settings todayReminder) ----
+export const REMINDER_DEFAULT = { mode: 'auto', everyHours: 0, times: [] }; // 영업일 아침 첫 실행 때 한 번(데몬 기본과 같다)
+export const REMINDER_HOURS = [0, 1, 2, 3, 4]; // 고를 수 있는 'N시간마다'(0 = 안 함)
+const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
+export function cleanReminder(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  if (Object.keys(v).some((k) => !['mode', 'everyHours', 'times'].includes(k))) return null;
+  const mode = v.mode ?? 'auto';
+  const every = v.everyHours ?? 0;
+  const times = v.times ?? [];
+  if (mode !== 'auto' && mode !== 'off') return null;
+  if (typeof every !== 'number' || !Number.isFinite(every) || every < 0) return null;
+  if (!Array.isArray(times) || times.some((t) => typeof t !== 'string' || !TIME.test(t))) return null;
+  return { mode, everyHours: every, times: [...new Set(times)].sort() };
+}
+// '10:00, 9:5, 15:30' → ['09:05', '10:00', '15:30']. 못 읽는 게 있으면 { error }
+export function parseTimes(text) {
+  const parts = String(text ?? '').split(/[\s,，、]+/).filter(Boolean);
+  const out = [];
+  for (const x of parts) {
+    const m = /^(\d{1,2})(?::(\d{1,2}))?$/.exec(x.replace(/시$/, ''));
+    const hh = m ? Number(m[1]) : NaN, mm = m ? Number(m[2] ?? 0) : NaN;
+    if (!m || hh > 23 || mm > 59) return { error: `"${x}"를 시각으로 못 읽었어요. 10:00 처럼 적어 주세요` };
+    out.push(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`);
+  }
+  return { times: [...new Set(out)].sort() };
+}
+// 지금 설정을 한 줄로
+export function reminderSummary(r) {
+  const c = cleanReminder(r ?? REMINDER_DEFAULT) ?? REMINDER_DEFAULT;
+  if (c.mode === 'off') return '알리지 않아요. 오늘 할 일 탭은 그대로 쓸 수 있어요.';
+  const parts = ['영업일 아침 첫 실행 때 한 번'];
+  if (c.everyHours > 0) parts.push(`그 뒤 ${c.everyHours}시간마다(8시~21시)`);
+  if (c.times.length) parts.push(`${c.times.join(', ')}에`);
+  return `${parts.join(', ')} 알려요. 다 끝냈으면 조용히 있어요.`;
 }
 
 // ---- 문구(GET /settings phrases: [{ key, group, label, vars, default: [줄], value: [줄] | null }]) ----

@@ -19,6 +19,7 @@ export type Todo = {
   appliedRule?: { id: string; text: string }; // 이 할 일에 적용된 할 일 규칙(todo-rules.ts)
   progress?: string; progressAt?: string; // 어디까지 됐는지(주기 진행 확인 todo-progress.ts 가 씀 — 사용자 필드 아님)
   doing?: boolean; // 사용자가 직접 정한 (진행중): true 켬 · false 끔 · 없음 = 자동(progress 가 있으면 진행중)
+  today?: string; // 오늘 할 일로 고른 날(KST YYYY-MM-DD). 그날 '오늘 할 일' 탭에 같은 줄로 보인다(daily-plan.ts)
 };
 export type TodoSourceKind = "slack" | "commit" | "mail" | "session" | "calendar" | "jira" | "user" | "other";
 export type TodoSource = {
@@ -39,7 +40,8 @@ export const kstDay = (iso: string | number | Date) => {
 };
 export type AutoEvidence = { ids: string[]; permalink?: string };
 export type TodoField = "title" | "priority" | "link" | "note" | "status" | "description";
-export type TodoPatch = { title?: string; priority?: number; link?: string | null; note?: string | null; status?: "open" | "done"; description?: string | null; doing?: boolean | null };
+// today: true = 오늘(KST)로 고름, 날짜 글 = 그날로, false·null = 오늘 할 일에서 뺌(할 일은 그대로)
+export type TodoPatch = { title?: string; priority?: number; link?: string | null; note?: string | null; status?: "open" | "done"; description?: string | null; doing?: boolean | null; today?: boolean | string | null };
 // 휴지통에 든 할 일(패널 '휴지통' 그룹). priority·status는 옮기기 전 것
 export type TrashedTodo = Todo & { trashedAt: string; prevStatus: string };
 export const TRASH_KEEP_DAYS = 30; // 휴지통에 이보다 오래 있으면 영구 삭제
@@ -91,6 +93,9 @@ CREATE INDEX IF NOT EXISTS todo_ledger_todo ON todo_ledger(todo_id, n);
 `;
 
 const now = () => new Date().toISOString();
+// 오늘 할 일 날: true = 오늘(KST), 'YYYY-MM-DD' = 그날, 나머지 = 뺌
+const planDay = (v: boolean | string | null | undefined): string | null =>
+  v === true ? kstDay(new Date()) : typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
 
 function todoRow(r: any): Todo {
   let edited: TodoField[] = [];
@@ -116,6 +121,7 @@ function todoRow(r: any): Todo {
     ...(rule ? { appliedRule: rule } : {}),
     ...(r.progress ? { progress: r.progress, ...(r.progress_at ? { progressAt: r.progress_at } : {}) } : {}),
     ...(r.doing === 1 || r.doing === 0 ? { doing: r.doing === 1 } : {}),
+    ...(r.plan_day ? { today: r.plan_day } : {}),
   };
 }
 
@@ -143,6 +149,7 @@ export class Store {
       ["trashed_at", "TEXT"], ["prev_status", "TEXT"], ["prev_priority", "INTEGER"], // 휴지통: 옮긴 때 · 되살릴 상태·우선순위
       ["progress", "TEXT"], ["progress_at", "TEXT"], // 어디까지 됐는지(todo-progress.ts)
       ["doing", "INTEGER"], // 사용자가 누른 (진행중) 토글: 1 켬 · 0 끔 · NULL 자동
+      ["plan_day", "TEXT"], // 오늘 할 일로 고른 날(KST), daily-plan.ts
     ];
     for (const [name, type] of add) if (!cols.has(name)) this.db.exec(`ALTER TABLE todos ADD COLUMN ${name} ${type}`);
     // 할 일 일지: 처음 만들 때 지금 있는 할 일·휴지통·묘비로 한 번 채운다(예전 DB 도 "사용자가 지운 일"을 바로 기억)
@@ -334,13 +341,13 @@ export class Store {
   }
 
   // 사용자가 직접 추가한 할 일
-  addTodo(t: { title: string; priority?: number; link?: string | null; note?: string | null; source?: string; description?: string | null; sourceRef?: string | null; origin?: TodoSource }, by: TodoActor = "user"): Todo {
+  addTodo(t: { title: string; priority?: number; link?: string | null; note?: string | null; source?: string; description?: string | null; sourceRef?: string | null; origin?: TodoSource; today?: boolean | string | null }, by: TodoActor = "user"): Todo {
     const id = `user:${randomUUID()}`;
     const at = now();
     this.db
-      .prepare("INSERT INTO todos (id, title, source, link, priority, status, created, note, updated, description, source_ref, origin) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)")
+      .prepare("INSERT INTO todos (id, title, source, link, priority, status, created, note, updated, description, source_ref, origin, plan_day) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)")
       .run(id, t.title, t.source ?? "user", t.link ?? null, t.priority ?? 2, at, t.note ?? null, at,
-        t.description ?? null, t.sourceRef ?? null, t.origin ? JSON.stringify(t.origin) : null);
+        t.description ?? null, t.sourceRef ?? null, t.origin ? JSON.stringify(t.origin) : null, planDay(t.today));
     this.log(id, t.title, "added", by, undefined, at);
     return this.getTodo(id)!;
   }
@@ -403,6 +410,8 @@ export class Store {
     }
     // (진행중) 토글: 사용자 필드로 치지 않는다(브리핑이 제목 등을 덮지 못하게 하는 userEdited 와 무관)
     if (patch.doing !== undefined) { sets.push("doing = ?"); vals.push(patch.doing === null ? null : patch.doing ? 1 : 0); }
+    // 오늘 할 일 고르기·빼기: 사용자 필드 아님(브리핑이 덮지 않는 제목 등과 무관)
+    if (patch.today !== undefined) { sets.push("plan_day = ?"); vals.push(planDay(patch.today)); }
     if (!sets.length) return cur;
     if (patch.status !== undefined && patch.status !== cur.status) { sets.push("done_by = ?"); vals.push(patch.status === "done" ? "user" : null); }
     sets.push("user_edited = ?", "updated = ?");
@@ -483,6 +492,10 @@ export class Store {
   getTodo(id: string): Todo | undefined {
     const r = this.db.prepare("SELECT * FROM todos WHERE id = ? AND trashed_at IS NULL").get(id); // 휴지통에 든 건 없는 셈
     return r ? todoRow(r) : undefined;
+  }
+  // 그날 오늘 할 일로 고른 것(열림·끝냄, 휴지통 제외). 순서는 열린 할 일 목록과 같다
+  todayTodos(day: string): Todo[] {
+    return (this.db.prepare("SELECT * FROM todos WHERE plan_day = ? AND status IN ('open', 'done') ORDER BY priority, sort IS NULL, sort, created").all(day) as any[]).map(todoRow);
   }
   openTodos(): Todo[] {
     return (this.db.prepare("SELECT * FROM todos WHERE status = 'open' ORDER BY priority, sort IS NULL, sort, created").all() as any[]).map(todoRow);

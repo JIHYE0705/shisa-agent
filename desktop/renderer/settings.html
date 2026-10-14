@@ -32,6 +32,21 @@
       <div id="sources" class="toggles"></div>
     </section>
 
+    <section class="card" aria-labelledby="h-rem">
+      <h2 id="h-rem">오늘 할 일 알림</h2>
+      <p class="hint">오늘 할 일을 적어 달라거나, 남은 게 있다고 캐릭터가 알려 줘요. AI 연결 없이도 정해진 말로 알려요.</p>
+      <div id="rem-mode" class="toggles" role="radiogroup" aria-label="오늘 할 일 알림"></div>
+      <div id="rem-auto" class="rem-auto">
+        <label class="rem-line">그 뒤 <select id="rem-every" aria-label="몇 시간마다"></select> 마다 다시 알리기</label>
+        <div class="gl-add">
+          <input id="rem-times" type="text" placeholder="정한 시각에도 알리기 (예: 10:00, 15:30)" aria-label="알릴 시각">
+          <button id="rem-times-save" type="button" class="primary">저장</button>
+        </div>
+      </div>
+      <p id="rem-summary" class="hint"></p>
+      <div id="rem-err" class="ph-err" role="status"></div>
+    </section>
+
     <section id="am-card" class="card" aria-labelledby="h-am">
       <h2 id="h-am">자동 머지</h2>
       <p class="hint">여기 있는 레포는 ✓ 없이 머지까지 해요 — 채팅에서 시킨 머지, 시사가 고친 코드로 올린 PR 이 검사(실패·대기 중 검사·충돌·초안)를 통과하면 바로 머지해요. 채팅에서 「이 레포는 알아서 머지까지 해」·「X는 이제 머지 묻고 해」로도 바꿀 수 있어요.</p>

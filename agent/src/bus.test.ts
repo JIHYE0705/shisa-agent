@@ -108,31 +108,19 @@ test("bus: /profile/facts 저장·목록·삭제", async () => {
   }
 });
 
-test("bus: /today 핸들러 없으면 503, 있으면 저장", async () => {
-  const a = await serve();
-  try {
-    assert.equal((await a.post("/today", JSON.stringify({ items: [] }))).status, 503);
-    assert.equal((await a.post("/today", JSON.stringify({ items: [] }), {})).status, 403);
-  } finally {
-    a.bus.close();
-  }
-  const got: unknown[] = [];
+test("bus: 오늘 할 일은 할 일 API 로(today 필드), 예전 /today 표 저장은 없음", async () => {
+  const added: unknown[] = [], edited: unknown[] = [];
   const b = await serve({
-    todaySave: (items) => {
-      got.push(items);
-      return items.some((x) => x.title === "bad") ? { ok: false, message: "안 돼요" } : { ok: true, plan: { date: "2026-10-08", items, asked: true } };
-    },
+    todoAdd: (t) => { added.push(t); return { id: "user:1" }; },
+    todoEdit: (id, patch) => { edited.push([id, patch]); return { id }; },
   });
   try {
-    const items = [{ id: "a", title: "리뷰", done: false }];
-    const r = await b.post("/today", JSON.stringify({ items }));
-    assert.equal(r.status, 200);
-    assert.equal((await r.json()).ok, true);
-    assert.equal((await b.post("/today", JSON.stringify({ items: "x" }))).status, 400);
-    const bad = await b.post("/today", JSON.stringify({ items: [{ title: "bad" }] }));
-    assert.equal(bad.status, 400);
-    assert.deepEqual(await bad.json(), { ok: false, error: "안 돼요" });
-    assert.deepEqual(got[0], items);
+    assert.equal((await b.post("/todos", JSON.stringify({ title: "리뷰", priority: 1, today: true }))).status, 201);
+    assert.deepEqual(added[0], { title: "리뷰", priority: 1, link: null, note: null, today: true });
+    assert.equal((await b.post("/todos/user:1", JSON.stringify({ today: false }))).status, 200);
+    assert.deepEqual(edited[0], ["user:1", { today: false }]);
+    assert.equal((await b.post("/todos/user:1", JSON.stringify({ today: "yes" }))).status, 400);
+    assert.equal((await b.post("/today", JSON.stringify({ items: [] }))).status, 404);
   } finally {
     b.bus.close();
   }

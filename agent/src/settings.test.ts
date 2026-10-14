@@ -229,3 +229,27 @@ test("Settings: 뇌·이름·레포 폴더 — 바로 반영, 키 지우기·모
   const e = s.put({ brain: { keys: { gemini: "AIza secret" } } });
   assert.equal(!e.ok && e.error.includes("AIza"), false, "오류 글에 키가 없다");
 });
+
+test("Settings: 오늘 할 일 알림: 기본은 아침 한 번, 고치면 파일·메모리에 바로, 잘못된 값은 400", () => {
+  const dir = tmp();
+  const p = join(dir, "config.json");
+  writeFileSync(p, JSON.stringify({ slackBotToken: "xoxb-keep" }));
+  const cfg = cfgOf();
+  assert.deepEqual(cfg.todayReminder, { mode: "auto", everyHours: 0, times: [] });
+  const s = new Settings(cfg, { path: p, env: {} });
+  assert.deepEqual(s.view().todayReminder, { mode: "auto", everyHours: 0, times: [] });
+  const r = s.put({ todayReminder: { mode: "auto", everyHours: 3, times: ["14:00", "09:30"] } });
+  assert.equal(r.ok, true);
+  assert.deepEqual(cfg.todayReminder, { mode: "auto", everyHours: 3, times: ["09:30", "14:00"] });
+  const file = JSON.parse(readFileSync(p, "utf8"));
+  assert.deepEqual(file.todayReminder, { mode: "auto", everyHours: 3, times: ["09:30", "14:00"] });
+  assert.equal(file.slackBotToken, "xoxb-keep");
+  assert.deepEqual(cfgOf(file).todayReminder, cfg.todayReminder, "다시 켜도 같은 값");
+  assert.equal(s.put({ todayReminder: { mode: "off" } }).ok, true);
+  assert.equal(cfg.todayReminder?.mode, "off");
+  const bad = s.put({ todayReminder: { mode: "loud" } });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.status, 400);
+  assert.equal(s.put({ todayReminder: { times: ["9시"] } }).ok, false);
+  assert.equal(cfg.todayReminder?.mode, "off", "잘못된 값은 아무것도 안 바꾼다");
+});

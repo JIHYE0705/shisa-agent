@@ -100,7 +100,7 @@ export function briefingTask(c: Connectors | null = CONNECTORS, ready: ReadonlyS
   }
   if (usable("issues") && issues.mode === "mcp") steps.push(`${STEP_HEAD.issues} 나에게 할당된 열린 이슈·리뷰 요청(${tool(issues, "search", "list", "searchPrs")})`);
   steps.push(`${STEP_HEAD.sessions} 맥락: 하다 만 작업, 세션에서 미뤄둔 것`);
-  steps.push("오늘 할 일 표가 비어 있고 오늘 회의·할 일이 있으면 plan_ops로 오늘 표를 채워도 된다(서버에 올리지 않는 로컬 표)");
+  steps.push("오늘 할 일이 비어 있고 오늘 회의·할 일이 있으면 plan_ops로 오늘 할 일을 채워도 된다(우선순위 포함, 서버에 올리지 않는 로컬)");
   const skip = skipped.length
     ? `\n${skipped.join("·")}는 MCP 서버가 연결돼 있지 않다 — 찾거나(도구 목록 검색 포함) 부르지 말고 건너뛴다. reply_md 에도 언급하지 않는다.`
     : "";

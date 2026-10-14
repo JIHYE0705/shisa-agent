@@ -261,6 +261,31 @@ export class Reactions {
     return null;
   }
 
+  // ---- 4b. 오늘 할 일(KST 그날 고른 것) 진행률: 절반 넘으면 하루 한 번, 다 끝내면 하루 한 번 ----
+  // 문구·스티커는 하루 진행률과 같은 것(daily_half·daily_all). 할 일 탭 진행률과 따로 센다(키 today-half·today-all)
+  todayProgress(items: { id: string; done: boolean }[]): "half" | "all" | null {
+    const now = this.now();
+    const date = kstDate(now);
+    const total = items.length, done = items.filter((x) => x.done).length;
+    if (total >= 1 && done === total && this.once(`today-all:${date}`)) {
+      this.log.fired[`today-half:${date}`] ??= now.toISOString(); // 다 했으면 절반 응원은 건너뛴다
+      this.save();
+      this.bus.bubble({
+        id: `daily-progress:${date}`, image: "daily_all_complete", kind: "done", ttlMs: 25e3,
+        text: phraseVoice("daily_all", { total }, `today-all:${date}`, { r: this.random() }),
+      });
+      return "all";
+    }
+    if (total >= 2 && done < total && done * 2 >= total && this.once(`today-half:${date}`)) {
+      this.bus.bubble({
+        id: `daily-progress:${date}`, image: "daily_half_complete", kind: "done", ttlMs: 20e3,
+        text: phraseVoice("daily_half", { done, total }, `today-half:${date}`, { r: this.random() }),
+      });
+      return "half";
+    }
+    return null;
+  }
+
   // ---- 5. 할 거 많다: 열린 P1+P2 가 문턱 이상이면 반나절에 한 번 ----
   lotsDue(open: TodoLike[]): boolean {
     return this.urgent(open) >= this.opts.lotsThreshold && !this.fired(`lots:${halfDayKey(this.now())}`);

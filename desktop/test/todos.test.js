@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanLink, cleanTitle, detailPatch, newTodoBody, overlayTodos, sanitizeTodoPatch } from '../src/todos.js';
+import { cleanLink, cleanTitle, detailPatch, newTodoBody, overlayTodos, sanitizeTodoPatch, patchToday, isToday } from '../src/todos.js';
 import { groupTodos } from '../src/dashboard.js';
 
 const server = [
@@ -98,4 +98,27 @@ test('(진행중): 사용자 토글이 먼저, 없으면 비서 진척', async (
   const [t] = overlayTodos([{ id: 'a', title: 'x', userEdited: false }], [{ kind: 'edit', id: 'a', patch: { doing: true }, rule: true }]);
   assert.equal(t.doing, true);
   assert.equal(t.userEdited, false); // 토글은 '직접 수정' 표시를 달지 않는다
+});
+
+test('오늘 할 일: today 패치는 IPC 를 통과하고, 겹쳐 보기·응답 전 맞추기', () => {
+  assert.deepEqual(sanitizeTodoPatch({ today: true }), { today: true });
+  assert.deepEqual(sanitizeTodoPatch({ today: null }), { today: null });
+  assert.equal(sanitizeTodoPatch({ today: 'x' }), null);
+  assert.deepEqual(sanitizeTodoPatch({ title: '가', priority: 1, today: true }, { allowStatus: false }), { title: '가', priority: 1, today: true });
+  // 응답 전 겹쳐 보기: 고르면 날짜가 붙고, 빼면(null) 없어진다
+  const base = [{ id: 'a', title: '가', priority: 2 }, { id: 'b', title: '나', priority: 1, today: '2026-10-09' }];
+  const on = overlayTodos(base, [{ kind: 'edit', id: 'a', patch: { today: '2026-10-09' }, rule: true }]);
+  assert.equal(on[0].today, '2026-10-09');
+  assert.equal(on[0].userEdited, undefined, '오늘 고르기는 사용자 편집 표시를 달지 않는다');
+  const off = overlayTodos(base, [{ kind: 'edit', id: 'b', patch: { today: null }, rule: true }]);
+  assert.equal('today' in off[1], false);
+  assert.equal(isToday(on[0], '2026-10-09'), true);
+  assert.equal(isToday(on[0], ''), false);
+  // 대시보드 today 맞추기
+  const t = { date: '2026-10-09', asked: true, items: [{ id: 'b', title: '나', done: false, priority: 1 }] };
+  assert.deepEqual(patchToday(t, 'b', { done: true }).items, [{ id: 'b', title: '나', done: true, priority: 1 }]);
+  assert.deepEqual(patchToday(t, 'b', null).items, []);
+  assert.deepEqual(patchToday(t, 'n', { title: '새', priority: 3 }).items.at(-1), { id: 'n', done: false, priority: 3, title: '새' });
+  assert.equal(patchToday(t, 'n', { done: true }), t, '모르는 줄에 상태만 오면 그대로');
+  assert.equal(patchToday(null, 'b', null), null);
 });

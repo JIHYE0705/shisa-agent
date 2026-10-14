@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   sanitizeSettingsPatch, okPanelTarget, needsSetupHint, okCheckId, dotClass, agoText, latencyText, groupRows, pendingChecks, mergeRows, toggleExclude, metaText,
   phraseGroups, phraseText, phraseCustom, phraseSaveValue, phraseProblem, repoSlugFrom, autoMergeNext,
+  cleanReminder, parseTimes, reminderSummary, REMINDER_DEFAULT,
 } from '../src/settings.js';
 import { setupSettings } from '../src/settings-window.js';
 
@@ -172,4 +173,23 @@ test('설정 창: 문구 칸 · 저장은 그 문구 하나만 PUT', async () =>
   listeners['open-settings']({ sender: 'panel' });
   await handlers['settings-put']({ sender: fakeWin.webContents }, { phrases: { dance: '춤!' } });
   assert.deepEqual(requests.map((x) => x.slice(0, 3)), [['PUT', '/settings', { phrases: { dance: '춤!' } }]]);
+});
+
+test('오늘 할 일 알림: 저장 본문 거르기 · 시각 읽기 · 한 줄 요약, 설정 창에 칸이 있다', () => {
+  assert.deepEqual(sanitizeSettingsPatch({ todayReminder: { mode: 'auto', everyHours: 2, times: ['15:00', '09:30', '15:00'] } }), { todayReminder: { mode: 'auto', everyHours: 2, times: ['09:30', '15:00'] } });
+  assert.deepEqual(sanitizeSettingsPatch({ todayReminder: { mode: 'off' } }), { todayReminder: { mode: 'off', everyHours: 0, times: [] } });
+  assert.equal(sanitizeSettingsPatch({ todayReminder: { mode: 'loud' } }), null);
+  assert.equal(sanitizeSettingsPatch({ todayReminder: { times: ['9시'] } }), null);
+  assert.equal(sanitizeSettingsPatch({ todayReminder: { everyHours: -1 } }), null);
+  assert.equal(sanitizeSettingsPatch({ todayReminder: { x: 1 } }), null);
+  assert.equal(cleanReminder(null), null);
+  assert.deepEqual(parseTimes('10:00, 9:5 15시'), { times: ['09:05', '10:00', '15:00'] });
+  assert.deepEqual(parseTimes(''), { times: [] });
+  assert.match(parseTimes('25:00').error, /10:00 처럼/);
+  assert.equal(reminderSummary(REMINDER_DEFAULT), '영업일 아침 첫 실행 때 한 번 알려요. 다 끝냈으면 조용히 있어요.');
+  assert.equal(reminderSummary({ mode: 'auto', everyHours: 2, times: ['15:00'] }), '영업일 아침 첫 실행 때 한 번, 그 뒤 2시간마다(8시~21시), 15:00에 알려요. 다 끝냈으면 조용히 있어요.');
+  assert.match(reminderSummary({ mode: 'off' }), /알리지 않아요/);
+  assert.doesNotMatch(reminderSummary({ mode: 'auto', everyHours: 1, times: [] }), /—/);
+  const html = readFileSync(new URL('../renderer/settings.html', import.meta.url), 'utf8');
+  for (const id of ['rem-mode', 'rem-every', 'rem-times', 'rem-times-save', 'rem-summary']) assert.match(html, new RegExp(`id="${id}"`));
 });

@@ -614,11 +614,13 @@ button.setup-copy { padding: 2px 8px; font-size: 11.5px; }
 .todo.row .check { width: 16px; height: 16px; margin: 0; flex: none; cursor: pointer; accent-color: var(--ok); }
 .todo .chip.mine { flex: none; }
 .todo .chip { flex: none; }
-#sec-todos input[type="text"], #sec-todos input[type="url"], #sec-todos textarea, #sec-todos select {
+#sec-todos input[type="text"], #sec-todos input[type="url"], #sec-todos textarea, #sec-todos select,
+#sec-today input[type="text"], #sec-today input[type="url"], #sec-today textarea, #sec-today select {
   padding: 5px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); outline: none;
 }
-#sec-todos input:focus, #sec-todos textarea:focus, #sec-todos select:focus { border-color: var(--accent); }
-#sec-todos select.prio { padding: 3px 4px; font-size: 12px; flex: none; }
+#sec-todos input:focus, #sec-todos textarea:focus, #sec-todos select:focus,
+#sec-today input:focus, #sec-today textarea:focus, #sec-today select:focus { border-color: var(--accent); }
+#sec-todos select.prio, #sec-today select.prio { padding: 3px 4px; font-size: 12px; flex: none; }
 .todo-add { display: flex; gap: 8px; align-items: center; margin: 4px 0 6px; }
 .todo-add input { flex: 1; min-width: 0; }
 .todo-wrap { border-top: 1px solid var(--line); }
@@ -649,12 +651,14 @@ button.ghost.danger-text { color: var(--err); }
 .todo.is-done .t { color: var(--muted); text-decoration: line-through; }
 .todo.is-done .chip.auto { cursor: help; }
 
-/* 오늘 할 일 표 */
-#sec-today .today-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
-#sec-today .today-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-#sec-today .today-row { display: flex; align-items: center; gap: 8px; }
-#sec-today .today-row.done input.title { color: var(--muted); text-decoration: line-through; }
-#sec-today input.title { flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; color: inherit; }
+/* 오늘 할 일: 할 일 탭과 같은 줄·묶음. 머리에 날짜와 남은 수 */
+#sec-today .today-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 4px; }
+#sec-today .today-head h2 { margin: 0; }
+/* 줄의 '오늘' 토글: 오늘 할 일로 고르기·빼기 */
+.todo.row .row-today { flex: none; padding: 1px 7px; font-size: 11.5px; border-radius: 999px; color: var(--faint); opacity: 0; transition: opacity 0.12s ease; }
+.todo.row:hover .row-today, .todo.row:focus-visible .row-today, .todo.row:focus-within .row-today, .todo.row .row-today:focus-visible, .todo.row .row-today.on { opacity: 1; }
+.todo.row .row-today.on { color: var(--accent); background: var(--accent-soft); }
+@media (prefers-reduced-motion: reduce) { .todo.row .row-today { transition: none; } }
 .confirm { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .confirm { padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); }
 .result { margin-top: 10px; font-size: 12.5px; }
@@ -1204,7 +1208,7 @@ button.setup-inline { padding: 6px 14px; font-size: 13px; }
 .undo-toast .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--toast-accent); transform-origin: left; animation: undo-shrink 5s linear forwards; }
 @keyframes undo-shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) { .undo-toast .bar { animation: none; opacity: 0.4; } .todo.row .row-trash { transition: none; } }
-body.has-undo #sec-todos { padding-bottom: 64px; }
+body.has-undo #sec-todos, body.has-undo #sec-today { padding-bottom: 64px; }
 
 /* 확인 카드(회의 응답 등): 답 아래, 팝오버 안. [실행]을 눌러야 보낸다 */
 .action-card {

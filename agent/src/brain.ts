@@ -23,7 +23,7 @@ import { kgContext } from "./kg/context.ts";
 import { attentionSince, formatAttention } from "./ingest/slack.ts";
 import type { Store } from "./store.ts";
 import { PRIORITY_DESC, TODO_OPS_SCHEMA, type TodoOp } from "./todos.ts";
-import { PLAN_OPS_SCHEMA, type PlanOp } from "./daily-plan.ts";
+import { DailyPlanService, PLAN_OPS_SCHEMA, type PlanOp } from "./daily-plan.ts";
 import { MEMORY_OPS_SCHEMA, type MemoryOp } from "./profile.ts";
 import { listRules, rulesContext, RULE_SCHEMA } from "./todo-rules.ts";
 import { guidelinesFor } from "./guidelines.ts";
@@ -44,7 +44,7 @@ export type Thought = {
   done_todo_ids: string[];
   proposals: { repo: string; title: string; plan: string; base?: string }[]; // base: PR 대상 브랜치(채팅 제안만 채운다)
   todo_ops?: TodoOp[]; // 사용자 요청 경로(DM)에서만
-  plan_ops?: PlanOp[]; // 오늘 할 일 표(로컬)
+  plan_ops?: PlanOp[]; // 오늘 할 일(할 일 중 오늘로 고른 것, 로컬)
   memory_ops?: MemoryOp[]; // 사용자 요청 경로: 개인 기억 저장·삭제
   rule?: unknown; // 사용자 요청 경로(DM)에서만: 지속 규칙 제안(todo-rules.ts parseRule로 검증)
   actions?: unknown[]; // 예전 회의 응답 제안(actions.ts) — 지금 스키마엔 없음. 들어오면 그대로 확인 카드로
@@ -185,14 +185,13 @@ export function buildContext(store: Store, now = new Date(), opts: { selfId?: st
 
 function todayPlan(store: Store): string {
   try {
-    const date = new Date().toLocaleString("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).slice(0, 10);
-    const rows = store.db.prepare("SELECT id, title, done FROM daily_plan WHERE date = ? ORDER BY sort, id").all(date) as any[];
-    const lines = ["## 오늘 할 일 표 (패널 · 로컬, 서버에 안 올림)"];
-    if (!rows.length) {
-      lines.push("(비어 있음 — 오늘 회의·할 일을 보고 plan_ops add 로 적을 수 있다)");
+    const plan = new DailyPlanService(store).state();
+    const lines = ["## 오늘 할 일 (패널 '오늘 할 일' 탭 · 할 일 중 오늘로 고른 것 · 로컬)"];
+    if (!plan.items.length) {
+      lines.push("(비어 있음. 오늘 회의·할 일을 보고 plan_ops add 로 적거나, 있는 할 일을 add(id)로 오늘로 고를 수 있다)");
       return lines.join("\n");
     }
-    for (const r of rows) lines.push(`- id=${r.id} ${r.done ? "[x]" : "[ ]"} ${r.title}`);
+    for (const r of plan.items) lines.push(`- id=${r.id} ${r.done ? "[x]" : "[ ]"} [${r.priority === 4 ? "백로그" : `P${r.priority}`}] ${r.title}`);
     return lines.join("\n");
   } catch { return ""; }
 }
