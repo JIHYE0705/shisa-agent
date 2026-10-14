@@ -36,6 +36,7 @@ export type ConnRow = {
   check: CheckId;          // [다시 확인] 이 부를 확인 단위
   pending?: boolean;       // 아직 한 번도 확인 안 함(설정 창이 열리면 check 를 부른다)
   doc?: string;            // 연결 방법 안내 문서(레포 안 경로, 예 docs/connect/slack.md)
+  server?: string;         // 커넥터가 mcp 모드면 Claude Code 에 등록한 서버 이름([연결 해제] 안내용)
   used?: boolean;          // 이 에이전트가 실제로 쓰는 연결인가(아니면 접어서 보여 준다)
   briefing?: { source: BriefingSource; label: string; included: boolean }[]; // 이 연결로 가져오는 브리핑 출처와 포함 여부
 };
@@ -209,6 +210,7 @@ export class Connections {
         used: st.mode !== "off", state: st.mode === "off" ? "off" : st.ready ? "ok" : "error", detail: st.detail,
         summary: st.mode === "off" ? "연결 안 함" : st.mode === "api" ? "직접 연결(API)" : `MCP (${x.mode === "mcp" ? x.server : ""})`,
         briefing: brief([cap as Capability]),
+        ...(x.mode === "mcp" ? { server: x.server } : {}),
       };
       if (x.mode === "mcp" && st.ready) {
         const h = this.http[x.server];

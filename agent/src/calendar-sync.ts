@@ -350,6 +350,13 @@ export class CalendarSync {
   // 캘린더가 연결돼 있나(off 면 동기화·알림을 하지 않는다)
   get enabled(): boolean { return this.deps.source !== null; }
 
+  // [연결 해제]: 데몬을 다시 켜지 않아도 지금부터 동기화·알림을 멈추고 회의도 안 보여 준다
+  disable() {
+    this.deps.source = null;
+    this.stopped = true;
+    if (this.timer) this.deps.clearTimer(this.timer);
+  }
+
   private async doSync(): Promise<CalendarSyncResult> {
     const w = this.window();
     const src = this.deps.source;

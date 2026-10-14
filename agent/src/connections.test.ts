@@ -55,7 +55,7 @@ function make(over: Partial<ConstructorParameters<typeof Connections>[1]> = {}, 
 }
 
 const byId = (rows: ConnRow[], id: string) => rows.find((r) => r.id === id)!;
-const SHAPE = new Set(["id", "label", "summary", "group", "state", "detail", "error", "latencyMs", "checkedAt", "check", "pending", "doc", "used", "briefing"]);
+const SHAPE = new Set(["id", "label", "summary", "group", "state", "detail", "error", "latencyMs", "checkedAt", "check", "pending", "doc", "server", "used", "briefing"]);
 
 test("Connections: 처음엔 비싼 확인(claude)은 pending, list 는 net·gh 를 새로, 커넥터마다 한 줄", async () => {
   const { c } = make();

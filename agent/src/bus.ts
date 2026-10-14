@@ -124,6 +124,8 @@ export type BusHandlers = {
   status?: () => unknown;
   // 설치 마법사가 config.json 의 connectors 를 고친 뒤: 다시 읽어 바뀌었는지 + (launchd 아래면) 다시 켜는지. POST /connectors/reload. 없으면 503
   connectorsReload?: () => { changed: boolean; restarting: boolean };
+  // [연결 해제]: config.json 의 connectors[cap] 을 off 로(토큰·ICS 주소도 지움) + 다시 읽기(disconnect.ts). POST /connectors/disconnect { cap }. 없으면 503
+  connectorDisconnect?: (cap: unknown) => { ok: true; [k: string]: unknown } | { ok: false; status: number; error: string };
   // 행동 지침(guidelines.ts): GET/POST /guidelines · GET/PUT/DELETE /guidelines/:id. 없으면 503
   guidelines?: GuidelinesApi;
 };
@@ -431,6 +433,13 @@ export class Bus {
       if (req.headers["x-cy-agent"] !== "1" || (req.headers.origin && !req.headers.origin.startsWith("file://"))) return json(res, 403, { error: "forbidden" });
       if (url.pathname === "/connectors/reload") {
         return h.connectorsReload ? json(res, 200, h.connectorsReload()) : json(res, 503, { error: "reload unavailable" });
+      }
+      if (url.pathname === "/connectors/disconnect") {
+        if (!h.connectorDisconnect) return json(res, 503, { error: "disconnect unavailable" });
+        const body = await readJson(req);
+        for (const k of Object.keys(body)) if (k !== "cap") throw new BadRequest(`unknown key: ${k}`);
+        const r = h.connectorDisconnect(body.cap);
+        return r.ok ? json(res, 200, r) : json(res, r.status, { error: r.error });
       }
       // 첨부 올리기: 본문 = 파일 바이트, 이름은 x-file-name(encodeURIComponent), 종류는 content-type → 201 { attachment }
       if (url.pathname === "/chat/attachments") {

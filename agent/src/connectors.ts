@@ -160,7 +160,8 @@ export function slackIngestMode(c: Connectors = CONNECTORS): "api" | null {
 
 // ── 상태(패널 "연결" 카드) ───────────────────────────────────
 
-export type ConnectorStatus = { cap: Capability; label: string; mode: Mode; ready: boolean; detail: string; doc: string };
+// server: mcp 모드일 때 Claude Code 에 등록한 서버 이름([연결 해제] 뒤 `claude mcp remove <이름>` 안내에 쓴다)
+export type ConnectorStatus = { cap: Capability; label: string; mode: Mode; ready: boolean; detail: string; doc: string; server?: string };
 
 export function connectorStatus(c: Connectors = CONNECTORS, has: (server: string) => boolean = hasUserMcpServer): ConnectorStatus[] {
   return CAPABILITIES.map((cap) => {
@@ -168,7 +169,7 @@ export function connectorStatus(c: Connectors = CONNECTORS, has: (server: string
     const base = { cap, label: CAP_LABELS[cap], mode: x.mode, doc: `docs/connect/${cap === "issues" ? "issues" : cap}.md` };
     switch (x.mode) {
       case "off": return { ...base, ready: false, detail: x.reason ?? "연결 안 됨" };
-      case "mcp": return has(x.server) ? { ...base, ready: true, detail: `MCP ${x.server}${x.preset ? ` (${x.preset})` : ""}` } : { ...base, ready: false, detail: `MCP 서버 "${x.server}"가 Claude Code에 등록돼 있지 않아요` };
+      case "mcp": return has(x.server) ? { ...base, server: x.server, ready: true, detail: `MCP ${x.server}${x.preset ? ` (${x.preset})` : ""}` } : { ...base, server: x.server, ready: false, detail: `MCP 서버 "${x.server}"가 Claude Code에 등록돼 있지 않아요` };
       case "api":
         if (x.cap === "slack") return x.userToken ? { ...base, ready: true, detail: "Slack Web API (사용자 토큰)" } : { ...base, ready: false, detail: "userToken(xoxp-…)이 없어요" };
         return x.icsUrls.length ? { ...base, ready: true, detail: `ICS ${x.icsUrls.length}개` } : { ...base, ready: false, detail: "icsUrl이 없어요" };

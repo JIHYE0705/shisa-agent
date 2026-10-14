@@ -35,6 +35,7 @@ import { CliSync } from "./cli-sync.ts";
 import { AgentsNotifier, AGENT_LIMITS, agentsForThread, sessionsForThread, threadWorktrees } from "./thread-agents.ts";
 import { worktreeRecords } from "./agent-worktrees.ts";
 import { Settings } from "./settings.ts";
+import { disconnectConnector } from "./disconnect.ts";
 import { CHECK_IDS, Connections, lastRunOf, type CheckId } from "./connections.ts";
 import { statusOf } from "./status.ts";
 import { featureBrain, NEEDS_CLAUDE_MCP, NEEDS_CODER, withMcpBrain } from "./feature-brain.ts";
@@ -107,6 +108,15 @@ setInterval(() => { try { remindToday(false); } catch (e: any) { console.warn("[
 
 // 설정 창: 모델·브리핑 출처(바로 반영 + config.json) · 연결 상태(읽기만). KG 상태는 아래에서 kgBackfill 이 생긴 뒤에 붙는다
 // 뇌·이름·레포 폴더를 바꾸면 바로 반영되고(재시작 불필요) 데스크톱에 SSE status 로 알린다
+// 커넥터는 시작 때 한 번 정한다(캘린더 동기화·Slack 수집·가드가 붙잡고 있다). 마법사·[연결 해제]가 바꾸면 다시 켜서 반영:
+// launchd(install.sh, KeepAlive) 아래면 스스로 끄고 launchd 가 다시 켠다. 손으로 띄운 데몬은 바뀜만 알린다
+function reloadConnectors(): { changed: boolean; restarting: boolean } {
+  const changed = connectorsChanged(cfg.connectors, resolveConnectors());
+  const restarting = changed && process.env.CY_AGENT_SUPERVISED === "1";
+  if (changed) console.log(`[connectors] config.json 의 연결이 바뀜, ${restarting ? "다시 시작해요" : "데몬을 다시 켜야 다 반영돼요"}`);
+  if (restarting) setTimeout(() => process.kill(process.pid, "SIGTERM"), 500);
+  return { changed, restarting };
+}
 const settings = new Settings(cfg, { onChange: (keys) => {
   if (keys.some((k) => k === "brain" || k === "user" || k === "onboarded")) pushStatus();
   if (keys.includes("onboarded") && modelWorkAllowed(cfg)) setTimeout(() => onboardedNow(), 0); // 마법사를 막 마침 → 첫 정리
@@ -221,15 +231,18 @@ await bus.listen(cfg.port, {
     if (connections.claudeLoggedIn() === undefined) void probeClaude(); // 코드 기능(Claude Code)도 이걸로 가른다
     return status();
   },
-  // 커넥터는 시작 때 한 번 정한다(캘린더 동기화·Slack 수집·가드가 붙잡고 있다). 마법사가 바꾸면 다시 켜서 반영:
-  // launchd(install.sh, KeepAlive) 아래면 스스로 끄고 launchd 가 다시 켠다. 손으로 띄운 데몬은 바뀜만 알린다
-  connectorsReload: () => {
-    const changed = connectorsChanged(cfg.connectors, resolveConnectors());
-    const restarting = changed && process.env.CY_AGENT_SUPERVISED === "1";
-    if (changed) console.log(`[connectors] config.json 의 연결이 바뀜 — ${restarting ? "다시 시작해요" : "데몬을 다시 켜야 반영돼요"}`);
-    if (restarting) setTimeout(() => process.kill(process.pid, "SIGTERM"), 500);
-    return { changed, restarting };
-  },
+  connectorsReload: () => reloadConnectors(),
+  // [연결 해제]: 그 기능만 off(토큰·ICS 주소도 지움) → 다시 읽기 → 메모리도 바로 off
+  connectorDisconnect: (cap) => disconnectConnector(cap, {
+    path: join(HOME_DIR, "config.json"), cfg, reload: reloadConnectors,
+    changed: () => {
+      console.log(`[connectors] ${String(cap)} 연결 해제`);
+      if (cap === "calendar") calendar.disable(); // 동기화·회의 알림을 바로 멈춘다
+      if (cap === "slack") try { slackIngester.transport = null; } catch { /* 아직 안 만들어졌으면 만들 때 off 를 읽는다 */ } // 다음 수집부터 안 한다
+      pushStatus();
+      bus.dashboardChanged();
+    },
+  }),
 });
 console.log(`[cy-agent] 버스 http://127.0.0.1:${cfg.port}`);
 
