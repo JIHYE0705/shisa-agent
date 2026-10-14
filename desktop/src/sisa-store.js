@@ -90,6 +90,19 @@ export function withCli(data, provider) {
   return { ...d, clis: { ...d.clis, [provider]: true }, provider };
 }
 
+// 연결 해제: 키면 지우고, Claude Code·Codex 면 「연결됨」 표시만 뗀다(그 CLI 로그인은 그대로). 지금 쓰던 AI 였으면 'none'(AI 없이 쓰기)
+export function withoutProvider(data, provider) {
+  const d = normalizeSisa(data);
+  if (!ALL_PROVIDERS.includes(provider)) return d;
+  const keys = { ...d.keys };
+  const clis = { ...d.clis };
+  delete keys[provider];
+  delete clis[provider];
+  const chatModels = { ...d.chatModels };
+  delete chatModels[provider];
+  return { ...d, keys, clis, chatModels, provider: d.provider === provider ? 'none' : d.provider };
+}
+
 export function withSkip(data) {
   return { ...normalizeSisa(data), provider: 'none' };
 }

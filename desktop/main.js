@@ -25,11 +25,12 @@ import { CHAT_ID } from './src/chat.js';
 import { okActionId } from './src/actions.js';
 import { okRuleId as okPermRuleId } from './src/permissions.js';
 import { setupSettings } from './src/settings-window.js';
+import { disconnectBrainBody, withBrainBody, withConnectorOff, withoutHubDone, reloadNote, okBrainId, okCap } from './src/disconnect.js';
 import { ATTACH_SCHEME, resolveAttachUrl, cleanAttachIds, cleanUpload, okStoredName } from './src/attachments.js';
 import { agentLogin } from './src/agent-login.js';
 import { createCapsProbe, hasCoder, sameCaps, coderHint } from './src/caps.js';
 import { checkLlm, listModels } from './src/llm-check.js';
-import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
+import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, withoutProvider, activeProvider, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
 import { personaFor } from './src/persona.js';
 import { normStatus, brainView, sameView } from './src/brain-state.js';
 import { isAskId } from './src/quick-ask.js';
@@ -118,6 +119,84 @@ function writeConnector(id, url) {
   } catch {
     return false;
   }
+}
+
+// 시사 데몬 설정(config.json)을 고쳐 쓴다: fn(지금 객체) → 새 객체. 깨진 파일은 건드리지 않는다. 쓴 객체 | 그대로면 false | 못 쓰면 null
+function editDaemonConfig(fn) {
+  const home = process.env.CY_AGENT_HOME ?? path.join(os.homedir(), '.cy-agent');
+  const file = path.join(home, 'config.json');
+  let cfg = {};
+  try {
+    cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return null;
+  } catch (err) {
+    if (err?.code !== 'ENOENT') return null;
+  }
+  const next = fn(cfg);
+  if (JSON.stringify(next) === JSON.stringify(cfg)) return false;
+  try {
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(next, null, 2), { mode: 0o600 });
+    return next;
+  } catch {
+    return null;
+  }
+}
+
+// [연결 해제] AI: 앱 저장(sisa-ai.json)에서 빼고, 데몬 설정에서도 키를 지우고, 지금 쓰던 뇌면 로컬(AI 없이 쓰기)로.
+// 데몬이 켜져 있으면 PUT /settings(재시작 없이 바로), 꺼져 있으면 파일에 직접. Claude Code·Codex 의 CLI 로그인은 건드리지 않는다
+async function disconnectBrain(p) {
+  const prev = normalizeSisa(readSisa());
+  const appActive = activeProvider(prev) === p;
+  const next = withoutProvider(prev, p);
+  writeSisa(next);
+  let applied = false;
+  if (connected) {
+    const s = await request('GET', '/settings');
+    const body = disconnectBrainBody(p, s.ok ? (s.data?.brain?.provider ?? '') : '', appActive);
+    if (!body) applied = true;
+    else {
+      const r = await request('PUT', '/settings', body);
+      applied = r.ok;
+    }
+  }
+  if (!applied) {
+    const wrote = editDaemonConfig((cfg) => withBrainBody(cfg, disconnectBrainBody(p, cfg.brain?.provider ?? 'claude-code', appActive)));
+    if (wrote === null) return { ok: false, error: '시사 설정 파일에 쓰지 못했어요.', ...sisaPublic(next) };
+  }
+  if (connected) refreshStatus();
+  else pushBrain();
+  if (p === 'claudecode' || p === 'codexcli') refreshCaps(true);
+  const view = sisaPublic(next);
+  sendPanel('sisa', view);
+  return { ok: true, ...view, offline: !connected };
+}
+
+// [연결 해제] 커넥터(Slack·캘린더·메일·이슈): 그 기능만 off(토큰·ICS 주소도 지움) + 다시 읽기. 데몬이 꺼져 있으면 파일에 직접.
+// Claude Code 에 등록한 MCP 서버는 그대로다(server 이름을 돌려줘 화면이 claude mcp remove 를 안내한다)
+async function disconnectConnector(cap) {
+  let res = null;
+  if (connected) {
+    const r = await post('/connectors/disconnect', { cap });
+    if (r.ok && r.data?.ok) res = r.data;
+    else if (r.status && r.status !== 503 && r.status !== 404) return { ok: false, error: r.data?.error ? `끊지 못했어요: ${r.data.error}` : '끊지 못했어요.' };
+  }
+  if (!res) {
+    let server;
+    const wrote = editDaemonConfig((cfg) => {
+      const c = cfg.connectors?.[cap];
+      if (c && typeof c === 'object' && c.mode === 'mcp' && typeof c.server === 'string') server = c.server;
+      return withConnectorOff(cfg, cap);
+    });
+    if (wrote === null) return { ok: false, error: '시사 설정 파일에 쓰지 못했어요.' };
+    res = { ok: true, cap, ...(server ? { server } : {}), offline: true };
+  }
+  const prev = normalizeSisa(readSisa());
+  const next = { ...prev, done: withoutHubDone(prev.done, cap) };
+  writeSisa(next);
+  sendPanel('sisa', sisaPublic(next));
+  sendPanel('dashboard', {});
+  return { ...res, note: reloadNote(res) };
 }
 
 function sisaPublic(data) {
@@ -961,6 +1040,10 @@ function setupIPC() {
     openPanel: (section) => showPanel(section),
     startTour: () => startTour(),
     caps: () => refreshCaps(false),
+    sisa: () => sisaPublic(readSisa()),
+    disconnectBrain: (p) => disconnectBrain(p),
+    disconnectConnector: (cap) => disconnectConnector(cap),
+    copyText: (text) => { clipboard.writeText(text); return { ok: true }; },
     preload: path.join(__dirname, 'preload-settings.cjs'),
     html: path.join(__dirname, 'renderer', 'settings.html'),
   });
@@ -1057,6 +1140,9 @@ function setupIPC() {
     }
     return { ok: true, done, configured: wrote, reload };
   });
+  // [연결 해제] AI(provider = sisa id) · 커넥터(cap)
+  ipcMain.handle('sisa-disconnect', (e, provider) => (fromOurs(e) && okBrainId(provider) ? disconnectBrain(provider) : denied()));
+  ipcMain.handle('connector-disconnect', (e, cap) => (fromOurs(e) && okCap(cap) ? disconnectConnector(cap) : denied()));
   // 연결된 AI의 쓸 수 있는 모델 목록. 키는 돌려주지 않는다.
   ipcMain.handle('sisa-models', async (e, provider) => {
     if (!fromOurs(e) || typeof provider !== 'string') return denied();

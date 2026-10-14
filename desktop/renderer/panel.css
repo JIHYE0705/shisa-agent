@@ -227,6 +227,29 @@ h2 { margin: 22px 0 10px; font-size: 13px; font-weight: 650; color: var(--muted)
 .conn-doc { color: var(--faint); user-select: text; }
 .conn-row.not-ready .conn-label { color: var(--muted); }
 button.setup-jump { margin-left: auto; padding: 2px 8px; font-size: 11.5px; flex: none; }
+.conn-head { flex-wrap: wrap; }
+.conn-head .spacer { flex: 1; }
+button.conn-connect { padding: 2px 9px; font-size: 11.5px; flex: none; }
+.conn-note { margin: 6px 0 0; color: var(--fg); }
+.conn-foot { margin: 6px 2px 0; }
+
+/* [연결 해제]: 그 자리에서 한 번 더 묻는다 */
+.dc { flex: none; }
+.dc button.small, .dc-open { padding: 2px 9px; font-size: 11.5px; }
+.dc.asking, .dc.done { flex-basis: 100%; margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--del-bg); }
+.dc.done { background: var(--code); }
+.dc p { margin: 0 0 4px; overflow-wrap: anywhere; }
+.dc-ask { font-weight: 600; }
+.dc-note { color: var(--muted); font-size: 12px; }
+.dc-err { color: var(--del-fg); font-size: 12px; }
+.dc-cmd { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; }
+.dc-cmd code { background: var(--code); padding: 2px 6px; border-radius: 5px; font-size: 11.5px; user-select: text; overflow-wrap: anywhere; }
+.dc-acts { display: flex; gap: 6px; }
+button.danger { background: var(--del-fg); color: #fff; }
+.setup-extra { display: flex; flex-direction: column; gap: 4px; }
+.setup-extra .dc { align-self: flex-end; }
+.setup-extra .dc.asking, .setup-extra .dc.done { align-self: stretch; }
+.models-card .dc { margin-top: 4px; }
 
 /* 설치 마법사 — 한 화면, 할 일 한 줄 */
 .setup {

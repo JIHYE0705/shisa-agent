@@ -10,6 +10,7 @@ const on = (channel) => (cb) => {
 contextBridge.exposeInMainWorld('cy', {
   onConnection: on('connection'),
   onDashboard: on('dashboard'),
+  onSisa: on('sisa'), // 설정 창 등에서 AI·연결을 끊으면 새 저장 모양(publicView)
   onSection: on('section'),
   onChat: on('chat'),
   getDashboard: () => ipcRenderer.invoke('get-dashboard'),
@@ -90,6 +91,9 @@ contextBridge.exposeInMainWorld('cy', {
   sisaSetVoice: (patch) => ipcRenderer.invoke('sisa-set-voice', patch && typeof patch === 'object' ? patch : {}),
   sisaUseCli: (agent) => ipcRenderer.invoke('sisa-use-cli', agent === 'codex' ? 'codex' : 'claude'),
   sisaMark: (id, url) => ipcRenderer.invoke('sisa-mark', String(id || ''), url == null ? '' : String(url)),
+  // [연결 해제]: AI(gemini|claude|openai|claudecode|codexcli) · 커넥터(slack|calendar|mail|issues)
+  sisaDisconnect: (provider) => ipcRenderer.invoke('sisa-disconnect', String(provider || '')),
+  connectorDisconnect: (cap) => ipcRenderer.invoke('connector-disconnect', String(cap || '')),
   // 뇌(말 거는 AI) 연결 상태(brain-state.js brainView) — 없으면 입력 대신 연결 안내 카드
   brain: () => ipcRenderer.invoke('brain-get'),
   onBrain: on('brain'),

@@ -154,6 +154,7 @@ export function shapeConnectors(list) {
       ready,
       detail: str(c.detail).trim(),
       doc: str(c.doc).trim(), // 안내용 글자(예: docs/connect/slack.md). 링크로 열지 않는다
+      ...(c.mode === 'mcp' && /^[\w.@-]{1,64}$/.test(str(c.server)) ? { server: c.server } : {}), // [연결 해제] 뒤 claude mcp remove 안내
     });
   }
   return out;

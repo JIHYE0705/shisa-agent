@@ -21,6 +21,9 @@
     <section class="card" aria-labelledby="h-models">
       <h2 id="h-models">AI·모델</h2>
       <p class="hint">대화·브리핑에 쓸 AI(Gemini·GPT·Claude Code 등)는 패널의 [모델] 탭에서 골라요. <button id="open-models" type="button" class="small ghost">AI 고르기</button></p>
+      <h3>연결된 AI</h3>
+      <p class="hint">끊으면 시사가 그 AI를 더 쓰지 않아요. 지금 쓰던 AI면 「AI 없이 쓰기」로 바뀌어요. 바로 적용돼요.</p>
+      <div id="brains" class="conn-list"></div>
       <p id="models-hint" class="hint" hidden></p>
       <p id="models-note" class="hint">Claude Code 세부 모델 — 바꾸면 바로 적용돼요. <span id="config-path"></span></p>
       <div id="models" class="rows"></div>
@@ -108,7 +111,7 @@
         <span id="conn-at" class="faint"></span>
         <button id="check-all" type="button" class="ghost">모두 다시 확인</button>
       </div>
-      <p class="hint">읽기만 해요. 안 되는 게 있으면 [설치 안내]를 눌러 패널의 설치 탭에서 차근차근 연결해요 — 비밀번호·토큰은 여기서 받지 않아요.</p>
+      <p class="hint">안 되는 게 있으면 [설치 안내], 꺼져 있으면 [연결하기]를 눌러 패널의 설치 탭에서 차근차근 연결해요. 비밀번호·토큰은 여기서 받지 않아요. [연결 해제]는 시사 설정에서 그 연결과 저장된 토큰·주소를 지워요. Claude Code에 등록한 MCP 서버(claude mcp add)는 그대로 남아요.</p>
       <div id="conn-core" class="conn-list"></div>
       <h3>연결한 서비스</h3>
       <div id="conn-used" class="conn-list"></div>

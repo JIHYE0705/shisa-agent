@@ -147,3 +147,16 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
 
 /* 일정 알림 */
 .cal-off-line { margin-top: 10px; }
+
+/* [연결 해제]: 그 자리에서 한 번 더 묻는다 */
+.dc { margin-top: 4px; }
+.dc.asking, .dc.done { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--err) 10%, transparent); }
+.dc.done { background: var(--accent-soft); }
+.dc p { margin: 0 0 4px; font-size: 12.5px; overflow-wrap: anywhere; }
+.dc-ask { font-weight: 600; }
+.dc-note { color: var(--muted); }
+.dc-err { color: var(--err-fg); }
+.dc-cmd { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; }
+.dc-cmd code { background: var(--line); padding: 2px 6px; border-radius: 5px; font-size: 12px; user-select: text; overflow-wrap: anywhere; }
+.dc-acts { display: flex; gap: 6px; }
+button.danger { background: var(--err-fg); color: #fff; }

@@ -7,6 +7,7 @@ import { needsSetup, stepForCap } from '../src/setup.js';
 import { isFeature, isAgent, buildWalk, agentSteps } from '../src/setup-flow.js';
 import { renderSetup, clearApiDraft, readSlot } from './setup-view.js';
 import { mountModels } from './models-view.js';
+import { connectorAction, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
 import { CANNED, cannedReply, connectSteps, hubItem, slotOk, EXTRAS } from '../src/ai-onboard.js';
 import { SETUP_FLOW_VERSION, isSetupPhase, phaseAfterBrain, backPhase, restorePhase, agentFrom, NO_AI } from '../src/setup-plan.js';
 import { brainView, connectCard, chatLock } from '../src/brain-state.js';
@@ -387,10 +388,40 @@ function permissionsSection() {
       : h('div.card.empty.small', { text: permLoaded ? '항상 허용한 도구가 없어요. 승인 카드에서 [항상 허용]을 누르면 여기 생겨요.' : '불러오는 중…' }));
 }
 
-// 연결 카드: 기능마다 이름·모드 칩. 준비 안 된 건 이유, 늘 "설정 안내"로 마법사 단계를 연다.
+// 연결 카드: 기능마다 이름 · 상태 칩 · 맞는 주 동작(꺼져 있으면 [연결하기], 켜져 있으면 [연결 해제]).
+// 준비 안 된 건 이유와 [설정 안내]. [연결 해제]는 그 자리에서 한 번 더 묻는다(다시 그려도 열어 둔 확인은 그대로)
+let confirmingCap = '';
+let connNote = ''; // 방금 끊은 결과(다시 그려도 잠깐 남긴다)
+let connNoteTimer = null;
 function connectorChip(c) {
-  if (c.mode === 'off') return h('span.chip', { text: c.modeLabel });
-  return h(`span.chip.${c.ready ? 'ok' : 'warn'}`, { text: c.modeLabel, title: c.ready ? '연결됨' : '준비 안 됨' });
+  if (c.mode === 'off') return h('span.chip', { text: '연결 안 됨' });
+  return h(`span.chip.${c.ready ? 'ok' : 'warn'}`, { text: `${c.ready ? '연결됨' : '준비 안 됨'} · ${c.modeLabel}` });
+}
+function connectorActions(c) {
+  if (connectorAction(c) === 'connect') {
+    return [h('button.primary.small.conn-connect', { type: 'button', text: '연결하기', onclick: () => openSetup(stepForCap(c.cap)) })];
+  }
+  const copy = connectorDisconnectCopy(c.cap, c.server);
+  return [
+    c.ready ? null : h('button.ghost.setup-jump', { type: 'button', text: '설정 안내', onclick: () => openSetup(stepForCap(c.cap)) }),
+    disconnectControl(document, {
+      ...copy,
+      open: confirmingCap === c.cap,
+      onOpen: () => { confirmingCap = c.cap; },
+      onClose: () => { if (confirmingCap === c.cap) confirmingCap = ''; },
+      copy: (text) => cy.copyText(text),
+      onConfirm: async () => {
+        const r = await cy.connectorDisconnect(c.cap);
+        if (r?.ok) {
+          connNote = [copy.done, r.note].filter(Boolean).join(' ');
+          clearTimeout(connNoteTimer);
+          connNoteTimer = setTimeout(() => { connNote = ''; renderAll(); }, 20_000);
+          loadSoon();
+        }
+        return r;
+      },
+    }),
+  ];
 }
 function renderConnectors(list) {
   if (!list?.length) return null; // 예전 데몬: 필드가 없으면 카드도 없다
@@ -399,9 +430,12 @@ function renderConnectors(list) {
     h('div.card.connectors', null, list.map((c) => h(`div.conn-row${c.ready ? '' : '.not-ready'}`, { dataset: { cap: c.cap } },
       h('div.conn-head', null, h('span.conn-label', { text: c.label }), connectorChip(c),
         c.ready && c.detail ? h('span.muted.small.conn-detail', { text: c.detail }) : null,
-        h('button.ghost.setup-jump', { type: 'button', text: '설정 안내', onclick: () => openSetup(stepForCap(c.cap)) })),
-      c.ready ? null : h('div.conn-hint.muted.small', null,
-        h('span', { text: !c.detail || c.detail === '연결 안 됨' ? '연결 안 됨' : `연결 안 됨 — ${c.detail}` }))))),
+        h('span.spacer'),
+        ...connectorActions(c)),
+      c.ready || c.mode === 'off' ? null : h('div.conn-hint.muted.small', null,
+        h('span', { text: !c.detail || c.detail === '연결 안 됨' ? '연결 안 됨' : `연결 안 됨. ${c.detail}` }))))),
+    connNote ? h('p.small.conn-note', { role: 'status', text: connNote }) : null,
+    h('p.muted.small.conn-foot', { text: '연결 해제는 시사 설정에서만 지워요. Claude Code에 등록한 MCP 서버(claude mcp add)는 그대로 남아요.' }),
   ];
 }
 
@@ -586,6 +620,22 @@ function renderSetupView(resetScroll) {
       agentLoginState = { loggedIn: false, installed: null };
       saveSetup();
       redraw(true);
+    },
+    // 더 연결하기의 [연결 해제]: 그 커넥터를 끄고(구글·Outlook 은 캘린더 하나) 「연결됨」 표시도 뗀다
+    servers: Object.fromEntries((vm.connectors || []).filter((c) => c.server).map((c) => [c.cap, c.server])),
+    onCopyText: (text) => cy.copyText(text),
+    onDisconnectExtra: async (_id, cap) => {
+      let r;
+      try { r = await cy.connectorDisconnect(cap); } catch { r = { ok: false }; }
+      if (r?.ok) {
+        try {
+          const got = await cy.sisaGet();
+          if (got && typeof got === 'object') sisa = { ...sisa, ...got, done: got.done || {} };
+        } catch { /* 다음에 다시 읽는다 */ }
+        loadSoon();
+        setTimeout(() => redraw(false), 1500); // 끊었다는 글을 잠깐 보여 주고 목록을 다시
+      }
+      return r;
     },
     onAddRepo: async (dir) => {
       if (setupRepos.includes(dir)) return;
@@ -3193,6 +3243,14 @@ function applySisa(v) {
   };
   renderChatLock();
 }
+// 설정 창에서 AI·연결을 끊으면 main 이 새 저장 모양을 보낸다
+cy.onSisa?.((v) => {
+  if (!v || typeof v !== 'object') return;
+  applySisa(v);
+  if (v.done && typeof v.done === 'object') sisa.done = v.done;
+  modelsView.update();
+  if (section === 'setup') { setupKey = ''; renderSetupView(false); }
+});
 const modelsView = mountModels({ section: $('sec-models'), h, cy, getSisa: () => sisa, onSisa: applySisa, gotoSetup: () => openSetup() });
 
 goto(section);

@@ -2,6 +2,7 @@
 import { AGENTS, FEATURES, agentSteps, buildWalk, featureTitle } from '../src/setup-flow.js';
 import { SISA_SAY, providerById, connectSteps, slotCheck, BRAIN_CHOICES, EXTRAS, SESSIONS_CONSENT, hubItem } from '../src/ai-onboard.js';
 import { setupSummary, okFolder } from '../src/setup-plan.js';
+import { HUB_CAP, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
 
 const slotValues = new Map();
 let redraw = null;
@@ -340,7 +341,25 @@ function sessionsConsent(on, onToggle) {
     h('p.setup-blurb', { text: SESSIONS_CONSENT.warn }));
 }
 
-function extrasView({ done = {}, repos = [], coder = true, readSessions = false, onOpen, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish, onBack }) {
+// 연결된 항목은 그 아래 [연결 해제](그 자리에서 한 번 더 묻는다). 구글·Outlook 캘린더는 한 연결(캘린더)이라 같이 꺼진다
+let extraConfirming = '';
+function extraItem(item, done, onOpen, onDisconnect, onCopy, servers) {
+  const on = !!done[item.id];
+  const cap = HUB_CAP[item.id];
+  const pick = pickButton(false, on ? `${item.title} · 연결됨` : item.title, item.blurb, () => onOpen(item.id), on);
+  if (!on || !cap || !onDisconnect) return pick;
+  const copy = connectorDisconnectCopy(cap, servers?.[cap]);
+  return h('div.setup-extra', { dataset: { id: item.id } }, pick, disconnectControl(document, {
+    ...copy,
+    open: extraConfirming === item.id,
+    onOpen: () => { extraConfirming = item.id; },
+    onClose: () => { if (extraConfirming === item.id) extraConfirming = ''; },
+    copy: onCopy ? (text) => onCopy(text) : undefined,
+    onConfirm: () => onDisconnect(item.id, cap),
+  }));
+}
+
+function extrasView({ done = {}, repos = [], coder = true, readSessions = false, servers = {}, onOpen, onDisconnect, onCopy, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish, onBack }) {
   const items = EXTRAS.filter((id) => id !== 'repos').map(hubItem).filter(Boolean);
   const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: '/Users/나/code', 'aria-label': '레포 폴더', value: repoDraft });
   input.addEventListener('input', () => { repoDraft = input.value; });
@@ -352,7 +371,7 @@ function extrasView({ done = {}, repos = [], coder = true, readSessions = false,
     title: '더 연결할까요?',
     identity: '하나를 누르면 그 안내로 들어가고, 끝나면 이 목록으로 돌아와요.',
     extra: h('div', null,
-      h('div.setup-picks', null, items.map((item) => pickButton(false, done[item.id] ? `${item.title} · 연결됨` : item.title, item.blurb, () => onOpen(item.id), !!done[item.id]))),
+      h('div.setup-picks', null, items.map((item) => extraItem(item, done, onOpen, onDisconnect, onCopy, servers))),
       h('div.setup-folder', null,
         h('span.setup-pick-title', { text: repos.length ? `${repo.title} · ${repos.length}개` : repo.title }),
         h('p.setup-blurb', { text: coder ? repo.blurb : `${repo.blurb} (지금은 Claude Code 가 없어서 커밋만 보여 줘요)` }),
@@ -437,7 +456,7 @@ export function renderSetup(root, state) {
     onAgent, onToggle, onContinue, onChoose, onCopy, onList, onPrev, onBack, onSkip, onNext, onStart, onDone,
     onCheckKey, onKeyNext, onOpen, login,
     name, detected, current, repos, brain, coder, readSessions,
-    onName, onPickBrain, onSkipBrain, onOpenExtra, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onSkipSetup, onFinishExtras, onTour, onClose,
+    onName, onPickBrain, onSkipBrain, onOpenExtra, onDisconnectExtra, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onSkipSetup, onFinishExtras, onTour, onClose,
   } = state;
 
   if (phase === 'name') {
@@ -461,7 +480,7 @@ export function renderSetup(root, state) {
     return;
   }
   if (phase === 'extras') {
-    root.replaceChildren(extrasView({ done, repos, coder, readSessions, onOpen: onOpenExtra, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish: onFinishExtras, onBack }));
+    root.replaceChildren(extrasView({ done, repos, coder, readSessions, servers: state.servers, onOpen: onOpenExtra, onDisconnect: onDisconnectExtra, onCopy: state.onCopyText, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish: onFinishExtras, onBack }));
     return;
   }
   if (phase === 'done') {

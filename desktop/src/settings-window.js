@@ -2,10 +2,12 @@
 // 모델·브리핑 출처 저장(PUT /settings) · 연결 상태(GET /connections, POST /connections/check) · 패널의 설치 안내·모델 탭 열기.
 import { sanitizeSettingsPatch, okCheckId, okPanelTarget } from './settings.js';
 import { sanitizeGuidelineAdd, sanitizeGuidelinePatch, okGuidelineId } from './guidelines.js';
+import { okBrainId, okCap } from './disconnect.js';
 
 export const SETTINGS_SIZE = { width: 720, height: 760 };
 
-// deps: { BrowserWindow, ipcMain, shell, request(method, path, body?, timeoutMs?), preload, html, fromOurs(e), debug?, openPanel?(section), caps?() }
+// deps: { BrowserWindow, ipcMain, shell, request(method, path, body?, timeoutMs?), preload, html, fromOurs(e), debug?, openPanel?(section), caps?(),
+//         sisa?() 앱의 AI 저장(publicView), disconnectBrain?(id), disconnectConnector?(cap), copyText?(text) }
 export function setupSettings(deps) {
   let win = null;
 
@@ -62,6 +64,11 @@ export function setupSettings(deps) {
   ipcMain.handle('guidelines-delete', (e, id) => (isMine(e) && okGuidelineId(id) ? deps.request('DELETE', `/guidelines/${id}`) : denied()));
   // 이 컴퓨터에서 쓸 수 있는 것({ claude, codex }) — Claude Code 가 없으면 코드 관련 칸은 안내로
   ipcMain.handle('settings-caps', async (e) => (isMine(e) ? ((await deps.caps?.()) ?? {}) : denied()));
+  // [연결 해제]: AI 칸(연결된 AI 줄) · 연결 상태(커넥터 줄). 끊는 일은 main 이(패널과 같은 함수)
+  ipcMain.handle('settings-sisa', (e) => (isMine(e) && deps.sisa ? deps.sisa() : denied()));
+  ipcMain.handle('settings-brain-disconnect', (e, id) => (isMine(e) && okBrainId(id) && deps.disconnectBrain ? deps.disconnectBrain(id) : denied()));
+  ipcMain.handle('settings-connector-disconnect', (e, cap) => (isMine(e) && okCap(cap) && deps.disconnectConnector ? deps.disconnectConnector(cap) : denied()));
+  ipcMain.handle('settings-copy', (e, text) => (isMine(e) && typeof text === 'string' && text && text.length <= 200 && deps.copyText ? deps.copyText(text) : denied()));
   // [설치 안내]·[AI 고르기] → 패널의 그 탭
   ipcMain.on('settings-open-panel', (e, section) => {
     if (isMine(e) && okPanelTarget(section)) deps.openPanel?.(section);

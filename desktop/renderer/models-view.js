@@ -1,7 +1,9 @@
 // 모델 탭: 연결된 AI마다 쓸 수 있는 모델 목록을 보여 주고, 단순 채팅·코딩 작업에 쓸 모델을 고른다.
 // 말투(AI 연결 시)와 정해진 말(연결 안 됐을 때)도 여기서 고친다. 키는 이 화면에 오지 않는다.
+// 연결된 AI 마다 [연결 해제]: 키는 지우고, Claude Code·Codex 는 시사에서만 안 쓴다(CLI 로그인은 그대로). 지금 쓰던 AI 면 「AI 없이 쓰기」로.
 
 import { CANNED, CANNED_CATALOG, CANNED_DEFAULTS } from '../src/canned.js';
+import { brainDisconnectCopy, disconnectControl } from '../src/disconnect.js';
 
 export const PROVIDER_TITLE = {
   gemini: 'Gemini',
@@ -56,6 +58,7 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
   let busy = false;
   let personaDraft = null;
   let cannedDraft = null;
+  let confirming = ''; // [연결 해제] 확인을 열어 둔 AI(다시 그려도 그대로)
 
   function linesOf(key) {
     if (cannedDraft?.[key]) return cannedDraft[key];
@@ -150,14 +153,37 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
       sisa.connected.includes('codexcli') ? h('p.muted.small', { text: '코딩은 Claude만 씁니다' }) : null);
   }
 
+  function disconnectFor(p) {
+    const sisa = getSisa();
+    const active = sisa.provider === p;
+    return disconnectControl(section.ownerDocument, {
+      ...brainDisconnectCopy(p, active),
+      open: confirming === p,
+      onOpen: () => { confirming = p; },
+      onClose: () => { if (confirming === p) confirming = ''; },
+      onConfirm: async () => {
+        let r;
+        try { r = await cy.sisaDisconnect(p); } catch { r = { ok: false }; }
+        if (!r?.ok) return r;
+        confirming = '';
+        delete lists[p];
+        onSisa(r);
+        note = `${brainDisconnectCopy(p, active).done}${active ? ' 이제 「AI 없이 쓰기」예요.' : ''}`;
+        render();
+        return r;
+      },
+    });
+  }
+
   function listCard(p) {
     const l = lists[p];
-    return h('div.card.models-card', null,
+    return h('div.card.models-card', { dataset: { provider: p } },
       h('div.row', null,
         h('span.t', { text: PROVIDER_TITLE[p] }),
         h('span.chip.ok', { text: '연결됨' }),
         h('span.spacer'),
         h('button.ghost.small', { type: 'button', text: '새로고침', onclick: () => loadList(p, true) })),
+      disconnectFor(p),
       !l || l.status === 'loading'
         ? h('p.muted.small', { text: '목록을 가져오는 중…' })
         : l.status === 'error'
@@ -212,7 +238,7 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
     kids.push(voiceCard(), cannedCard());
     if (note) kids.push(h('p.muted.small.models-note', { role: 'status', text: note }));
     if (connected.length) {
-      kids.push(h('h2', { text: '모델 목록' }), ...connected.map(listCard));
+      kids.push(h('h2', { text: '연결된 AI · 모델 목록' }), ...connected.map(listCard));
     }
     section.replaceChildren(...kids.filter(Boolean));
   }
@@ -220,6 +246,7 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
   return {
     show() {
       note = '';
+      confirming = '';
       personaDraft = null;
       cannedDraft = null;
       for (const p of getSisa().connected || []) loadList(p, false);

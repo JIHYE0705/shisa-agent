@@ -8,6 +8,7 @@ import {
   ALERT_DEFAULT, cleanCalendarAlert, alertMinutesNext, parseAlertMinutes, alertChoices, calendarAlertSummary,
 } from '../src/settings.js';
 import { mountGuidelines } from '../src/guidelines.js';
+import { brainRows, brainDisconnectCopy, connectorAction, capOfRow, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
 
 const cy = window.cy;
 const $ = (id) => document.getElementById(id);
@@ -29,6 +30,8 @@ let settings = null;
 let rows = [];
 let caps = { claude: true, codex: false }; // 모르면 있다고 본다(예전처럼 다 보임)
 const busy = new Set(); // 지금 도는 확인(check id)
+let sisaView = null; // 앱의 AI 저장(키 없음). 연결된 AI 줄
+let confirming = ''; // [연결 해제] 확인을 열어 둔 줄(brain:id · connector:cap). 다시 그려도 그대로
 
 // ---- 저장 알림 ----
 let savedTimer = null;
@@ -90,6 +93,58 @@ function renderModels() {
     const desc = el('div', 'desc', ROLE_DESC[role] ?? '');
     if (settings.envLocked?.includes(role)) desc.append(el('span', 'lock', ' · 환경변수로 정해져 있어서 데몬을 다시 켜면 그 값으로 돌아가요'));
     row.append(lab, sel, desc);
+    box.append(row);
+  }
+}
+
+// ---- 연결된 AI ----
+const confirmOpts = (key) => ({
+  open: confirming === key,
+  onOpen: () => { confirming = key; },
+  onClose: () => { if (confirming === key) confirming = ''; },
+  copy: (text) => cy.copyText(text),
+});
+function renderBrains() {
+  const box = $('brains');
+  box.replaceChildren();
+  if (!settings) return;
+  const list = brainRows(sisaView, settings.brain);
+  if (!list.length) {
+    const row = el('div', 'conn');
+    const main = el('div', 'main');
+    main.append(el('div', 'name', 'AI 없이 쓰는 중'), el('div', 'detail', '정해진 말·할 일·오늘 표·회의 알림은 그대로 돼요.'));
+    const b = el('button', 'small primary', '연결하기');
+    b.type = 'button';
+    b.addEventListener('click', () => cy.openPanel('models'));
+    const acts = el('div', 'acts');
+    acts.append(b);
+    row.append(el('span', 'dot off'), main, acts);
+    box.append(row);
+    return;
+  }
+  for (const r of list) {
+    const row = el('div', 'conn');
+    row.dataset.id = `brain:${r.id}`;
+    const main = el('div', 'main');
+    const name = el('div', 'name', r.title);
+    if (r.active) name.append(el('span', 'badge', '지금 쓰는 AI'));
+    main.append(name, el('div', 'detail', r.kind === 'cli' ? '이 맥에 로그인된 CLI로 답해요' : 'API 키로 답해요'));
+    const copy = brainDisconnectCopy(r.id, r.active);
+    main.append(disconnectControl(document, {
+      ...copy, ...confirmOpts(`brain:${r.id}`),
+      onConfirm: async () => {
+        const res = await cy.disconnectBrain(r.id).catch(() => null);
+        if (!res?.ok) return { ok: false, error: res?.error || '끊지 못했어요. 시사에 연결되지 않았어요' };
+        sisaView = res;
+        const s = await cy.getSettings().catch(() => null);
+        if (s?.ok) settings = s.data;
+        flash(`${copy.done}${r.active ? ' 이제 「AI 없이 쓰기」예요.' : ''}${res.offline ? ' 시사가 꺼져 있어서 다음에 켤 때 적용돼요.' : ' 바로 적용돼요.'}`);
+        renderBrains();
+        refreshRows();
+        return res;
+      },
+    }));
+    row.append(el('span', 'dot ok'), main);
     box.append(row);
   }
 }
@@ -356,6 +411,28 @@ function rowEl(r) {
   const meta = metaText(r);
   if (meta) main.append(el('div', 'meta', meta));
   const acts = el('div', 'acts');
+  // 커넥터 줄: 상태에 맞는 주 동작(꺼져 있으면 [연결하기], 켜져 있으면 [연결 해제]. 그 자리에서 한 번 더 묻는다)
+  const action = connectorAction(r);
+  if (action === 'connect') {
+    const b = el('button', 'small primary', '연결하기');
+    b.type = 'button';
+    b.title = '패널의 설치 탭에서 연결 방법을 차근차근 보여 줘요';
+    b.addEventListener('click', () => cy.openPanel('setup'));
+    acts.append(b);
+  } else if (action === 'disconnect') {
+    const cap = capOfRow(r);
+    const copy = connectorDisconnectCopy(cap, r.server);
+    main.append(disconnectControl(document, {
+      ...copy, ...confirmOpts(r.id),
+      onConfirm: async () => {
+        const res = await cy.disconnectConnector(cap).catch(() => null);
+        if (!res?.ok) return { ok: false, error: res?.error || '끊지 못했어요. 시사에 연결되지 않았어요' };
+        flash([copy.done, res.note].filter(Boolean).join(' '));
+        refreshRows();
+        return res;
+      },
+    }));
+  }
   if (needsSetupHint(r)) {
     const b = el('button', 'small primary', '설치 안내');
     b.type = 'button';
@@ -397,16 +474,22 @@ async function runCheck(id) {
   renderRows();
 }
 
+// 끊은 뒤: 연결 줄을 새로(싼 확인만)
+function refreshRows() {
+  cy.getConnections().then((c) => { if (c?.ok && Array.isArray(c.data?.rows)) { rows = mergeRows(rows, c.data.rows); renderRows(); } }).catch(() => {});
+}
+
 async function checkAll() {
   for (const id of ['net', 'gh', 'local', 'claude']) runCheck(id); // 따로 돌려 먼저 끝난 것부터 보이게
 }
 
 async function load() {
-  const [s, c, k] = await Promise.all([cy.getSettings().catch(() => null), cy.getConnections().catch(() => null), cy.getCaps?.().catch(() => null)]);
+  const [s, c, k, v] = await Promise.all([cy.getSettings().catch(() => null), cy.getConnections().catch(() => null), cy.getCaps?.().catch(() => null), cy.getSisa?.().catch(() => null)]);
+  if (v && typeof v === 'object' && Array.isArray(v.connected)) sisaView = v;
   if (k && typeof k === 'object' && typeof k.claude === 'boolean') caps = { claude: k.claude, codex: k.codex === true };
   if (!s?.ok || !c?.ok) banner('시사에 연결되지 않았어요. 시사가 켜져 있는지 확인해 주세요.');
   else banner(null);
-  if (s?.ok) { settings = s.data; renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderAutoMerge(); renderPhrases(); }
+  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderAutoMerge(); renderPhrases(); }
   if (c?.ok) {
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];
     renderRows();
@@ -423,6 +506,14 @@ $('open-setup')?.addEventListener('click', () => cy.openPanel('setup'));
 $('start-tour')?.addEventListener('click', () => cy.startTour?.());
 // 창으로 돌아오면(브라우저에서 연결하고 온 뒤 등) 싼 확인만 새로
 window.addEventListener('focus', () => { guidelines.load(); }); // 채팅에서 넣은 지침도 보이게
+// 패널 모델 탭에서 AI를 붙이거나 끊었으면 연결된 AI 줄도 맞춘다
+window.addEventListener('focus', () => {
+  Promise.all([cy.getSisa?.().catch(() => null), cy.getSettings().catch(() => null)]).then(([v, r]) => {
+    if (v && typeof v === 'object' && Array.isArray(v.connected)) sisaView = v;
+    if (r?.ok && settings) settings = { ...settings, brain: r.data.brain ?? settings.brain };
+    renderBrains();
+  });
+});
 // 채팅에서 바꾼 자동 머지 레포도 보이게
 window.addEventListener('focus', () => { cy.getSettings().then((r) => { if (r?.ok && settings) { settings = { ...settings, autoMerge: r.data.autoMerge ?? [] }; renderAutoMerge(); } }).catch(() => {}); });
 window.addEventListener('focus', () => { if (!busy.size) cy.getConnections().then((c) => { if (c?.ok && Array.isArray(c.data?.rows)) { rows = mergeRows(rows, c.data.rows); renderRows(); } }).catch(() => {}); });
