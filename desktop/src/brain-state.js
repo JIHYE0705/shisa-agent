@@ -1,7 +1,7 @@
 // 뇌(말 거는 AI) 연결 상태 → 화면 분기. 순수 로직 — main·패널·세션 창·캐릭터가 같이 쓴다.
 // 원천은 데몬 GET /status(SSE status). 데몬이 꺼져 있으면 앱이 기억하는 AI 선택(sisa)으로 짐작한다.
 //   뇌가 있으면: 캐릭터 더블클릭 = 말 걸기, 패널·세션 창 입력
-//   없으면: 더블클릭 = 짧은 춤 + 고르는 질문 칩(quick-ask.js), 입력 대신 연결 안내 카드(숨길 수 있다 · 정해진 말·할 일 보기는 그대로)
+//   없으면: 더블클릭 = 고르는 질문 칩(quick-ask.js, 「응원해 줘」만 춤), 입력 대신 연결 안내 카드(숨길 수 있다 · 정해진 말·할 일 보기는 그대로)
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
 const tri = (v) => (v === true ? true : v === false ? false : null);

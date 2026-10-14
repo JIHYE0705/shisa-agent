@@ -818,24 +818,33 @@ let brain = { ready: true }; // 모르면 막지 않는다(main 이 GET /status 
 cy.brain?.().then((v) => { if (v) brain = v; }).catch(() => {});
 cy.onBrain?.((v) => { if (v) brain = v; if (brain.ready === false && askOpen) hideAsk(); });
 
-// 뇌 없이 더블클릭: 고르는 질문 칩(오늘 할 일·지금 할 일·다음 일정·응원·AI 연결하기) + 짧은 춤
+// 뇌 없이 더블클릭: 고르는 질문 칩(오늘 할 일·지금 할 일·다음 일정·응원·AI 연결하기). 춤은 「응원해 줘」 때만
 let danceOff = null;
-function noBrain() {
+let chipSeq = 0; // 칩을 새로 누르면 앞선 「다시 띄우기」는 버린다
+const CHIPS_AGAIN_MS = 2000; // 답을 보여 주고 이만큼 뒤에 칩을 다시
+function localDance(ms) {
   dispatchActivity({ type: 'localDance', on: true });
   clearTimeout(danceOff);
-  danceOff = setTimeout(() => dispatchActivity({ type: 'localDance', on: false }), 1800);
+  danceOff = setTimeout(() => dispatchActivity({ type: 'localDance', on: false }), ms);
+}
+function noBrain() {
+  chipSeq++;
   showBubble(quickBubble(brain));
 }
 async function quickChip(id) {
   const a = chipAction(id);
   if (!a) return;
-  if (a.type === 'open') { cy.openItem(a.section, a.id); dismiss(QUICK_ID); return; }
+  dismiss(QUICK_ID); // 누르면 칩은 내리고 답만 보인다
+  if (a.type === 'open') { cy.openItem(a.section, a.id); return; }
+  const seq = ++chipSeq;
+  if (a.id === 'cheer') localDance(2600);
   const ask = async () => { try { return await cy.localAsk(a.id); } catch (e) { return { ok: false, error: e?.message }; } };
   let r = await ask();
   if (!r?.ok) { await new Promise((ok) => setTimeout(ok, 800)); r = await ask(); } // 데몬이 잠깐 바빴으면 한 번 더
+  if (seq !== chipSeq) return;
+  for (const x of queue.items.filter((x) => x.id.startsWith('local-ask-'))) dismiss(x.id); // 앞선 답은 내린다
   showBubble(answerBubble(a.id, r));
-  const chips = current(QUICK_ID);
-  if (chips) schedule(chips); // 칩은 답을 본 뒤에도 잠깐 더 남긴다
+  setTimeout(() => { if (seq === chipSeq) showBubble(quickBubble(brain)); }, CHIPS_AGAIN_MS);
 }
 function talk() {
   if (brain.ready === false) return noBrain();
