@@ -99,3 +99,17 @@ test("dashboard: 숨긴 프로젝트는 hidden=true로 뒤에, 요약에선 빠�
   const d2 = await buildDashboard(loadConfig(), store, { now, git: async () => repos });
   assert.deepEqual(d2.projects.map((p) => [p.name, p.hidden]), [["app", false], ["notes", false]]);
 });
+
+test("dashboard: 할 일의 (진행중) 토글(doing)을 싣는다: 켬·끔 그대로, 안 누른 건 없음", async () => {
+  const store = new Store(":memory:");
+  store.upsertTodo({ id: "t1", title: "일", source: "user", priority: 2 });
+  store.upsertTodo({ id: "t2", title: "다른 일", source: "user", priority: 2 });
+  store.upsertTodo({ id: "t3", title: "그냥 일", source: "user", priority: 2 });
+  store.editTodo("t1", { doing: true });
+  store.editTodo("t2", { doing: false });
+  const d = await buildDashboard(loadConfig(), store, { now, git: async () => [] });
+  const byId = (id: string) => (d.todos as any[]).find((t) => t.id === id);
+  assert.equal(byId("t1").doing, true);
+  assert.equal(byId("t2").doing, false);
+  assert.equal("doing" in byId("t3"), false);
+});
