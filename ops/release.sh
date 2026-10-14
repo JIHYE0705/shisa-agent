@@ -20,17 +20,17 @@ for a in $ARCHS; do
 done
 
 FILES=""
-for a in $ARCHS; do FILES="$FILES $DIST/시사-$VER-$a.dmg"; done
+for a in $ARCHS; do FILES="$FILES $DIST/Shisa-$VER-$a.dmg"; done
 # 받은 파일이 맞는지 확인할 수 있게 SHA-256 목록도 함께 올린다
-(cd "$DIST" && shasum -a 256 $(for a in $ARCHS; do printf '%s ' "시사-$VER-$a.dmg"; done) > "SHA256SUMS-$VER.txt")
+(cd "$DIST" && shasum -a 256 $(for a in $ARCHS; do printf '%s ' "Shisa-$VER-$a.dmg"; done) > "SHA256SUMS-$VER.txt")
 FILES="$FILES $DIST/SHA256SUMS-$VER.txt"
 
 NOTES="$DIST/release-notes-$VER.md"
 cat > "$NOTES" <<EOF
 ## 받기
 
-- 애플 실리콘 맥(M1 이후): \`시사-$VER-arm64.dmg\`
-- 인텔 맥: \`시사-$VER-x64.dmg\`
+- 애플 실리콘 맥(M1 이후): \`Shisa-$VER-arm64.dmg\`
+- 인텔 맥: \`Shisa-$VER-x64.dmg\`
 
 어느 쪽인지 모르겠다면 화면 왼쪽 위 사과 메뉴 → 이 Mac에 관하여 에서 「칩」이 Apple 로 시작하면 애플 실리콘, 「프로세서」가 Intel 이면 인텔입니다.
 

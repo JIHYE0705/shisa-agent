@@ -2,7 +2,7 @@
 // 사용: npm run dist                 (이 맥의 아키텍처: 애플 실리콘이면 arm64)
 //       npm run dist -- --arch=x64   (인텔 맥용. 데몬 의존성은 npm 이 x64 용으로 받고, Electron x64 는 packager 가 받는다)
 //       npm run dist -- --no-dmg     (앱 번들만)
-// 결과: dist/시사-<버전>-<arch>.dmg (버전은 desktop/package.json version)
+// 결과: dist/Shisa-<버전>-<arch>.dmg (버전은 desktop/package.json version)
 // 인터넷이 필요하다(npm ci, 처음 한 번 Electron 받기). 애플 개발자 서명·공증은 하지 않는다(README 「쉬운 설치」의 「그래도 열기」 참고).
 import fs from 'node:fs';
 import os from 'node:os';
@@ -138,7 +138,7 @@ if (MAKE_DMG) {
   try {
     run('ditto', [APP, path.join(root, `${APP_NAME}.app`)]);
     fs.symlinkSync('/Applications', path.join(root, '응용 프로그램'));
-    const dmg = path.join(DIST, `${APP_NAME}-${VERSION}-${ARCH}.dmg`);
+    const dmg = path.join(DIST, `Shisa-${VERSION}-${ARCH}.dmg`); // 파일 이름은 영문(GitHub 릴리스가 한글 파일 이름을 못 받는다). 앱 이름은 그대로 「시사」
     fs.rmSync(dmg, { force: true });
     run('hdiutil', ['create', '-volname', `${APP_NAME} ${VERSION}`, '-srcfolder', root, '-fs', 'HFS+', '-format', 'UDZO', '-imagekey', 'zlib-level=9', '-ov', dmg]);
     const mb = (fs.statSync(dmg).size / 1024 / 1024).toFixed(1);

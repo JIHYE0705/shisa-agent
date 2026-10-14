@@ -62,8 +62,8 @@ AI 없이 쓰는 중에 캐릭터를 두 번 누르면 「오늘 할 일 얼마�
 
 | 내 맥 | 받을 파일 |
 |---|---|
-| 애플 실리콘(M1, M2, M3, M4 등) | `시사-<버전>-arm64.dmg` |
-| 인텔 | `시사-<버전>-x64.dmg` |
+| 애플 실리콘(M1, M2, M3, M4 등) | `Shisa-<버전>-arm64.dmg` |
+| 인텔 | `Shisa-<버전>-x64.dmg` |
 
 어느 쪽인지 모르겠다면 화면 왼쪽 위 사과 메뉴에서 「이 Mac에 관하여」를 엽니다. 「칩」 칸에 Apple M으로 시작하는 이름이 보이면 애플 실리콘이고, 「프로세서」 칸에 Intel이 보이면 인텔입니다.
 
@@ -392,7 +392,7 @@ cd desktop && npm ci && npm test
 npm run fake-daemon & npm start       # 진짜 데몬 없이 가짜 데이터로 앱만
 npm run demo                          # 녹화용 자동 데모(장면 목록: npm run demo -- --list)
 npm run demo -- --exit --shots <dir>  # 장면마다 스크린샷(이 README 그림도 이걸로 찍었습니다)
-npm run dist                          # 데몬까지 든 시사.app과 dmg(dist/시사-<버전>-<arch>.dmg)
+npm run dist                          # 데몬까지 든 시사.app과 dmg(dist/Shisa-<버전>-<arch>.dmg)
 ```
 
 dmg 만들기와 GitHub Releases에 올리는 방법은 [docs/release.md](docs/release.md)에 적어 두었습니다.

@@ -31,8 +31,8 @@
 ```bash
 cd desktop
 npm ci                 # 처음 한 번(@electron/packager)
-npm run dist           # 이 맥의 아키텍처 → dist/시사-<버전>-arm64.dmg
-npm run dist:x64       # 인텔 맥용 → dist/시사-<버전>-x64.dmg
+npm run dist           # 이 맥의 아키텍처 → dist/Shisa-<버전>-arm64.dmg
+npm run dist:x64       # 인텔 맥용 → dist/Shisa-<버전>-x64.dmg
 npm run dist -- --no-dmg   # dmg 없이 dist/app/시사-darwin-<arch>/시사.app 만
 ```
 
@@ -48,7 +48,7 @@ npm run dist -- --no-dmg   # dmg 없이 dist/app/시사-darwin-<arch>/시사.app
 실제 데이터(`~/.cy-agent`)와 포트(47823)를 건드리지 않게 임시 폴더와 빈 포트로 띄웁니다. 이때는 로그인 항목도 건드리지 않습니다.
 
 ```bash
-hdiutil attach dist/시사-<버전>-arm64.dmg -nobrowse -readonly -mountpoint /tmp/shisa-mnt
+hdiutil attach dist/Shisa-<버전>-arm64.dmg -nobrowse -readonly -mountpoint /tmp/shisa-mnt
 ditto /tmp/shisa-mnt/시사.app /tmp/shisa-test/시사.app && hdiutil detach /tmp/shisa-mnt
 mkdir -p /tmp/shisa-home
 CY_AGENT_HOME=/tmp/shisa-home CY_AGENT_PORT=48300 /tmp/shisa-test/시사.app/Contents/MacOS/shisa
@@ -66,7 +66,7 @@ SHISA_ARCHS=arm64 sh ops/release.sh   # 한 아키텍처만
 `--publish`가 실행하는 명령은 아래와 같습니다. `gh`에 로그인한 계정이 `cheo0y/shisa-agent`에 쓸 수 있어야 합니다.
 
 ```bash
-gh release create v<버전> desktop/dist/시사-<버전>-arm64.dmg desktop/dist/시사-<버전>-x64.dmg desktop/dist/SHA256SUMS-<버전>.txt \
+gh release create v<버전> desktop/dist/Shisa-<버전>-arm64.dmg desktop/dist/Shisa-<버전>-x64.dmg desktop/dist/SHA256SUMS-<버전>.txt \
   --repo cheo0y/shisa-agent --title "시사 v<버전>" --notes-file desktop/dist/release-notes-<버전>.md
 ```
 
