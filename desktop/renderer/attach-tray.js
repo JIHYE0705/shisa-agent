@@ -72,7 +72,7 @@ export function createAttachTray(opts) {
       const at = r?.ok ? r.data?.attachment : null;
       if (!items.includes(a)) return; // 그 사이 뺐다
       if (at?.id) Object.assign(a, { status: 'ready', id: at.id, kind: at.kind ?? a.kind, size: at.size ?? a.size, name: at.name ?? a.name });
-      else Object.assign(a, { status: 'error', error: r?.data?.error || (r?.status === 413 ? ATTACH_ERRORS.tooBig(a.name) : '못 올렸어요') });
+      else Object.assign(a, { status: 'error', error: r?.data?.error || '못 올렸어요' });
     } catch { if (items.includes(a)) Object.assign(a, { status: 'error', error: '못 올렸어요' }); }
     a.done?.();
     changed();

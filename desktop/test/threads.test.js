@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normThreads, upsertThread, groupThreads, filterThreads, initSeen, isUnread, markSeen, pruneSeen, unreadCount,
-  pickInitial, neighborThread, afterRemoval, mergeMessages, appendLocal, tagLocal, dropLocal, todoChip, okThreadId,
+  pickInitial, neighborThread, afterRemoval, mergeMessages, appendLocal, tagLocal, dropLocal, dropFailed, todoChip, okThreadId,
 } from '../src/threads.js';
 import { initialChat, chatReducer, isBusy, latestStep, busyThreads } from '../src/chat.js';
 
@@ -145,4 +145,18 @@ test('내 말에 chatId 붙이기(tagLocal)·대기 중 취소로 빼기(dropLoc
   // 새 "응"이 서버에 들어가면 로컬 사본이 빠진다
   const after = mergeMessages(r.messages, [{ n: 1, role: 'user', text: '응', at: t1 }, { n: 2, role: 'assistant', text: '네', at: t1 }, { n: 3, role: 'user', text: '응', at: at(2026, 10, 12, 19) }]);
   assert.deepEqual(after.map((x) => x.n ?? null), [1, 2, 3]);
+});
+
+test('다시 보내서 받아들여지면 앞서 못 보낸 말·「못 보냈어요」 줄은 걷힌다(dropFailed)', () => {
+  let m = mergeMessages([], [{ n: 1, role: 'user', text: '예전', at: 't0' }]);
+  m = appendLocal(m, { role: 'user', text: '실패1', at: 't1', error: true });
+  m = appendLocal(m, { role: 'assistant', text: '못 보냈어요: 첨부 파일을 찾지 못했어요', at: 't1', error: true });
+  m = appendLocal(m, { role: 'user', text: '실패2', at: 't2', error: true });
+  m = appendLocal(m, { role: 'assistant', text: '에이전트에 연결되지 않아서 못 보냈어요.', at: 't2', error: true });
+  m = appendLocal(m, { role: 'user', text: '새 말', at: 't3', clientId: 'c3' });
+  m = dropFailed(tagLocal(m, { text: '새 말', at: 't3', clientId: 'c3' }, 'chat-3'));
+  assert.deepEqual(m.map((x) => x.text), ['예전', '새 말']);
+  assert.equal(m[1].chatId, 'chat-3');
+  const clean = [{ role: 'user', text: 'a', at: 't' }];
+  assert.equal(dropFailed(clean), clean); // 걷을 게 없으면 그대로
 });

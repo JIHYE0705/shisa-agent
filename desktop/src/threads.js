@@ -225,6 +225,11 @@ export function appendLocal(current, msg) {
   return m ? [...current, m].slice(-MAX_THREAD_MESSAGES) : current;
 }
 
+// 새로 보낸 말이 받아들여짐: 앞서 못 보낸 말·「못 보냈어요」 줄(화면에만 있던 실패 사본)은 걷는다 — 쌓이지 않게
+export function dropFailed(current) {
+  return current.some((m) => m.local && m.error) ? current.filter((m) => !(m.local && m.error)) : current;
+}
+
 // POST /chat 이 받아들인 내 말에 chatId 를 붙인다(그 말 = clientId 가 같은, 없으면 같은 글·같은 시각의 아직 chatId 없는 로컬 사본)
 export function tagLocal(current, { text, at, clientId }, chatId) {
   let done = false;

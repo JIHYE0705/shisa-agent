@@ -17,20 +17,14 @@ export type Attachment = { id: string; name: string; mime: string; size: number;
 export type Staged = Omit<Attachment, "file" | "path"> & { file: string; at: string };
 
 export const ATTACH_LIMITS = {
-  file: 30 * 1024 * 1024, // 파일 하나
-  total: 50 * 1024 * 1024, // 말 하나에 붙인 것 합
-  count: 10, // 말 하나에 붙일 수 있는 개수
+  // 파일 크기·합·개수 상한은 두지 않는다(아래는 모델에 블록으로 넣을지 경로로 넘길지 가르는 기준일 뿐)
   image: Math.floor(3.75 * 1024 * 1024), // 그대로 image 블록으로 보낼 수 있는 크기(base64 5MB 한도)
   pdf: 20 * 1024 * 1024, // document 블록으로 보낼 PDF
   inline: 20 * 1024 * 1024, // 한 턴에 블록으로 넣는 이미지·PDF 합(넘치면 경로만)
   text: 200 * 1024, // 글 파일을 내용째 넣는 크기(넘치면 경로만)
   textTotal: 400 * 1024,
 } as const;
-const MB = (n: number) => `${Math.round(n / 1024 / 1024)}MB`;
 export const ATTACH_ERR = {
-  tooBig: `파일이 너무 커요 — 하나에 ${MB(ATTACH_LIMITS.file)}까지 붙일 수 있어요`,
-  tooMany: `첨부는 한 번에 ${ATTACH_LIMITS.count}개까지예요`,
-  totalBig: `첨부를 합쳐 ${MB(ATTACH_LIMITS.total)}까지 보낼 수 있어요`,
   empty: "빈 파일은 붙일 수 없어요",
   missing: "첨부 파일을 찾지 못했어요 — 다시 붙여 주세요",
   badName: "파일 이름이 없어요",
@@ -112,12 +106,11 @@ export class AttachmentStore {
 
   private stagedDir() { return join(this.dir, STAGED); }
 
-  // 올리기(POST /chat/attachments) → 임시 보관. 너무 크거나 비었으면 { error }
+  // 올리기(POST /chat/attachments) → 임시 보관. 비었으면 { error }
   stage(rawName: unknown, mime: string, bytes: Uint8Array, now = new Date()): Staged | { error: string } {
     const name = cleanName(rawName);
     if (!name) return { error: ATTACH_ERR.badName };
     if (!bytes.length) return { error: ATTACH_ERR.empty };
-    if (bytes.length > ATTACH_LIMITS.file) return { error: ATTACH_ERR.tooBig };
     this.sweep(now);
     const id = randomUUID();
     let c = classify(name, mime, bytes);
@@ -156,16 +149,9 @@ export class AttachmentStore {
     } catch { return undefined; }
   }
 
-  // 보내기 전 검사: 개수·합 크기·있는지. 문제없으면 undefined
+  // 보내기 전 검사: 다 있는지. 문제없으면 undefined
   check(ids: string[]): string | undefined {
-    if (ids.length > ATTACH_LIMITS.count) return ATTACH_ERR.tooMany;
-    let total = 0;
-    for (const id of ids) {
-      const s = this.staged(id);
-      if (!s) return ATTACH_ERR.missing;
-      total += s.size;
-    }
-    return total > ATTACH_LIMITS.total ? ATTACH_ERR.totalBig : undefined;
+    return ids.some((id) => !this.staged(id)) ? ATTACH_ERR.missing : undefined;
   }
 
   // 말에 붙이기(차례가 왔을 때): 임시 보관 → 그 대화 폴더. 하나라도 없으면 throw(옮긴 건 그대로 둔다)

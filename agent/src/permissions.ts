@@ -678,6 +678,7 @@ export function gitWriteWhy(cmd: string, c: PermCtx): string | undefined {
   const subst = substsOf(cmd);
   // $(cat <<'EOF' … EOF) 는 글(커밋 메시지 본문)이라 첫 줄만 명령으로 본다
   const catDoc = (x: string) => (/^\s*cat\s+<<-?\s*(['"]?)\w+\1/.test(x) ? x.split("\n")[0] : x);
+  // eval·xargs·source·sh -c 는 낱말의 basename 으로 본다(shellWrapper) — 레포 이름 속 -eval 은 명령이 아니고, /bin/sh -c 도 잡힌다
   if (gitWriteText(cmd) && (subst.some((x) => gitWriteText(unquote(x)) || shellWrapper(catDoc(x))) || shellWrapper(cmd)))
     return "git 쓰기를 명령 치환·eval·sh -c·xargs 안에서 — 확인할 수 없음";
   const probe = c.gitProbe ?? realGitProbe;

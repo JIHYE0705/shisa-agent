@@ -3,13 +3,8 @@
 // 받은 말의 첨부는 cy-attach://chat/<대화 id>/<저장 이름> 으로 그린다(메인이 데몬에서 읽어 준다 — 첨부 폴더 밖은 못 읽음).
 
 export const ATTACH_SCHEME = 'cy-attach';
-// 데몬(agent/src/attachments.ts ATTACH_LIMITS)과 같은 한도
-export const ATTACH_LIMITS = { file: 30 * 1024 * 1024, total: 50 * 1024 * 1024, count: 10 };
-const MB = (n) => `${Math.round(n / 1024 / 1024)}MB`;
+// 크기·합·개수 상한은 없다(데몬도 없다)
 export const ATTACH_ERRORS = {
-  tooBig: (name) => `「${name}」이(가) 너무 커요 — 하나에 ${MB(ATTACH_LIMITS.file)}까지 붙일 수 있어요`,
-  tooMany: `첨부는 한 번에 ${ATTACH_LIMITS.count}개까지예요`,
-  totalBig: `첨부를 합쳐 ${MB(ATTACH_LIMITS.total)}까지 보낼 수 있어요`,
   empty: (name) => `「${name}」은(는) 빈 파일이에요`,
   folder: '폴더는 붙일 수 없어요 — 파일을 골라 주세요',
 };
@@ -39,12 +34,11 @@ export function guessKind(name, mime = '') {
 export const KIND_ICON = { image: '🖼️', pdf: '📕', text: '📝', file: '📎' };
 export const KIND_LABEL = { image: '이미지', pdf: 'PDF', text: '글 파일', file: '파일' };
 
-// 붙이려는 파일들을 지금 목록에 더한다: 개수·크기·합 크기 한도, 같은 파일(이름·크기·수정 시각) 두 번은 한 번만.
+// 붙이려는 파일들을 지금 목록에 더한다: 빈 파일은 빼고, 같은 파일(이름·크기·수정 시각) 두 번은 한 번만.
 // files: [{ name, size, type, lastModified }] → { add: 고른 것, errors: 사용자에게 보일 이유 }
 export function admitFiles(current, files) {
   const list = Array.isArray(current) ? current : [];
   const add = [], errors = [];
-  let count = list.length, total = list.reduce((s, x) => s + (Number(x.size) || 0), 0);
   const seen = new Set(list.map((x) => x.sig).filter(Boolean));
   for (const f of Array.isArray(files) ? files : []) {
     if (!f || typeof f.name !== 'string') continue;
@@ -53,10 +47,7 @@ export function admitFiles(current, files) {
     const sig = `${name}\u0000${size}\u0000${f.lastModified ?? ''}`;
     if (seen.has(sig)) continue;
     if (!size) { errors.push(ATTACH_ERRORS.empty(name)); continue; }
-    if (size > ATTACH_LIMITS.file) { errors.push(ATTACH_ERRORS.tooBig(name)); continue; }
-    if (count + 1 > ATTACH_LIMITS.count) { if (!errors.includes(ATTACH_ERRORS.tooMany)) errors.push(ATTACH_ERRORS.tooMany); continue; }
-    if (total + size > ATTACH_LIMITS.total) { if (!errors.includes(ATTACH_ERRORS.totalBig)) errors.push(ATTACH_ERRORS.totalBig); continue; }
-    seen.add(sig); count++; total += size;
+    seen.add(sig);
     add.push({ file: f, sig, name, size, kind: guessKind(name, f.type) });
   }
   return { add, errors };
@@ -108,7 +99,7 @@ export function downscaleTarget(w, h, bytes, type = '') {
 export function normAttachments(list) {
   if (!Array.isArray(list)) return [];
   const out = [];
-  for (const a of list.slice(0, ATTACH_LIMITS.count)) {
+  for (const a of list) {
     if (!a || typeof a !== 'object' || typeof a.name !== 'string') continue;
     const kind = ['image', 'pdf', 'text', 'file'].includes(a.kind) ? a.kind : 'file';
     const x = { name: a.name.slice(0, 200), kind, size: Number(a.size) || 0 };
@@ -157,16 +148,16 @@ export function sendable(items) {
   };
 }
 
-// 메인(IPC)에서 받은 첨부 id 목록: 모양 맞는 것만, 중복 없이, 10개까지. 하나라도 틀리면 null(거부)
+// 메인(IPC)에서 받은 첨부 id 목록: 모양 맞는 것만, 중복 없이(개수 상한 없음). 하나라도 틀리면 null(거부)
 export function cleanAttachIds(list) {
   if (list == null) return [];
-  if (!Array.isArray(list) || list.length > ATTACH_LIMITS.count || !list.every(okAttachId)) return null;
+  if (!Array.isArray(list) || !list.every(okAttachId)) return null;
   return [...new Set(list)];
 }
 // 올릴 파일 이름·종류(IPC): 이름은 1–500자, 종류는 type/subtype 모양만(아니면 기본 — 데몬이 내용으로 정한다)
 export function cleanUpload(name, mime, bytes) {
   if (typeof name !== 'string' || !name.trim() || name.length > 500) return null;
-  if (!(bytes instanceof Uint8Array) || !bytes.length || bytes.length > ATTACH_LIMITS.file) return null;
+  if (!(bytes instanceof Uint8Array) || !bytes.length) return null;
   const m = typeof mime === 'string' && /^[\w.+-]{1,80}\/[\w.+-]{1,120}$/.test(mime) ? mime : 'application/octet-stream';
   return { name: name.trim(), mime: m, bytes };
 }
