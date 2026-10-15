@@ -8,6 +8,7 @@ import type { Bubble, BubbleImage } from "./bus.ts";
 import type { Config } from "./config.ts";
 import { localDate as kstDate, localMinutes as kstMinutes } from "./calendar.ts"; // 이 맥의 시간대 기준(이름은 예전 그대로)
 import { voice, tone } from "./voice.ts";
+import { PRIO_LABEL } from "./local-mode.ts";
 import { phrase, phraseVoice, customPhrase } from "./phrases.ts";
 import { mergeDetail, mergeQuestion, type MergeInfo } from "./merge-request.ts";
 
@@ -70,11 +71,11 @@ export function todoListMd(items: TodoLike[], via: string, max = 6): string {
   const shown = items.slice(0, max);
   const more = items.length > max ? `\n\n…외 ${items.length - max}개` : "";
   if (shown.length >= 4) {
-    const rows = shown.map((t) => `| ${t.priority ? `**P${t.priority}**` : "—"} | ${cell(clip(t.title, 34))} | ${cell(t.source ?? via)} |`);
+    const rows = shown.map((t) => `| ${t.priority ? `**${PRIO_LABEL[t.priority] ?? t.priority}**` : "—"} | ${cell(clip(t.title, 34))} | ${cell(t.source ?? via)} |`);
     return ["| | 할 일 | 출처 |", "|---|---|---|", ...rows].join("\n") + more;
   }
   return shown.map((t) => {
-    const head = `- ${t.priority ? `**[P${t.priority}]** ` : ""}${cell(clip(t.title, 40))} · ${cell(t.source ?? via)}`;
+    const head = `- ${t.priority ? `**[${PRIO_LABEL[t.priority] ?? t.priority}]** ` : ""}${cell(clip(t.title, 40))} · ${cell(t.source ?? via)}`;
     const why = t.description?.trim() ? `\n  ${cell(clip(t.description.trim(), 60))}` : "";
     return head + why;
   }).join("\n") + more;

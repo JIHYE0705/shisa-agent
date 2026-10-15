@@ -36,7 +36,7 @@ test('groupTodos: 우선순위 순, 모르는 건 기타, 위험한 링크 제�
   assert.deepEqual(g.map((x) => [x.priority, x.items.map((i) => i.id)]), [[1, ['b', 'd']], [2, ['a']], [9, ['c']]]);
   assert.equal(g[0].items[0].link, null);
   assert.equal(g[0].items[1].link, 'slack://open');
-  assert.equal(g[0].label, 'P1');
+  assert.equal(g[0].label, '오늘 꼭');
   assert.equal(g[2].label, '기타');
 });
 
@@ -171,7 +171,7 @@ test('shapeDashboard: 오늘 할 일은 할 일 중 오늘로 고른 것: 할 �
       { id: 'gone', title: '응답 대기로 빠진 줄', done: false, priority: 2 },
     ] },
   }, NOW);
-  assert.deepEqual(vm.todayGroups.map((g) => [g.label, g.items.map((t) => t.id)]), [['P1', ['b']], ['P2', ['a']], ['백로그', ['e']]]);
+  assert.deepEqual(vm.todayGroups.map((g) => [g.label, g.items.map((t) => t.id)]), [['오늘 꼭', ['b']], ['이번 주', ['a']], ['언젠가', ['e']]]);
   assert.equal(vm.todayGroups[0].items[0].doing, true);
   assert.equal(vm.todayGroups[0].items[0].today, '2026-10-09');
   assert.deepEqual(vm.todayDone.map((t) => [t.id, t.priority, t.auto]), [['x', 3, false]]);
