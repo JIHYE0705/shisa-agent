@@ -134,6 +134,7 @@ const settings = new Settings(cfg, { onChange: (keys) => {
   if (keys.includes("onboarded") && modelWorkAllowed(cfg)) setTimeout(() => onboardedNow(), 0); // 마법사를 막 마침 → 첫 정리
   else if (keys.includes("readSessions") && sessionsAllowed(cfg)) setTimeout(() => ingest(), 0);
   if (keys.includes("calendarAlert")) calendar.check(); // 알림 시각을 바로 다시 잡는다
+  if (keys.includes("character")) bus.characterChanged(); // 앱 그림·영상을 바로 바꾼다
 } });
 let kgStatus: (() => { phase: string; reason?: string; step?: string }) | undefined;
 const connections = new Connections(cfg, { lastRun: lastRunOf((o) => runs.listRuns(o)), kg: () => kgStatus?.() });
@@ -327,9 +328,9 @@ const slackTick = asRoutine(safe("slack-ingest", async () => {
   if (!modelWorkAllowed(cfg)) return; // 설치 마법사를 마치기 전
   if (!slackIngester.transport) return; // slack 연결 안 됨(off·mcp) — 브리핑·채팅이 MCP로 실시간 조회
   // 진행 보고: 20초 안에 끝나는 평소 사이클은 조용히, 오래 걸리면 시작·결과만
-  const prog = reactions.progress("slack-ingest", "슬랙 훑어보는 중이에요…", { quietMs: 20e3 });
+  const prog = reactions.progress("slack-ingest", phrase("slack_prog"), { quietMs: 20e3 });
   const c = await slackIngester.run().catch((e) => { prog.fail("슬랙 훑다가 막혔어요"); throw e; });
-  prog.done(c.messages ? `슬랙 다 봤어요 — 메시지 ${c.messages}개` : undefined);
+  prog.done(c.messages ? phrase("slack_done", { n: c.messages }) : undefined);
   console.log("[slack-ingest]", JSON.stringify(c)); // 건수·비용만
   await safe("todo-auto", () => runAfterSlackIngest(agent, cfg, store))(); // 끝난 할 일 자동 완료(모델은 15분에 한 번)
   await safe("slack-todos", () => agent.slackTodosNow())(); // 새 DM·멘션은 바로 할 일로(정기 브리핑을 기다리지 않는다)
@@ -340,18 +341,18 @@ const slackTick = asRoutine(safe("slack-ingest", async () => {
 let refreshing: Promise<void> | undefined;
 const refreshAll = () => (refreshing ??= (async () => {
   if (!modelWorkAllowed(cfg)) { bus.bubble({ id: "refresh", text: WAIT_SETUP, kind: "info", ttlMs: 10e3 }); return; }
-  bus.bubble({ id: "refresh", text: "슬랙·메일 새로 읽는 중이에요…", kind: "info", ttlMs: 60e3 });
+  bus.bubble({ id: "refresh", text: phrase("refresh_prog"), kind: "info", ttlMs: 60e3 });
   const before = new Set(store.openTodos().map((t) => t.id));
   await slackTick();
   await agent.runBriefing();
-  if (!store.openTodos().some((t) => !before.has(t.id))) bus.bubble({ id: "refresh", text: "새로 들어온 할 일은 없어요", kind: "info", ttlMs: 6e3 });
+  if (!store.openTodos().some((t) => !before.has(t.id))) bus.bubble({ id: "refresh", text: phrase("refresh_none"), kind: "info", ttlMs: 6e3 });
 })().finally(() => { refreshing = undefined; }));
 
 // 프로필 학습: 동시에 두 번 돌지 않게. 새 근거가 없으면 모델을 부르지 않는다
 let learning: Promise<unknown> | undefined;
 const learn = (rounds = 1) => asRoutine(safe("profile", async () => {
   if (learning || !modelWorkAllowed(cfg)) return;
-  const prog = reactions.progress("profile", "새로 알게 된 것 정리하는 중이에요…", { quietMs: 15e3 });
+  const prog = reactions.progress("profile", phrase("profile_prog"), { quietMs: 15e3 });
   learning = (async () => {
     let added = 0;
     for (let i = 0; i < rounds; i++) {
@@ -359,7 +360,7 @@ const learn = (rounds = 1) => asRoutine(safe("profile", async () => {
       added += Number(r.added) || 0;
       if (!r.evidence) break;
     }
-    prog.done(added ? `새로 알게 된 게 ${added}개 있어요` : undefined);
+    prog.done(added ? phrase("profile_done", { n: added }) : undefined);
   })().catch((e) => { prog.done(); throw e; }).finally(() => { learning = undefined; });
   await learning;
 }));

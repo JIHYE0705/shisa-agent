@@ -1,6 +1,8 @@
 // 고정 문구: 캐릭터가 사건마다 하는 정해진 말(춤·인사·새 할 일·머지·회의 알림…). 설정 창 「문구」에서 고친다.
 // 고친 건 ~/.cy-agent/config.json phrases: { 키: [줄…] } — 비우면 기본값. 여러 줄이면 그중 하나를 무작위로.
 // {title} 같은 자리표시는 그 문구가 받는 것만 쓸 수 있다(모르는 건 저장 때 거절). 오류 글·프로토콜 글은 여기 없다.
+// 기본값은 캐릭터(characters.ts)마다 다르다 — 고친 문구 > 캐릭터 기본 > 아래 default(시사).
+import { character } from "./characters.ts";
 import { voice, type Mood, type VoiceKind } from "./voice.ts";
 
 export type PhraseDef = { key: string; group: string; label: string; vars: readonly string[]; default: readonly string[] };
@@ -10,6 +12,14 @@ export const PHRASES = [
   { key: "dance", group: "캐릭터", label: "춤출 때 한마디(말에 「춤」「댄스」가 있으면)", vars: [], default: ["💃 춤춰요!"] },
   { key: "hello", group: "캐릭터", label: "앱을 켰을 때 인사", vars: [], default: ["안녕하세요! 곧 브리핑할게요"] },
   { key: "mcp_back", group: "캐릭터", label: "MCP 다시 연결됨", vars: [], default: ["다시 연결됐어요! 밀린 거 훑어볼게요"] },
+  { key: "briefing_prog", group: "캐릭터", label: "진행: 브리핑 준비", vars: [], default: ["브리핑 준비하는 중이에요…"] },
+  { key: "slack_prog", group: "캐릭터", label: "진행: 슬랙 훑어보기", vars: [], default: ["슬랙 훑어보는 중이에요…"] },
+  { key: "slack_done", group: "캐릭터", label: "슬랙 다 봄", vars: ["n"], default: ["슬랙 다 봤어요 — 메시지 {n}개"] },
+  { key: "profile_prog", group: "캐릭터", label: "진행: 새로 알게 된 것 정리", vars: [], default: ["새로 알게 된 것 정리하는 중이에요…"] },
+  { key: "profile_done", group: "캐릭터", label: "새로 알게 된 것 정리함", vars: ["n"], default: ["새로 알게 된 게 {n}개 있어요"] },
+  { key: "refresh_prog", group: "캐릭터", label: "↻ 슬랙·메일 다시 읽는 중", vars: [], default: ["슬랙·메일 새로 읽는 중이에요…"] },
+  { key: "refresh_none", group: "캐릭터", label: "↻ 새 할 일 없음", vars: [], default: ["새로 들어온 할 일은 없어요"] },
+  { key: "focus_done", group: "캐릭터", label: "집중 끝({duration} = 25분 등)", vars: ["duration"], default: ["{duration} 집중했어요. 수고했어요!"] },
   // 할 일
   { key: "todo_new_one", group: "할 일", label: "새 할 일 하나", vars: ["title"], default: ["새 할 일이 생겼어요: '{title}'"] },
   { key: "todo_new_many", group: "할 일", label: "새 할 일 여러 개", vars: ["n"], default: ["새 할 일이 {n}개 생겼어요~"] },
@@ -17,6 +27,8 @@ export const PHRASES = [
   { key: "todo_auto_done_many", group: "할 일", label: "할 일 자동 완료(여러 개, {n} = 나머지 수)", vars: ["title", "n"], default: ["'{title}' 외 {n}개 끝난 걸로 처리했어요"] },
   { key: "daily_all", group: "할 일", label: "오늘 할 일 다 끝냄", vars: ["total"], default: ["오늘 할 일 {total}개 다 끝냈어요! 최고예요 🎉 (스이시~사)", "다 했어요! {total}개 전부 끝 🎉 오늘 고생 많으셨어요"] },
   { key: "daily_half", group: "할 일", label: "오늘 할 일 절반 넘김", vars: ["done", "total"], default: ["벌써 절반 했어요! ({done}/{total}) 이 페이스 좋아요 💪 (기쁜 시사)", "반 넘었어요 {done}/{total}! 조금만 더 힘내요"] },
+  { key: "today_ask", group: "할 일", label: "오늘 할 일 알림 — 아직 안 적음", vars: [], default: ["오늘 할 일을 적어 주세요~ 오늘 할 일 탭에 적으면 돼요 (스이시~사)"] },
+  { key: "today_left", group: "할 일", label: "오늘 할 일 알림 — 남은 것", vars: ["open"], default: ["오늘 할 일 {open}개 남았어요. 하나씩 해 봐요 (스이시~사)"] },
   { key: "lots", group: "할 일", label: "할 일이 많을 때(앞부분)", vars: ["n"], default: ["오늘 할 일이 많네요… 급한 것만 {n}개예요.", "으아, 할 일이 많아요… 급한 것만 {n}개예요.", "오늘 좀 바쁘겠어요… 급한 것만 {n}개예요."] },
   { key: "lots_briefing", group: "할 일", label: "할 일이 많을 때 — 브리핑 뒤 꼬리", vars: [], default: ["하나씩 같이 해 봐요 (비장한 시사)"] },
   // 회의
@@ -46,6 +58,8 @@ export const PHRASES = [
 export type PhraseKey = (typeof PHRASES)[number]["key"];
 const DEFS = new Map<string, PhraseDef>(PHRASES.map((p) => [p.key, p]));
 export const phraseDef = (key: string): PhraseDef | undefined => DEFS.get(key);
+// 지금 캐릭터의 기본 줄들(설정 창이 「기본값」으로 보여 주는 것)
+export const defaultLines = (key: string): readonly string[] => character().phrases[key] ?? DEFS.get(key)?.default ?? [key];
 
 // 사용자가 고친 것(키 → 줄들). 설정 창이 바꾸면 바로 바뀐다(Settings 가 setPhrases)
 let overrides: Record<string, string[]> = {};
@@ -79,7 +93,7 @@ export const fillVars = (line: string, vars: Record<string, string | number> = {
 
 // 문구 하나: 고친 게 있으면 그것, 없으면 기본. 여러 줄이면 r(0–1)로 하나
 export function phrase(key: PhraseKey, vars: Record<string, string | number> = {}, r: number = Math.random()): string {
-  const lines = overrides[key] ?? DEFS.get(key)?.default ?? [key];
+  const lines = overrides[key] ?? defaultLines(key);
   return fillVars(lines[Math.min(lines.length - 1, Math.max(0, Math.floor(r * lines.length)))], vars);
 }
 

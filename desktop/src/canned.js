@@ -1,6 +1,8 @@
 // AI를 안 붙였을 때 시사가 하는 정해진 말. 버튼마다 말이 여러 개라서, 누를 때마다 돌려 가며 쓴다.
 // 줄바꿈(\n)과 **굵게**는 채팅 말풍선(마크다운)에서 그대로 보인다.
 // {next} {open} {done} {total} {rest} 는 그때 숫자·제목으로 바뀐다.
+// 고른 캐릭터가 시사가 아니면 그 캐릭터 말(character-canned.js)이 기본이다. 사용자가 고친 말은 캐릭터와 상관없이 그대로.
+import { CHARACTER_CANNED } from './character-canned.js';
 
 export const CANNED = [
   { id: 'today', label: '오늘 할 일 얼마나 했어요?' },
@@ -169,9 +171,11 @@ export function sanitizeCanned(raw) {
   return out;
 }
 
-function linesFor(key, override) {
+function linesFor(key, override, character) {
   const own = override?.[key];
-  return Array.isArray(own) && own.length ? own : (CANNED_DEFAULTS[key] || FALLBACK);
+  if (Array.isArray(own) && own.length) return own;
+  const byChar = Object.hasOwn(CHARACTER_CANNED, character ?? '') ? CHARACTER_CANNED[character][key] : null;
+  return byChar?.length ? byChar : (CANNED_DEFAULTS[key] || FALLBACK);
 }
 
 function usable(pool, c) {
@@ -184,8 +188,8 @@ function todayKey(c) {
   return `today:${c.open ? (c.done ? 'p' : 'n') : (c.done ? 'a' : 'e')}`;
 }
 
-export function cannedPool(kind, c, override) {
-  const pick = (key) => usable(linesFor(key, override), c);
+export function cannedPool(kind, c, override, character) {
+  const pick = (key) => usable(linesFor(key, override, character), c);
   switch (kind) {
     case 'today': return { key: todayKey(c), pool: pick(todayKey(c)) };
     case 'next':
@@ -241,7 +245,7 @@ function nextIndex(key, n, rng) {
   return i;
 }
 
-// kind: CANNED 의 id. ctx: { open, done, next, hour }. opts.override 는 저장한 말, opts.rng 는 테스트용.
+// kind: CANNED 의 id. ctx: { open, done, next, hour }. opts.override 는 저장한 말, opts.character 는 캐릭터 id, opts.rng 는 테스트용.
 export function cannedReply(kind, ctx = {}, opts = {}) {
   const rng = opts.rng ?? Math.random;
   const c = {
@@ -252,6 +256,6 @@ export function cannedReply(kind, ctx = {}, opts = {}) {
     period: period(Number.isFinite(ctx.hour) ? ctx.hour : new Date().getHours()),
   };
   c.total = c.open + c.done;
-  const { key, pool } = cannedPool(kind, c, opts.override);
-  return fillCanned(pool[nextIndex(key, pool.length, rng)], c);
+  const { key, pool } = cannedPool(kind, c, opts.override, opts.character);
+  return fillCanned(pool[nextIndex(`${opts.character ?? ''}:${key}`, pool.length, rng)], c);
 }

@@ -14,9 +14,20 @@ export const CHARACTER_FILES = [
   ['character/studying.png', 'image/png'],
   ['character/dance.png', 'image/png'],
 ];
+// 고를 수 있는 캐릭터(characters/<id>/): 정지 그림 · 집중(study)·일정 알림(plan) 영상과 첫 장면
+export const PICKABLE = ['hachi', 'rakko', 'momonga'];
+export const PICKABLE_FILES = PICKABLE.flatMap((id) => [
+  [`characters/${id}/eyes_open.png`, 'image/png'],
+  [`characters/${id}/eyes_closed.png`, 'image/png'],
+  [`characters/${id}/study.webm`, 'video/webm'],
+  [`characters/${id}/plan.webm`, 'video/webm'],
+  [`characters/${id}/study.png`, 'image/png'],
+  [`characters/${id}/plan.png`, 'image/png'],
+]);
 export const ALLOWED = new Map([
   ['character.png', 'image/png'],
   ...CHARACTER_FILES,
+  ...PICKABLE_FILES,
   ...IMAGES.map((n) => [`reactions/${n}.jpg`, 'image/jpeg']),
 ]);
 

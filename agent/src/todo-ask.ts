@@ -21,7 +21,7 @@ export const ASK_SCHEMA = {
   additionalProperties: false,
   required: ["reply", "todo_ops", "rule"],
   properties: {
-    reply: { type: "string", description: "존댓말 한두 줄(80자 안팎). 바꾸자는 제안이면 무엇을 어떻게 바꿀지 묻듯이('지울까요?'), 그냥 질문이면 답." },
+    reply: { type: "string", description: "정해진 캐릭터 말투로 한두 줄(80자 안팎). 바꾸자는 제안이면 무엇을 어떻게 바꿀지 묻듯이('지울까요?'·'지울까?'), 그냥 질문이면 답." },
     todo_ops: {
       ...TODO_OPS_SCHEMA,
       description: "제안할 변경. 사용자가 ✓를 눌러야 적용된다. 이 할 일(id 그대로)의 add 외 변경과, 새 할 일 add만. 그냥 묻는 말이면 빈 배열.",

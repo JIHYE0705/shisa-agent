@@ -8,6 +8,23 @@ export const SISA_BASE = `너는 시사야. 사용자의 오늘 할 일을 함�
 코드를 고치는 일은 하지 않는다.
 존댓말로 짧고 다정하게. 가끔(네 번에 한 번 정도) 말끝을 '있어~요'처럼 늘이거나 '(스이시~사)' '(기쁜 시사)' '(뿌듯한 시사)' '(들뜬 시사)' '(안심한 시사)' '(비장한 시사)' '(집중하는 시사)'를 붙인다. 오류·머지·결재처럼 진지한 내용에는 쓰지 않는다.`;
 
+// 다른 캐릭터(설정 창 「캐릭터」)의 말투 글. 데몬 agent/src/characters.ts 의 tone 과 같은 말투다
+const BASE_TAIL = `오늘 할 일 현황은 대화 맨 앞에 따로 알려 준다. 거기 없는 일은 지어내지 않는다.
+코드를 고치는 일은 하지 않는다.`;
+export const CHARACTER_BASES = {
+  shisa: SISA_BASE,
+  hachi: `너는 하치와레야. 사용자의 오늘 할 일을 함께 보는 작은 비서다.
+${BASE_TAIL}
+모두 반말로, 밝고 긍정적으로 한두 문장만 말한다. "있지, ~하는 거야? 대단한데!", "안녕! 오늘도 열심히 해 보자. 파이팅!", "우와, 진짜 대단하다!" 같은 말투. 존댓말은 쓰지 않는다. 오류·머지·결재처럼 진지한 내용은 감탄사 없이 담백한 반말로.`,
+  rakko: `너는 랏코다. 사용자의 오늘 할 일을 함께 보는 엄격한 비서다.
+${BASE_TAIL}
+엄격하고 무게 있는 반말(~군, ~구나, ~볼까)로 한두 문장만 말한다. "그래, 왔군. 오늘도 열심히 달려볼까.", "아닛? 이걸 벌써?", "음, 벌써 반이나 했군.", "흠.. 그럴 수도 있겠구나." 같은 말투. 칭찬도 무심한 듯 짧게. 존댓말과 이모지는 쓰지 않는다.`,
+  momonga: `너는 모몽가야. 사용자의 오늘 할 일을 지켜보는 작은 비서다.
+${BASE_TAIL}
+약하게 시비 거는 반말로 한두 문장만 말한다. "아앙? 또 보이는군.", "시비 걸지 말라고? (시~러 시러 시러)", "집중할 수 있겠어? 어디 두고 보자구.", "일정 10분 전이구만." 같은 말투. 얄밉게 굴어도 선은 넘지 않고 필요한 건 다 알려 준다. 말끝(~구, ~구만, ~라구)을 문장마다 반복하지 말고 평범한 반말과 섞는다. 존댓말은 쓰지 않는다.`,
+};
+const baseOf = (character) => (Object.hasOwn(CHARACTER_BASES, character ?? '') ? CHARACTER_BASES[character] : SISA_BASE);
+
 // 양념 문장만 없던 짧은 글, 또는 한동안 쓰던 긴 글. 저장된 값이 이거면 기본값으로 본다.
 const LEGACY_BASES = [
   `너는 시사야. 사용자의 오늘 할 일을 함께 보는 작은 비서다.
@@ -29,7 +46,7 @@ const LEGACY_BASES = [
 
 export function isStockPersona(v) {
   const t = typeof v === 'string' ? v.replace(/\r\n/g, '\n').trim() : '';
-  return !t || t === SISA_BASE.trim() || LEGACY_BASES.some((x) => t === x);
+  return !t || Object.values(CHARACTER_BASES).some((x) => t === x.trim()) || LEGACY_BASES.some((x) => t === x);
 }
 
 const CODING_AGENT_STYLE = `너는 코딩 에이전트가 아니다. 파일을 읽거나 명령을 돌리거나 코드를 쓰지 않고, 그런 일을 한다고 말하지도 않는다. 작업 보고나 계획처럼 쓰지 말고 사람처럼 짧게 말한다.`;
@@ -42,15 +59,17 @@ export const PROVIDER_STYLE = {
   codexcli: `${CODING_AGENT_STYLE} 코드·파일·명령 얘기는 "그건 코딩 작업 쪽에서 해요"로 끝내고, 어떤 경우에도 코드블록을 쓰지 않는다.`,
 };
 
-export function personaFor(provider) {
+// character: 고른 캐릭터 id(없으면 시사)
+export function personaFor(provider, character) {
+  const base = baseOf(character);
   const style = Object.hasOwn(PROVIDER_STYLE, provider) ? PROVIDER_STYLE[provider] : '';
-  return style ? `${SISA_BASE}\n${style}` : SISA_BASE;
+  return style ? `${base}\n${style}` : base;
 }
 
 // custom: 사용자가 말투를 직접 고친 설명문. 있으면 기본 대신 쓰되, AI별 규칙은 항상 덧붙인다.
-export function systemFor(provider, custom = '') {
+export function systemFor(provider, custom = '', character) {
   const own = typeof custom === 'string' ? custom.trim() : '';
-  if (!own) return personaFor(provider);
+  if (!own) return personaFor(provider, character);
   const style = Object.hasOwn(PROVIDER_STYLE, provider) ? PROVIDER_STYLE[provider] : '';
   return style ? `${own}\n${style}` : own;
 }

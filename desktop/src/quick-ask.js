@@ -2,6 +2,8 @@
 // 답은 데몬 POST /local/ask { id } 가 오늘 할 일·할 일·캘린더만 보고 정해진 말로 준다(agent local-mode.ts quickAnswer).
 // 마지막 칩 「AI 연결하기」는 데몬에 묻지 않고 설치 마법사의 뇌 단계를 연다.
 
+import { localSay } from './character.js';
+
 export const QUICK_ID = 'local-quick'; // 칩 말풍선 id(하나만)
 export const QUICK_TTL = 30000;
 export const ANSWER_TTL = 12000;
@@ -18,11 +20,11 @@ export const ASK_IDS = QUICK_CHIPS.filter((c) => !c.connect).map((c) => c.id); /
 export const isAskId = (v) => typeof v === 'string' && ASK_IDS.includes(v);
 
 // 칩 말풍선. view = brain-state.js brainView
-export function quickBubble(view) {
+// character: 고른 캐릭터 id(말투)
+export function quickBubble(view, character) {
   const login = view?.provider === 'claude-code' && view?.known;
-  const text = login
-    ? 'Claude Code 로그인 전이라도 이건 바로 알려 드려요. 무엇이 궁금하세요?'
-    : '무엇이 궁금하세요? AI 없이도 이건 바로 알려 드려요';
+  const say = localSay(character);
+  const text = login ? say.quickLogin : say.quick;
   return { id: QUICK_ID, text, kind: 'info', ttlMs: QUICK_TTL, quick: CHIP_IDS.slice() };
 }
 

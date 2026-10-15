@@ -163,7 +163,7 @@ const CHAT_SCHEMA = {
   required: ["reply_md", "bubble", "show", "proposals", "todo_ops", "plan_ops", "memory_ops", "rule", "guideline", "merges", "auto_merge"],
   properties: {
     reply_md: { type: "string", description: "대화 답변(Markdown). 짧게, 필요한 만큼만. 링크 포함." },
-    bubble: { type: "string", description: "캐릭터 말풍선용 요약. 존댓말, 40자 이내." },
+    bubble: { type: "string", description: "캐릭터 말풍선용 요약. 정해진 캐릭터 말투로, 40자 이내." },
     show: {
       anyOf: [{ type: "string", enum: [...SECTIONS] }, { type: "null" }],
       description: "사용자가 현황을 '보여줘/열어줘' 하면 해당 패널 섹션. overview=전체, projects=프로젝트·커밋, todos=할 일 탭, today=오늘 할 일(할 일 중 오늘로 고른 것). 아니면 null.",

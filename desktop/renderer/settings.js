@@ -1,4 +1,4 @@
-// 설정 창: AI·모델 · 브리핑 출처 · 오늘 할 일 알림 · 일정 알림 · 자동 머지 레포 · 문구 · 행동 지침 · 연결 상태. 데몬은 메인 프로세스를 거쳐서만(window.cy)
+// 설정 창: 캐릭터 · AI·모델 · 브리핑 출처 · 오늘 할 일 알림 · 일정 알림 · 자동 머지 레포 · 문구 · 행동 지침 · 연결 상태. 데몬은 메인 프로세스를 거쳐서만(window.cy)
 // Claude Code 가 없는 컴퓨터(Gemini·GPT 키·로컬)에서는 Claude 세부 모델·자동 머지 칸을 안내로 바꾼다
 import {
   groupRows, pendingChecks, mergeRows, toggleExclude, dotClass, metaText, STATE_LABEL,
@@ -8,6 +8,10 @@ import {
   ALERT_DEFAULT, cleanCalendarAlert, alertMinutesNext, parseAlertMinutes, alertChoices, calendarAlertSummary,
 } from '../src/settings.js';
 import { mountGuidelines } from '../src/guidelines.js';
+import { CHARACTERS, CHARACTER_IDS, characterAssets } from '../src/character.js';
+import { who, setWho, onWho } from './who.js';
+// 안내 글 속 이름(<span class="who">)도 캐릭터 이름으로
+onWho(() => { for (const n of document.querySelectorAll('.who')) n.textContent = who(); });
 import { brainRows, brainDisconnectCopy, connectorAction, capOfRow, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
 
 const cy = window.cy;
@@ -51,7 +55,7 @@ function banner(text) {
 async function save(patch) {
   const r = await cy.saveSettings(patch).catch(() => null);
   if (!r?.ok) {
-    flash(r?.data?.error ? `저장 못 했어요: ${r.data.error}` : '저장 못 했어요 — 시사에 연결되지 않았어요', true);
+    flash(r?.data?.error ? `저장 못 했어요: ${r.data.error}` : `저장 못 했어요 — ${who()}에 연결되지 않았어요`, true);
     return false;
   }
   settings = r.data.settings ?? settings;
@@ -134,11 +138,11 @@ function renderBrains() {
       ...copy, ...confirmOpts(`brain:${r.id}`),
       onConfirm: async () => {
         const res = await cy.disconnectBrain(r.id).catch(() => null);
-        if (!res?.ok) return { ok: false, error: res?.data?.error || res?.error || '끊지 못했어요. 시사에 연결되지 않았어요' };
+        if (!res?.ok) return { ok: false, error: res?.data?.error || res?.error || `끊지 못했어요. ${who()}에 연결되지 않았어요` };
         sisaView = res;
         const s = await cy.getSettings().catch(() => null);
         if (s?.ok) settings = s.data;
-        flash(`${copy.done}${r.active ? ' 이제 「AI 없이 쓰기」예요.' : ''}${res.offline ? ' 시사가 꺼져 있어서 다음에 켤 때 적용돼요.' : ' 바로 적용돼요.'}`);
+        flash(`${copy.done}${r.active ? ' 이제 「AI 없이 쓰기」예요.' : ''}${res.offline ? ` ${who()}가 꺼져 있어서 다음에 켤 때 적용돼요.` : ' 바로 적용돼요.'}`);
         renderBrains();
         refreshRows();
         return res;
@@ -158,7 +162,7 @@ function renderAppPrefs() {
   $('app-version').textContent = appPrefs.version ? `지금 버전 v${appPrefs.version}` : '';
   const login = appPrefs.openAtLogin ?? {};
   const rows = [
-    { key: 'openAtLogin', on: login.on === true, label: '로그인할 때 시사 켜기', disabled: !login.available },
+    { key: 'openAtLogin', on: login.on === true, label: `로그인할 때 ${who()} 켜기`, disabled: !login.available },
     { key: 'updateCheck', on: appPrefs.updateCheck !== false, label: '새 버전이 나오면 알려 주기 (하루 한 번 확인)' },
   ];
   for (const r of rows) {
@@ -235,6 +239,30 @@ function renderLocal() {
   lab.append(cb, document.createTextNode('내 Claude Code·Codex 작업 기록 읽기'));
   box.append(lab);
   $('local-repos').textContent = v.reposText;
+}
+
+// ---- 캐릭터 ----
+function renderCharacter() {
+  if (!settings) return;
+  if (setWho(settings.character)) loadAppPrefs(); // 이름이 들어간 줄(로그인할 때 … 켜기)도 다시
+  const box = $('char-pick');
+  box.replaceChildren();
+  const list = Array.isArray(settings.characters) && settings.characters.length ? settings.characters : CHARACTER_IDS.map((id) => ({ id, name: CHARACTERS[id].name }));
+  for (const c of list) {
+    if (!CHARACTER_IDS.includes(c.id)) continue;
+    const lab = el('label', 'char-opt');
+    const rb = el('input');
+    rb.type = 'radio';
+    rb.name = 'character';
+    rb.value = c.id;
+    rb.checked = (settings.character ?? 'shisa') === c.id;
+    rb.addEventListener('change', async () => { if (rb.checked && await save({ character: c.id })) renderCharacter(); });
+    const pic = el('img');
+    pic.alt = '';
+    pic.src = characterAssets(c.id).open;
+    lab.append(rb, pic, el('span', null, c.name));
+    box.append(lab);
+  }
 }
 
 // ---- 오늘 할 일 알림 ----
@@ -462,7 +490,7 @@ function rowEl(r) {
       ...copy, ...confirmOpts(r.id),
       onConfirm: async () => {
         const res = await cy.disconnectConnector(cap).catch(() => null);
-        if (!res?.ok) return { ok: false, error: res?.data?.error || res?.error || '끊지 못했어요. 시사에 연결되지 않았어요' };
+        if (!res?.ok) return { ok: false, error: res?.data?.error || res?.error || `끊지 못했어요. ${who()}에 연결되지 않았어요` };
         flash([copy.done, res.note].filter(Boolean).join(' '));
         refreshRows();
         return res;
@@ -506,7 +534,7 @@ async function runCheck(id) {
   if (r?.ok && Array.isArray(r.data?.rows)) {
     rows = mergeRows(rows, r.data.rows, busy);
     $('conn-at').textContent = '';
-  } else banner('연결 상태를 확인하지 못했어요 — 시사가 꺼져 있을 수 있어요');
+  } else banner(`연결 상태를 확인하지 못했어요 — ${who()}가 꺼져 있을 수 있어요`);
   renderRows();
 }
 
@@ -523,9 +551,9 @@ async function load() {
   const [s, c, k, v] = await Promise.all([cy.getSettings().catch(() => null), cy.getConnections().catch(() => null), cy.getCaps?.().catch(() => null), cy.getSisa?.().catch(() => null)]);
   if (v && typeof v === 'object' && Array.isArray(v.connected)) sisaView = v;
   if (k && typeof k === 'object' && typeof k.claude === 'boolean') caps = { claude: k.claude, codex: k.codex === true };
-  if (!s?.ok || !c?.ok) banner('시사에 연결되지 않았어요. 시사가 켜져 있는지 확인해 주세요.');
+  if (!s?.ok || !c?.ok) banner(`${who()}에 연결되지 않았어요. ${who()}가 켜져 있는지 확인해 주세요.`);
   else banner(null);
-  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderAutoMerge(); renderPhrases(); }
+  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderAutoMerge(); renderPhrases(); renderCharacter(); }
   if (c?.ok) {
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];
     renderRows();

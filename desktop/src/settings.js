@@ -1,6 +1,8 @@
 // 설정 창의 순수 로직: 모델·브리핑 출처·문구·자동 머지 레포·오늘 할 일 알림·일정 알림 저장 본문 검증, 문구 묶기·검사, 연결 상태 줄 묶기·표시 글.
 // 데몬 GET/PUT /settings, GET /connections, POST /connections/check (docs/contract.md "설정 창").
 
+import { CHARACTER_IDS } from './character.js';
+
 export const CHECK_IDS = ['net', 'claude', 'services', 'gh', 'local'];
 export const okCheckId = (id) => typeof id === 'string' && CHECK_IDS.includes(id);
 export const MODEL_ROLES = ['quick', 'general', 'code', 'light'];
@@ -29,7 +31,12 @@ export function autoMergeNext(list, slug, add) {
 export function sanitizeSettingsPatch(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
   const out = {};
-  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert') return null;
+  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert' && k !== 'character') return null;
+  // 캐릭터(src/character.js 의 id)
+  if (p.character !== undefined) {
+    if (typeof p.character !== 'string' || !CHARACTER_IDS.includes(p.character)) return null;
+    out.character = p.character;
+  }
   // 이 맥의 Claude Code·Codex 작업 기록 읽기(켜고 끄기만)
   if (p.readSessions !== undefined) {
     if (typeof p.readSessions !== 'boolean') return null;

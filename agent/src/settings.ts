@@ -11,7 +11,8 @@ import { BRAIN_PROVIDERS, DEFAULT_GENERAL_MODEL, HOME_DIR, configErrorText, type
 import { modelLabel } from "./models.ts";
 import { AUTO_MERGE_MAX, inAutoMerge, normSlug } from "./auto-merge.ts";
 import { STEP_HEAD } from "./briefing-sources.ts";
-import { PHRASES, phraseDef, phraseLines, setPhrases, unknownVars } from "./phrases.ts";
+import { PHRASES, defaultLines, phraseDef, phraseLines, setPhrases, unknownVars } from "./phrases.ts";
+import { characterOptions, isCharacterId, setCharacter, DEFAULT_CHARACTER, type CharacterId } from "./characters.ts";
 
 export const MODEL_ROLES = ["quick", "general", "code", "light"] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
@@ -57,6 +58,9 @@ export type SettingsView = {
   calendarAlert: CalendarAlertConfig; // 일정 알림: 몇 분 전에 알릴지([] = 끔)
   // 뇌: 키는 절대 내보내지 않는다 — 있나 없나만
   brain: { provider: BrainProvider; model: string; keys: Record<BrainKey, boolean> };
+  // 캐릭터(characters.ts): 그림·영상·말투·고정 문구 기본값이 바뀐다
+  character: CharacterId;
+  characters: { id: CharacterId; name: string }[];
   user: { name?: string };
   repoRoots: string[];
   // 설치 마법사를 마쳤나 · 이 맥의 Claude Code·Codex 작업 기록을 읽나(onboarding.ts)
@@ -77,6 +81,7 @@ export type SettingsPatch = {
   brain?: BrainPatch; user?: { name: string | null }; repoRoots?: string[]; todayReminder?: TodayReminder;
   onboarded?: boolean; readSessions?: boolean;
   calendarAlert?: CalendarAlertConfig;
+  character?: CharacterId;
 };
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,100}$/;
 export type PutResult = { ok: true; settings: SettingsView; applied: "live"; restartNeeded: false; note?: string } | { ok: false; status: 400 | 409 | 500; error: string };
@@ -89,7 +94,7 @@ export class ConfigFileError extends Error {}
 export function validatePatch(body: unknown, cfg: Pick<Config, "models">): SettingsPatch {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new SettingsError("json object required");
   const b = body as Record<string, unknown>;
-  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions", "calendarAlert"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
+  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions", "calendarAlert", "character"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
   const out: SettingsPatch = {};
   if (b.models !== undefined) {
     if (!b.models || typeof b.models !== "object" || Array.isArray(b.models)) throw new SettingsError("models must be an object");
@@ -119,6 +124,10 @@ export function validatePatch(body: unknown, cfg: Pick<Config, "models">): Setti
   }
   if (b.calendarAlert !== undefined) {
     try { out.calendarAlert = validateCalendarAlert(b.calendarAlert); } catch (e: any) { throw new SettingsError(String(e?.message ?? e)); }
+  }
+  if (b.character !== undefined) {
+    if (!isCharacterId(b.character)) throw new SettingsError(`character must be one of ${characterOptions().map((c) => c.id).join(", ")}`);
+    out.character = b.character;
   }
   if (b.user !== undefined) {
     const u = b.user as Record<string, unknown>;
@@ -183,7 +192,7 @@ export function validatePhrases(raw: unknown): Record<string, string[] | null> {
       if (bad.length) throw new SettingsError(`phrases.${k}: 모르는 자리표시 ${bad.map((x) => `{${x}}`).join(" ")} — ${def.vars.length ? `쓸 수 있는 것: ${def.vars.map((x) => `{${x}}`).join(" ")}` : "이 문구는 자리표시를 못 써요"}`);
     }
     // 기본값과 같으면 고친 게 아니다(기본이 바뀌면 따라가게)
-    out[k] = lines.length && lines.join("\n") !== def.default.join("\n") ? lines : null;
+    out[k] = lines.length && lines.join("\n") !== defaultLines(k).join("\n") ? lines : null;
   }
   return out;
 }
@@ -261,6 +270,7 @@ export function mergeConfigFile(path: string, patch: SettingsPatch): void {
   if (patch.onboarded !== undefined) next.onboarded = patch.onboarded;
   if (patch.readSessions !== undefined) next.readSessions = patch.readSessions;
   if (patch.calendarAlert) next.calendarAlert = patch.calendarAlert; // [] 도 그대로 쓴다(끔)
+  if (patch.character) next.character = patch.character;
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
@@ -307,6 +317,7 @@ export class Settings {
     this.path = opts.path ?? join(HOME_DIR, "config.json");
     this.env = opts.env ?? process.env;
     setPhrases(cfg.phrases); // config.json 의 고친 문구를 바로 쓴다
+    setCharacter(cfg.character); // 캐릭터 말투·문구 기본값
   }
 
   view(): SettingsView {
@@ -317,7 +328,7 @@ export class Settings {
       modelOptions: modelOptions(c),
       envLocked: MODEL_ROLES.filter((r) => !!this.env[MODEL_ENV[r]]),
       briefing: { exclude: (c.briefing?.exclude ?? []).filter((x): x is BriefingSource => SOURCE_IDS.has(x)), sources: BRIEFING_SOURCES.map((s) => ({ ...s })) },
-      phrases: PHRASES.map((p) => ({ key: p.key, group: p.group, label: p.label, vars: [...p.vars], default: [...p.default], value: c.phrases?.[p.key]?.length ? [...c.phrases[p.key]] : null })),
+      phrases: PHRASES.map((p) => ({ key: p.key, group: p.group, label: p.label, vars: [...p.vars], default: [...defaultLines(p.key)], value: c.phrases?.[p.key]?.length ? [...c.phrases[p.key]] : null })),
       autoMerge: [...(c.autoMerge ?? [])],
       todayReminder: todayReminderOf(c.todayReminder),
       calendarAlert: calendarAlertOf(c.calendarAlert),
@@ -325,6 +336,8 @@ export class Settings {
         provider: c.brain?.provider ?? "claude-code", model: c.models.general,
         keys: { gemini: !!c.brain?.geminiApiKey, openai: !!c.brain?.openaiApiKey, anthropic: !!c.brain?.anthropicApiKey },
       },
+      character: isCharacterId(c.character) ? c.character : DEFAULT_CHARACTER,
+      characters: characterOptions(),
       user: c.user?.name ? { name: c.user.name } : {},
       repoRoots: [...(c.repoRoots ?? [])],
       onboarded: c.onboarded !== false,
@@ -366,6 +379,7 @@ export class Settings {
     if (patch.readSessions !== undefined) this.cfg.readSessions = patch.readSessions;
     if (patch.todayReminder) this.cfg.todayReminder = { ...patch.todayReminder, times: [...patch.todayReminder.times] }; // main 이 1분마다 cfg 를 읽으니 바로
     if (patch.calendarAlert) this.cfg.calendarAlert = { minutesBefore: [...patch.calendarAlert.minutesBefore] }; // CalendarSync 가 확인할 때마다 cfg 를 읽으니 바로
+    if (patch.character) { this.cfg.character = patch.character; setCharacter(patch.character); } // 다음 말풍선·답부터(앱은 SSE state 로 그림을 바꾼다)
     this.onChange?.(Object.keys(patch));
     const locked = Object.keys(patch.models ?? {}).filter((r) => !!this.env[MODEL_ENV[r as ModelRole]]);
     return {

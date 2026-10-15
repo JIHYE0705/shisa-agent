@@ -500,7 +500,7 @@ export class Agent {
       if ((this.cfg.brain?.provider ?? "claude-code") !== "claude-code") ready = new Set([...(ready ?? CAPABILITIES)].filter((cap) => conns[cap].mode !== "mcp"));
       // 진행 보고: 금방 끝나면 조용히, 오래 걸리면 "슬랙 보는 중…" 같은 이정표만(도구 호출마다 아님).
       // 이정표는 그 출처의 데이터 호출이 성공해서 돌아왔을 때만(도구 목록 검색·실패한 호출·연결 안 된 출처는 아무것도 안 띄움)
-      const prog = this.reactions?.progress("briefing", "브리핑 준비하는 중이에요…", { quietMs: 10e3 });
+      const prog = this.reactions?.progress("briefing", phrase("briefing_prog"), { quietMs: 10e3 });
       const seen = new Set<string>();
       const onResult = (step: string, ok: boolean) => {
         const m = briefingMilestone(step, ok, conns, ready);

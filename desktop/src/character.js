@@ -12,6 +12,44 @@ export const VIDEOS = {
   dancing: { src: `${CHAR_DIR}/dance.webm`, poster: `${CHAR_DIR}/dance.png` },
 };
 
+// ---- 고를 수 있는 캐릭터(데몬 characters.ts 와 같은 id). 시사는 예전 자리(character/), 나머지는 characters/<id>/ ----
+// study = 집중·공부 중(studying 자리), plan = 일정 알림·춤(dancing 자리). scene: 배경이 있는 장면이라 둥근 네모 카드로 보인다
+export const CHARACTERS = {
+  shisa: { name: '시사' },
+  hachi: { name: '하치와레', blink: true, scenes: {} },
+  rakko: { name: '랏코', blink: true, scenes: { studying: true, dancing: true } },
+  momonga: { name: '모몽가', blink: true, scenes: { studying: true, dancing: true } },
+};
+export const CHARACTER_IDS = Object.keys(CHARACTERS);
+export const DEFAULT_CHARACTER = 'shisa';
+// 오버레이가 데몬 말 없이 스스로 띄우는 짧은 말(머지 결과를 먼저 보일 때·AI 없이 묻기 칩). 시사는 예전 글 그대로
+export const LOCAL_SAY = {
+  shisa: { mergeDone: '머지했어요 🎉 (스이시~사)', mergeDeclined: '알겠어요, 머지는 안 할게요. PR은 열어 둘게요', quick: '무엇이 궁금하세요? AI 없이도 이건 바로 알려 드려요', quickLogin: 'Claude Code 로그인 전이라도 이건 바로 알려 드려요. 무엇이 궁금하세요?' },
+  hachi: { mergeDone: '머지했어 🎉', mergeDeclined: '알았어, 머지는 안 할게. PR은 열어 둘게', quick: '뭐가 궁금해? AI 없이도 이건 바로 알려 줄게!', quickLogin: 'Claude Code 로그인 전이라도 이건 바로 알려 줄게! 뭐가 궁금해?' },
+  rakko: { mergeDone: '머지했다.', mergeDeclined: '그래, 머지는 안 하지. PR은 열어 두겠다.', quick: '무엇이 궁금하지? AI 없이도 이건 바로 알려 주지.', quickLogin: 'Claude Code 로그인 전이라도 이건 알려 주지. 무엇이 궁금하지?' },
+  momonga: { mergeDone: '머지했다구', mergeDeclined: '알았어, 머지는 안 해. PR은 열어 둘게', quick: '뭐가 궁금한데? AI 없이도 이 정도는 알려 주지', quickLogin: 'Claude Code 로그인 전이라도 이 정도는 알려 주지. 뭐가 궁금한데?' },
+};
+export const localSay = (id) => LOCAL_SAY[okCharacter(id)];
+
+// 화면에 쓰는 이름: 「하치와레」·「하치와레 비서」(앱 이름·메뉴·창 제목)
+export const characterName = (id) => CHARACTERS[okCharacter(id)].name;
+export const appName = (id) => `${characterName(id)} 비서`;
+export const okCharacter = (id) => (typeof id === 'string' && Object.hasOwn(CHARACTERS, id) ? id : DEFAULT_CHARACTER);
+
+// 캐릭터 하나의 그림·영상 주소. { dir, open, closed(없으면 null), stills(대체 순서), videos: { studying, dancing } }
+export function characterAssets(id) {
+  const cid = okCharacter(id);
+  if (cid === 'shisa') return { id: cid, dir: CHAR_DIR, retina: true, open: `${CHAR_DIR}/eyes_open.png`, closed: `${CHAR_DIR}/eyes_closed.png`, stills: STILL_SRCS, videos: VIDEOS };
+  const c = CHARACTERS[cid];
+  const dir = `cy-asset://app/characters/${cid}`;
+  const clip = (name, view) => ({ src: `${dir}/${name}.webm`, poster: `${dir}/${name}.png`, scene: !!c.scenes[view] });
+  return {
+    id: cid, dir, retina: false, open: `${dir}/eyes_open.png`, closed: c.blink ? `${dir}/eyes_closed.png` : null,
+    stills: [`${dir}/eyes_open.png`, ...STILL_SRCS],
+    videos: { studying: clip('study', 'studying'), dancing: clip('plan', 'dancing') },
+  };
+}
+
 // ---- 깜빡임 ----
 export const BLINK = {
   minGap: 2500, maxGap: 7000,           // 다음 깜빡임까지
