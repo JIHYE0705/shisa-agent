@@ -693,6 +693,7 @@ let hoverTimer = null;
 let leaveTimer = null;
 let askOpen = false;
 let askFocused = false; // 메인이 창을 포커스 가능하게 바꾼 뒤에만 blur 로 닫는다
+let askPauseTimer = null; // 칩 행동 동안 입력창을 잠깐 숨긴 타이머(pauseAsk)
 let hoverArmed = true; // 닫은 뒤엔 마우스가 캐릭터를 한 번 벗어나야 다시 뜬다
 
 async function showAsk() {
@@ -714,6 +715,8 @@ function hideAsk() {
   askFocused = false;
   hoverArmed = false;
   ask.hidden = true;
+  clearTimeout(askPauseTimer);
+  ask.classList.remove('paused');
   askInput.blur();
   cy.chatFocus(false).catch(() => {});
   requestAnimationFrame(recheckHit);
@@ -731,6 +734,9 @@ const tray = createAttachTray({
 if (!cy.chatAttach) document.getElementById('ask-attach').hidden = true;
 // 📎·✕ 를 눌러도 입력창 포커스를 잃지 않게(잃으면 입력창이 닫힌다)
 ask.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+// 입력창을 연 채로 말풍선의 칩(＋ 로 띄운 정해진 답)을 누를 때도 입력창 포커스를 뺏지 않는다 —
+// 뺏기면 입력창이 닫히면서 창 포커스가 풀렸다 다시 잡혀(캐릭터가 깜빡 사라짐) 그 클릭이 묻힌다
+stack.addEventListener('mousedown', (e) => { if (askOpen && e.target.closest('.quick-bar button')) e.preventDefault(); });
 const charWrapEl = document.getElementById('char-wrap');
 charWrapEl.addEventListener('dragover', (e) => { if (hasFiles(e.dataTransfer)) { e.preventDefault(); charWrapEl.classList.add('att-drop'); } });
 charWrapEl.addEventListener('dragleave', () => charWrapEl.classList.remove('att-drop'));
@@ -778,7 +784,7 @@ window.addEventListener('blur', () => { if (askFocused && !picking) hideAsk(); i
 // 호버 판정 — 클릭 투과 중에도 mousemove 는 넘어오니 좌표로 본다
 function updateHover(el) {
   const onChar = !!el?.closest('#char-wrap');
-  const onAsk = !!el?.closest('#ask, #char-wrap');
+  const onAsk = !!el?.closest('#ask, #char-wrap, #stack .item'); // 말풍선(＋ 로 띄운 칩·그 답) 위에 있는 동안도 입력창을 닫지 않는다
   if (el && !onChar) hoverArmed = true;
   // 입력창은 클릭으로만 연다(호버로는 안 뜸)
   if (!onChar && hoverTimer) {
@@ -786,8 +792,8 @@ function updateHover(el) {
     hoverTimer = null;
   }
   // 입력 안 했는데 마우스가 떠나면 잠시 뒤 닫는다
-  if (askOpen && !onAsk && !askInput.value && !tray.has() && !picking && !leaveTimer) {
-    leaveTimer = setTimeout(() => { leaveTimer = null; if (!askInput.value && !tray.has() && !picking) hideAsk(); }, LEAVE_HIDE);
+  if (askOpen && !onAsk && !askInput.value && !tray.has() && !picking && !leaveTimer && !askPauseTimer) { // 잠깐 숨긴 동안은 닫지 않는다
+    leaveTimer = setTimeout(() => { leaveTimer = null; if (!askInput.value && !tray.has() && !picking && !askPauseTimer) hideAsk(); }, LEAVE_HIDE);
   } else if (onAsk && leaveTimer) {
     clearTimeout(leaveTimer);
     leaveTimer = null;
@@ -882,7 +888,9 @@ async function quickChip(id) {
   dismiss(QUICK_ID); // 누르면 칩은 내리고 답만 보인다
   if (a.type === 'open') { cy.openItem(a.section, a.id); return; }
   const seq = ++chipSeq;
-  if (a.id === 'cheer' || a.id === 'dance') localDance(8000, a.id); // 바로 영상(데몬도 같은 영상을 튼다 — 꺼져 있어도 보이게)
+  const acting = a.id === 'cheer' || a.id === 'dance';
+  if (acting) localDance(8000, a.id); // 바로 영상(데몬도 같은 영상을 튼다 — 꺼져 있어도 보이게)
+  pauseAsk(acting ? 8000 : 4000); // 행동하고 정해진 말 하는 동안은 입력창을 잠깐 숨긴다 // 바로 영상(데몬도 같은 영상을 튼다 — 꺼져 있어도 보이게)
   const ask = async () => { try { return await cy.localAsk(a.id); } catch (e) { return { ok: false, error: e?.message }; } };
   let r = await ask();
   if (!r?.ok) { await new Promise((ok) => setTimeout(ok, 800)); r = await ask(); } // 데몬이 잠깐 바빴으면 한 번 더
@@ -890,6 +898,14 @@ async function quickChip(id) {
   for (const x of queue.items.filter((x) => x.id.startsWith('local-ask-'))) dismiss(x.id); // 앞선 답은 내린다
   showBubble(answerBubble(a.id, r));
   setTimeout(() => { if (seq === chipSeq) showBubble(quickBubble(brain, charA.id)); }, CHIPS_AGAIN_MS);
+}
+// 입력창 잠깐 숨기기(열린 채로 — 포커스·내용은 그대로). ms 뒤 아직 열려 있으면 다시 보인다. 그 사이 또 부르면 늘린다
+function pauseAsk(ms) {
+  if (!askOpen) return;
+  clearTimeout(askPauseTimer);
+  ask.classList.add('paused');
+  requestAnimationFrame(recheckHit);
+  askPauseTimer = setTimeout(() => { askPauseTimer = null; ask.classList.remove('paused'); requestAnimationFrame(recheckHit); }, ms);
 }
 function talk() {
   if (brain.ready === false) return noBrain();
