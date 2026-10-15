@@ -32,8 +32,9 @@ themePicker.addEventListener('change', () => {
   localStorage.setItem(THEME_KEY, themeId(themePicker.value));
   wrap.classList.remove('blink-ready', 'blink');
   img.removeAttribute('src');
+  stillIdx = 0;
   closedImg.removeAttribute('src');
-  for (const video of Object.values(videos)) { video.pause(); video.removeAttribute('src'); video.load(); }
+  for (const video of Object.values(videos)) { video.pause(); delete video.dataset.fallback; delete video.dataset.failed; video.removeAttribute('src'); video.load(); }
   showVideo(null);
   loadStill();
   if (shownView !== 'idle') { const active = shownView; shownView = 'idle'; startVideo(active); shownView = active; }
@@ -103,7 +104,12 @@ for (const [k, v] of Object.entries(videos)) {
   v.addEventListener('playing', () => { if (shownView === k) showVideo(k); });
   v.addEventListener('error', () => {
     v.dataset.failed = '1';
-    if (shownView === k) showVideo(null); // 영상이 없으면 정지 그림(+기분 애니메이션)으로
+    if (!v.dataset.fallback) {
+      v.dataset.fallback = '1';
+      v.src = VIDEOS[k].src;
+      v.poster = VIDEOS[k].poster;
+      v.play().catch(() => { if (shownView === k) showVideo(null); });
+    } else if (shownView === k) showVideo(null); // 기본 영상도 없으면 정지 그림으로
   });
 }
 function showVideo(k) {
@@ -116,7 +122,12 @@ function showVideo(k) {
 }
 function startVideo(k) {
   const v = videos[k];
-  if (!v.getAttribute('src') || v.dataset.failed) { delete v.dataset.failed; v.src = themeImage(selectedTheme(), `${k === 'dancing' ? 'dance' : 'studying'}.webm`); }
+  if (!v.getAttribute('src') || v.dataset.failed) {
+    delete v.dataset.failed;
+    delete v.dataset.fallback;
+    v.poster = themeImage(selectedTheme(), `${k === 'dancing' ? 'dance' : 'studying'}.png`);
+    v.src = themeImage(selectedTheme(), `${k === 'dancing' ? 'dance' : 'studying'}.webm`);
+  }
   try { v.currentTime = 0; } catch { /* 아직 메타데이터 전 */ }
   const p = v.play();
   if (p) p.catch(() => {});
