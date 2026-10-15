@@ -2,6 +2,7 @@
 // 말투(AI 연결 시)와 정해진 말(연결 안 됐을 때)도 여기서 고친다. 키는 이 화면에 오지 않는다.
 // 연결된 AI 마다 [연결 해제]: 키는 지우고, Claude Code·Codex 는 시사에서만 안 쓴다(CLI 로그인은 그대로). 지금 쓰던 AI 면 「AI 없이 쓰기」로.
 
+import { who } from './who.js';
 import { CANNED, CANNED_CATALOG, CANNED_DEFAULTS } from '../src/canned.js';
 import { brainDisconnectCopy, disconnectControl } from '../src/disconnect.js';
 
@@ -92,7 +93,7 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
     if (r?.ok) {
       onSisa(r);
       // 대화 AI·코딩 모델은 시사가 다시 켜질 때 읽는다
-      note = 'code' in pick || r.brainSaved ? '저장함. 시사를 다시 켜면 대화·브리핑에도 적용돼요' : '저장함';
+      note = 'code' in pick || r.brainSaved ? `저장함. ${who()}를 다시 켜면 대화·브리핑에도 적용돼요` : '저장함';
     } else {
       note = r?.error || '저장하지 못했어요.';
     }
@@ -196,7 +197,7 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
     return h('div.card.models-card', null,
       h('h2', { text: '말투' }),
       h('p.muted.small', null,
-        h('span', { text: '시사의 말투·답 모양은 설정 창의 「행동 지침」에 적어요(예: 답은 짧게, 반말로). ' }),
+        h('span', { text: `${who()}의 말투·답 모양은 설정 창의 「행동 지침」에 적어요(예: 답은 짧게, 반말로). ` }),
         cy.openSettings ? h('button.ghost.small', { type: 'button', text: '설정 열기', onclick: () => cy.openSettings() }) : null));
   }
 

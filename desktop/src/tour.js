@@ -1,12 +1,16 @@
 // 사용법 둘러보기(설치 마법사가 끝나면 한 번, 메뉴·설정 「사용법 다시 보기」로 언제든) — 순수 로직.
 // 캐릭터가 말풍선으로 하나씩 가리킨다. 연결된 것에 맞춰 문구가 바뀌고, 안 된 기능은 "연결하면 이런 것도 돼요"로.
+import { TOUR_SAY } from './character-say.js';
+
 export const TOUR_VERSION = 1;
 
 // view: brain-state.js brainView 결과
-export function tourSteps(view = {}) {
+// character: 고른 캐릭터 id — 시사가 아니면 그 캐릭터 말투(character-say.js TOUR_SAY)
+export function tourSteps(view = {}, character) {
   const ready = view.ready !== false;
   const cal = (view.connected ?? []).includes('calendar');
   const slack = (view.connected ?? []).includes('slack');
+  const own = Object.hasOwn(TOUR_SAY, character ?? '') ? TOUR_SAY[character] : null;
   const steps = [
     {
       id: 'character',
@@ -33,7 +37,7 @@ export function tourSteps(view = {}) {
       text: `설정(⚙)에서 연결·문구·모델을 바꿀 수 있어요.${slack ? '' : ' 슬랙을 연결하면 DM·멘션도 바로 할 일로 만들어요.'} 이 안내는 메뉴 「사용법 다시 보기」로 다시 볼 수 있어요.`,
     },
   ];
-  return steps.map((s, i) => ({ ...s, step: i + 1, total: steps.length }));
+  return steps.map((s, i) => ({ ...s, ...(own?.[s.id] ? { text: own[s.id]({ ready, cal, slack }) } : {}), step: i + 1, total: steps.length }));
 }
 
 // 한 장면 → 캐릭터 말풍선

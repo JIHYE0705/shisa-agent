@@ -4,6 +4,7 @@
 // 알림(영업일 아침 첫 실행 등)은 설정 todayReminder 를 따르고, 모델 없이 정해진 말로만 한다.
 import type { Store, Todo, TodoPatch } from "./store.ts";
 import { isBusinessDay, localDate, localHhmm } from "./calendar.ts";
+import { phrase } from "./phrases.ts";
 
 export type PlanItem = { id: string; title: string; done: boolean; priority: number; source: string; doing?: boolean };
 export type DailyPlan = { date: string; items: PlanItem[]; asked: boolean };
@@ -92,10 +93,10 @@ export type Reminder = { kind: "ask" | "remind"; text: string; plan: DailyPlan }
 
 // 정해진 말(모델 없이). 다 끝냈으면 알리지 않는다(null)
 export function reminderText(plan: DailyPlan): string | null {
-  if (!plan.items.length) return "오늘 할 일을 적어 주세요~ 오늘 할 일 탭에 적으면 돼요 (스이시~사)";
+  if (!plan.items.length) return phrase("today_ask");
   const open = plan.items.filter((x) => !x.done).length;
   if (!open) return null;
-  return `오늘 할 일 ${open}개 남았어요. 하나씩 해 봐요 (스이시~사)`;
+  return phrase("today_left", { open });
 }
 
 export class DailyPlanService {

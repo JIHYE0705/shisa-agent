@@ -10,7 +10,8 @@ import { initialChat, chatReducer, isBusy, summarizeReply, stopTargets, busyCapt
 import { createAttachTray } from './attach-tray.js';
 import { hasFiles, filesFromTransfer, ATTACH_ERRORS } from '../src/attachments.js';
 import { normFocus, focusBubble } from '../src/focus.js';
-import { CHAR_DIR, STILL_SRCS, VIDEOS, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf } from '../src/character.js';
+import { who, setWho } from './who.js';
+import { characterAssets, okCharacter, localSay, clipFor, danceClipOf, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf } from '../src/character.js';
 
 const cy = window.cy;
 const stack = document.getElementById('stack');
@@ -21,6 +22,11 @@ const closedImg = document.getElementById('char-closed');
 
 // ---- 캐릭터 그림: 눈 뜬 그림(cy-asset://app/character/, ~/.cy-agent/assets) → 예전 character.png → 번들 png → svg ----
 // 눈 감은 그림까지 있으면 깜빡임을 켠다. 두 장 다 미리 디코드해 두고 보이기만 바꿔서 깜빡임(로딩) 없음.
+// 고른 캐릭터(데몬 state.character — 설정 창에서 바꾼다)마다 그림·영상 자리가 다르다(src/character.js characterAssets)
+// 켤 때 데몬 state 가 오기 전에도 지난번 캐릭터로 그린다(시사가 잠깐 보였다 바뀌지 않게)
+const CHAR_KEY = 'cy-character';
+const savedCharacter = () => { try { return localStorage.getItem(CHAR_KEY); } catch { return null; } };
+let charA = characterAssets(savedCharacter());
 const probe = (url) => new Promise((ok) => {
   const im = new Image();
   im.onload = () => (im.decode ? im.decode().then(() => ok(true), () => ok(true)) : ok(true));
@@ -28,21 +34,23 @@ const probe = (url) => new Promise((ok) => {
   im.src = url;
 });
 let stillIdx = 0;
-img.addEventListener('error', () => { if (++stillIdx < STILL_SRCS.length) img.src = STILL_SRCS[stillIdx]; });
+img.addEventListener('error', () => { if (++stillIdx < charA.stills.length) img.src = charA.stills[stillIdx]; });
 let haveEyes = false;
 async function loadStill() {
-  const scales = window.devicePixelRatio > 1 ? ['@2x', ''] : [''];
+  const a = charA;
+  const scales = a.retina && window.devicePixelRatio > 1 ? ['@2x', ''] : [''];
   for (const sc of scales) {
-    const open = `${CHAR_DIR}/eyes_open${sc}.png`, closed = `${CHAR_DIR}/eyes_closed${sc}.png`;
+    const open = a.open.replace(/\.png$/, `${sc}.png`), closed = a.closed?.replace(/\.png$/, `${sc}.png`);
     if (!(await probe(open))) continue;
-    const both = await probe(closed);
+    const both = closed ? await probe(closed) : false;
+    if (a !== charA) return true; // 그새 캐릭터가 또 바뀜 — 새 것이 이어서 그린다
     haveEyes = true;
     stillIdx = 0;
     img.src = open;
     if (both) { closedImg.src = closed; wrap.classList.add('blink-ready'); }
     return true;
   }
-  if (!img.getAttribute('src')) { stillIdx = 1; img.src = STILL_SRCS[1]; }
+  if (a === charA && !img.getAttribute('src')) { stillIdx = 1; img.src = a.stills[1]; }
   return false;
 }
 // 그림이 나중에 생길 수도 있다(설치 전에 켜 둔 경우) — 눈 그림을 찾을 때까지 1분마다 다시 본다
@@ -78,7 +86,8 @@ let shownView = 'idle';
 let danceCap = null;
 for (const [k, v] of Object.entries(videos)) {
   v.muted = true;
-  v.poster = VIDEOS[k].poster;
+  v.poster = charA.videos[k].poster;
+  v.classList.toggle('scene', !!charA.videos[k].scene);
   // 첫 장면이 실제로 나올 때 바꿔 끼운다(그 전엔 정지 그림 그대로)
   v.addEventListener('playing', () => { if (shownView === k) showVideo(k); });
   v.addEventListener('error', () => {
@@ -94,24 +103,60 @@ function showVideo(k) {
   }
   wrap.classList.toggle('video-on', !!k);
 }
+// 그 자리에 틀 영상: 춤 자리는 종류(일정 알림·춤·응원)에 따라 다르다
+const clipOf = (k) => (k === 'dancing' ? clipFor(charA, danceClipOf(act)) : charA.videos[k]);
 function startVideo(k) {
   const v = videos[k];
-  if (!v.getAttribute('src') || v.dataset.failed) { delete v.dataset.failed; v.src = VIDEOS[k].src; }
+  const c = clipOf(k);
+  if (v.dataset.clip !== c.src) { v.removeAttribute('src'); v.dataset.clip = c.src; v.poster = c.poster; v.classList.toggle('scene', !!c.scene); }
+  if (!v.getAttribute('src') || v.dataset.failed) { delete v.dataset.failed; v.src = c.src; }
   try { v.currentTime = 0; } catch { /* 아직 메타데이터 전 */ }
   const p = v.play();
   if (p) p.catch(() => {});
 }
+let shownClip = null;
 function applyActivity() {
   const view = viewOf(act);
-  if (view === shownView) return;
+  const clip = view === 'dancing' ? danceClipOf(act) : null;
+  if (view === shownView && clip === shownClip) return;
+  const sameView = view === shownView;
   shownView = view;
+  shownClip = clip;
   wrap.dataset.view = view;
   wrap.classList.remove('blink');
   clearTimeout(danceCap);
   if (view === 'idle') return showVideo(null);
   if (view === 'dancing') danceCap = setTimeout(() => dispatchActivity({ type: 'danceEnd' }), DANCE_MAX_MS);
+  if (sameView) showVideo(null); // 춤 종류만 바뀜(예: 칩 춤 → 데몬 응원) — 새 영상 첫 장면이 나올 때 다시 켠다
   startVideo(view);
 }
+// 캐릭터 바꾸기: 정지 그림을 새로 찾고, 영상은 새 주소로(지금 영상 중이면 새 캐릭터 영상으로 이어서)
+function setCharacter(id) {
+  const cid = okCharacter(id);
+  if (cid === charA.id) return;
+  charA = characterAssets(cid);
+  setWho(cid);
+  document.getElementById('ask-input')?.setAttribute('aria-label', `${who()}에게 물어보기`);
+  try { localStorage.setItem(CHAR_KEY, cid); } catch { /* 못 적어도 그림은 바뀐다 */ }
+  wrap.dataset.character = cid;
+  wrap.classList.remove('blink', 'blink-ready');
+  closedImg.removeAttribute('src');
+  stillIdx = 0;
+  img.src = charA.stills[0];
+  loadStill();
+  for (const [k, v] of Object.entries(videos)) {
+    v.pause();
+    v.removeAttribute('src');
+    delete v.dataset.failed;
+    v.load();
+    delete v.dataset.clip;
+    v.poster = clipOf(k).poster;
+    v.classList.toggle('scene', !!clipOf(k).scene);
+  }
+  if (shownView !== 'idle') { showVideo(null); startVideo(shownView); }
+}
+wrap.dataset.character = charA.id;
+
 function dispatchActivity(a) {
   act = activityReducer(act, a);
   applyActivity();
@@ -347,7 +392,7 @@ async function mergeDecide(id, action) {
   const now = current(id);
   if (now && now.actions === 'merge' && now.pending) { // 데몬 말풍선이 아직 안 왔으면 로컬로 마무리
     if (r?.ok) {
-      queue.update(id, { pending: false, decided: true, kind: action === 'merge' ? 'done' : 'info', text: action === 'merge' ? '머지했어요 🎉 (스이시~사)' : '알겠어요, 머지는 안 할게요. PR은 열어 둘게요', ttlMs: 6000, ...(action === 'merge' ? { image: 'merge_complete' } : {}) });
+      queue.update(id, { pending: false, decided: true, kind: action === 'merge' ? 'done' : 'info', text: action === 'merge' ? localSay(charA.id).mergeDone : localSay(charA.id).mergeDeclined, ttlMs: 6000, ...(action === 'merge' ? { image: 'merge_complete' } : {}) });
       schedule(current(id));
     } else if (r?.status === 409 || r?.status === 404) {
       queue.update(id, { pending: false, decided: true, kind: 'info', text: r?.data?.error || '이미 처리됐어요', ttlMs: 6000 });
@@ -518,7 +563,7 @@ function setMood(m) {
   daemonMood = MOODS.includes(m) ? m : 'idle';
   if (!isBusy(chat)) applyMood(daemonMood);
 }
-cy.onState((p) => { setMood(p?.mood); dispatchActivity({ type: 'state', activity: p?.activity, runs: p?.runs, danceId: p?.danceId }); });
+cy.onState((p) => { if (typeof p?.character === 'string') setCharacter(p.character); setMood(p?.mood); dispatchActivity({ type: 'state', activity: p?.activity, runs: p?.runs, danceId: p?.danceId }); });
 
 cy.onConnection(({ connected }) => {
   wrap.classList.toggle('sleepy', !connected);
@@ -637,7 +682,7 @@ async function sendChat(text, ids = []) {
     r = { ok: false };
   }
   if (r?.ok && r.chatId) dispatchChat({ type: 'accepted', chatId: r.chatId });
-  else showReply({ chatId: `fail-${Date.now()}`, text: r?.status === 400 && r.data?.error ? `못 보냈어요: ${r.data.error}` : '시사에 연결되지 않아서 못 보냈어요.', error: true });
+  else showReply({ chatId: `fail-${Date.now()}`, text: r?.status === 400 && r.data?.error ? `못 보냈어요: ${r.data.error}` : `${who()}에 연결되지 않아서 못 보냈어요.`, error: true });
 }
 
 // ---- 호버 입력창: 캐릭터 위에 잠깐 머물면 뜬다 ----
@@ -822,14 +867,14 @@ cy.onBrain?.((v) => { if (v) brain = v; if (brain.ready === false && askOpen) hi
 let danceOff = null;
 let chipSeq = 0; // 칩을 새로 누르면 앞선 「다시 띄우기」는 버린다
 const CHIPS_AGAIN_MS = 2000; // 답을 보여 주고 이만큼 뒤에 칩을 다시
-function localDance(ms) {
-  dispatchActivity({ type: 'localDance', on: true });
+function localDance(ms, clip = 'dance') {
+  dispatchActivity({ type: 'localDance', on: true, clip });
   clearTimeout(danceOff);
   danceOff = setTimeout(() => dispatchActivity({ type: 'localDance', on: false }), ms);
 }
 function noBrain() {
   chipSeq++;
-  showBubble(quickBubble(brain));
+  showBubble(quickBubble(brain, charA.id));
 }
 async function quickChip(id) {
   const a = chipAction(id);
@@ -837,19 +882,25 @@ async function quickChip(id) {
   dismiss(QUICK_ID); // 누르면 칩은 내리고 답만 보인다
   if (a.type === 'open') { cy.openItem(a.section, a.id); return; }
   const seq = ++chipSeq;
-  if (a.id === 'cheer') localDance(2600);
+  if (a.id === 'cheer' || a.id === 'dance') localDance(8000, a.id); // 바로 영상(데몬도 같은 영상을 튼다 — 꺼져 있어도 보이게)
   const ask = async () => { try { return await cy.localAsk(a.id); } catch (e) { return { ok: false, error: e?.message }; } };
   let r = await ask();
   if (!r?.ok) { await new Promise((ok) => setTimeout(ok, 800)); r = await ask(); } // 데몬이 잠깐 바빴으면 한 번 더
   if (seq !== chipSeq) return;
   for (const x of queue.items.filter((x) => x.id.startsWith('local-ask-'))) dismiss(x.id); // 앞선 답은 내린다
   showBubble(answerBubble(a.id, r));
-  setTimeout(() => { if (seq === chipSeq) showBubble(quickBubble(brain)); }, CHIPS_AGAIN_MS);
+  setTimeout(() => { if (seq === chipSeq) showBubble(quickBubble(brain, charA.id)); }, CHIPS_AGAIN_MS);
 }
 function talk() {
   if (brain.ready === false) return noBrain();
   showAsk();
 }
+// AI가 있어도 입력창 ＋ 로 정해진 답 칩(오늘 할 일·지금 할 일·다음 일정·응원·춤)
+document.getElementById('ask-more')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  chipSeq++;
+  showBubble(quickBubble(brain, charA.id));
+});
 
 function onCharacterClick() {
   if (clickTimer) {

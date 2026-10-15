@@ -1,5 +1,6 @@
 // 시사에게 줄 AI, 설치 플랜(PLANS), 연결 안내(캘린더·슬랙·지라·GitHub). 슬랙 쿠키 복사는 넣지 않는다.
 import { WIN, modKey, terminalRow } from './os-hint.js';
+import { SETUP_SAY } from './character-say.js';
 
 const MOD = modKey();
 
@@ -172,6 +173,12 @@ export const SISA_SAY = {
   aiPickKey: '어느 **AI**와 이야기할지 골라 주세요.\n처음이라면 **무료**로 시작하는 **Gemini**를 권해요.',
   aiPickCli: '이 맥에 설치된 **Claude Code**나 **Codex** 중\n**하나**를 골라 주세요.\n키는 필요 없어요.',
 };
+
+// 고른 캐릭터의 설치 화면 말(character-say.js). 없는 키는 시사 말
+export function sayFor(character) {
+  const own = Object.hasOwn(SETUP_SAY, character ?? '') ? SETUP_SAY[character] : null;
+  return own ? { ...SISA_SAY, ...own } : SISA_SAY;
+}
 
 export function hubItem(id) {
   return HUB.find((h) => h.id === id) ?? null;

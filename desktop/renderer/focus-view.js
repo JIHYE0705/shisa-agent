@@ -1,6 +1,7 @@
 // 패널의 집중하기: 할 일·오늘 할 일 목록의 [집중하기] 줄과 맨 아래 「오늘 집중 N」 줄, 그 줄을 누르면 집중 기록(주·월).
 // 기록 보기는 GitHub 기여 그래프(잔디)처럼 오래 집중한 날일수록 진한 칸. 상태는 데몬(GET /focus · SSE focus)이 기준이고,
 // 경과 시간·오늘 합계는 1초마다 글자만 바꾼다(목록을 다시 그리지 않는다). 순수 계산은 src/focus.js.
+import { who } from './who.js';
 import {
   normFocus, elapsedSec, todayLive, fmtClock, fmtDuration, fmtShort, focusLevel, LEVEL_LABELS, localDay, rangeOf, shiftAnchor,
   monthGrid, rangeTitle, cellTitle, dayLabel, dayDetail, summarize, barRatio, parseDay, WEEKDAYS,
@@ -43,7 +44,7 @@ export function createFocusView({ h, cy }) {
     busy = false;
     if (r?.ok && r.data) set(r.data);
     else {
-      err = r?.error || r?.status === 503 || !r?.status ? '시사가 꺼져 있어서 못 했어요' : '잠깐 뒤에 다시 눌러 주세요';
+      err = r?.error || r?.status === 503 || !r?.status ? `${who()}가 꺼져 있어서 못 했어요` : '잠깐 뒤에 다시 눌러 주세요';
       redraw();
     }
   }
@@ -92,7 +93,7 @@ export function createFocusView({ h, cy }) {
     const kids = [];
     if (!a) {
       kids.push(h('button.focus-start', {
-        type: 'button', disabled: busy, title: '시사가 옆에서 같이 공부해요. 집중한 시간은 아래 「오늘 집중」에 쌓여요',
+        type: 'button', disabled: busy, title: `${who()}가 옆에서 같이 공부해요. 집중한 시간은 아래 「오늘 집중」에 쌓여요`,
         onclick: () => cmd('start'),
       }, h('span.focus-ico', { 'aria-hidden': 'true', text: '▶' }), '집중하기'));
     } else {
@@ -156,7 +157,7 @@ export function createFocusView({ h, cy }) {
       isNow ? null : h('button.ghost.small', { type: 'button', text: tab === 'month' ? '이번 달' : '이번 주', onclick: () => move(0) }));
     let body;
     if (!data) {
-      body = h('div.focus-empty.muted.small', { text: stats?.status === 'error' ? '기록을 못 불러왔어요. 시사가 켜져 있는지 확인해 주세요.' : '불러오는 중…' });
+      body = h('div.focus-empty.muted.small', { text: stats?.status === 'error' ? `기록을 못 불러왔어요. ${who()}가 켜져 있는지 확인해 주세요.` : '불러오는 중…' });
     } else {
       const days = mergeLive(data.days, today);
       const sum = summarize(days, today);

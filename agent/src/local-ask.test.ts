@@ -9,7 +9,7 @@ const SEED = "t";
 const plain = (s: string) => s.replace(/\s*\([^)]*시사\)$|\s*\(스이시~사\)$/u, "").replace("~요", "요");
 
 test("고르는 질문 id 목록·확인", () => {
-  assert.deepEqual([...QUICK_ASKS], ["today", "next_todo", "next_event", "cheer"]);
+  assert.deepEqual([...QUICK_ASKS], ["today", "next_todo", "next_event", "cheer", "dance"]);
   assert.ok(isQuickAsk("cheer"));
   assert.ok(!isQuickAsk("connect"));
   assert.ok(!isQuickAsk(3));

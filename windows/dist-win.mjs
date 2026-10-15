@@ -124,6 +124,8 @@ for (const name of fs.readdirSync(SDK_DIR)) {
 
 // 2) 캐릭터 그림·영상(레포 assets/) — 앱 resources/assets 로
 step('캐릭터 그림 준비');
+// 대사(assets/characters/lines.json)의 렌더러용 사본(desktop/src/character-lines.js)도 맞춘다 — 맥 dist.mjs 와 같게
+execFileSync(process.execPath, [path.join(DESKTOP, 'scripts', 'sync-character-lines.mjs')], { stdio: 'inherit' });
 const ASSETS = path.join(STAGE, 'assets');
 fs.cpSync(path.join(REPO, 'assets'), ASSETS, { recursive: true, filter: (src) => !['.DS_Store', 'Thumbs.db'].includes(path.basename(src)) });
 

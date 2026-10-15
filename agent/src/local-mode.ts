@@ -2,6 +2,8 @@
 // 말투는 TONE(존댓말)을 따르고, 가끔 ~요·감정 표시는 voice()만 붙인다. 할 일을 새로 짓지 않는다.
 import { localDate, localHhmm } from "./calendar.ts";
 import { TONE, seedHash, voice, type Mood } from "./voice.ts";
+import { character, type LocalLineKey } from "./characters.ts";
+import { phrase } from "./phrases.ts";
 
 export type LocalTodo = { title: string; priority?: number };
 export type DayPart = "morning" | "lunch" | "afternoon" | "evening";
@@ -26,6 +28,20 @@ export const LINES = {
   praise: "최근에 끝낸 일을 칭찬드려요.",
   empty: "우선순위 1·3 열린 할 일은 비어 있어요.",
 } as const;
+
+// 지금 캐릭터의 정해진 말(characters.ts lines) — 없는 키는 아래 시사 말
+const SHISA_EXTRA = {
+  emptyHead: "(비어 있어요)",
+  praiseDone: "최근에 {titles}을 끝내셨어요. 잘하셨어요.",
+  calThen: "그다음은 〈{title}〉, {when}이에요.",
+} as const;
+export function localLine(key: LocalLineKey): string {
+  const own = character().lines[key];
+  if (own) return own;
+  if (key in LINES) return LINES[key as keyof typeof LINES];
+  if (key in SHISA_EXTRA) return SHISA_EXTRA[key as keyof typeof SHISA_EXTRA];
+  return QUICK_LINES[key as Exclude<keyof typeof QUICK_LINES, "cheer">];
+}
 
 const BUBBLE_MAX = 40;
 
@@ -75,14 +91,14 @@ export function bubbleLine(text: string, seed: string, mood: Mood): string {
 export function planReply(open: LocalTodo[]): string {
   const p1 = titles(open, 1);
   const p3 = titles(open, 3);
-  if (!p1.length && !p3.length) return LINES.empty;
-  const block = (heading: string, items: string[]) => [heading, ...(items.length ? items.map((t) => `- ${t}`) : ["- (비어 있어요)"])];
+  if (!p1.length && !p3.length) return localLine("empty");
+  const block = (heading: string, items: string[]) => [heading, ...(items.length ? items.map((t) => `- ${t}`) : [`- ${localLine("emptyHead")}`])];
   return [...block("## 우선순위 1", p1), "", ...block("## 우선순위 3", p3)].join("\n");
 }
 
 function praiseReply(done: LocalTodo[], seed: string): string {
   const doneTitles = titles(done);
-  const base = doneTitles.length ? `최근에 ${doneTitles.join(", ")}을 끝내셨어요. 잘하셨어요.` : LINES.praise;
+  const base = doneTitles.length ? localLine("praiseDone").replace("{titles}", doneTitles.join(", ")) : localLine("praise");
   return spoken(base, `${seed}:praise`, "happy");
 }
 
@@ -91,9 +107,9 @@ export function localThought(now: Date, open: LocalTodo[] = [], done: LocalTodo[
   const part = dayPart(now);
   const hasP1 = titles(open, 1).length > 0;
   const hasDone = titles(done).length > 0;
-  const bubbleBase = hasP1 ? LINES.remind : hasDone ? LINES.praise : LINES[part];
+  const bubbleBase = localLine(hasP1 ? "remind" : hasDone ? "praise" : part);
   const bubbleMood: Mood = hasP1 ? "busy" : hasDone ? "happy" : "calm";
-  const reply = [spoken(LINES[part], `${seed}:greet`, "calm"), "", planReply(open)];
+  const reply = [spoken(localLine(part), `${seed}:greet`, "calm"), "", planReply(open)];
   if (hasDone) reply.push("", praiseReply(done, seed));
   return {
     bubble: bubbleLine(bubbleBase, `${seed}:bubble`, bubbleMood),
@@ -105,7 +121,7 @@ export function localThought(now: Date, open: LocalTodo[] = [], done: LocalTodo[
 }
 
 // ---- AI 없이 고르는 질문(캐릭터 더블클릭 → 칩). 모델 없이 오늘 할 일·할 일·캘린더만 보고 정해진 말로 답한다 ----
-export const QUICK_ASKS = ["today", "next_todo", "next_event", "cheer"] as const;
+export const QUICK_ASKS = ["today", "next_todo", "next_event", "cheer", "dance"] as const;
 export type QuickAskId = (typeof QUICK_ASKS)[number];
 export const isQuickAsk = (v: unknown): v is QuickAskId => typeof v === "string" && (QUICK_ASKS as readonly string[]).includes(v);
 
@@ -166,26 +182,26 @@ function answerToday(f: QuickFacts, seed: string): QuickAnswer {
   const items = (f.today ?? []).filter((x) => cleanTitle(x.title));
   if (!items.length) {
     const n = (f.open ?? []).length;
-    return { id: "today", kind: "info", text: spoken(n ? fill(QUICK_LINES.todayPick, { n }) : QUICK_LINES.todayEmpty, seed, "calm"), open: { section: "today" } };
+    return { id: "today", kind: "info", text: spoken(n ? fill(localLine("todayPick"), { n }) : localLine("todayEmpty"), seed, "calm"), open: { section: "today" } };
   }
   const total = items.length;
   const done = items.filter((x) => x.done).length;
-  if (done === total) return { id: "today", kind: "done", text: spoken(fill(QUICK_LINES.todayAll, { total }), seed, "happy"), open: { section: "today" } };
+  if (done === total) return { id: "today", kind: "done", text: spoken(fill(localLine("todayAll"), { total }), seed, "happy"), open: { section: "today" } };
   const left = items.filter((x) => !x.done);
-  if (!done) return { id: "today", kind: "info", text: spoken(fill(QUICK_LINES.todayNone, { total }), seed, "busy"), detail: left.slice(0, 5).map((x) => `- ${cleanTitle(x.title)}`).join("\n"), open: { section: "today" } };
+  if (!done) return { id: "today", kind: "info", text: spoken(fill(localLine("todayNone"), { total }), seed, "busy"), detail: left.slice(0, 5).map((x) => `- ${cleanTitle(x.title)}`).join("\n"), open: { section: "today" } };
   const rest = left.slice(0, 2).map((x) => quote(x.title)).join(", ") + (left.length > 2 ? ` 외 ${left.length - 2}개` : "");
-  return { id: "today", kind: "info", text: spoken(fill(QUICK_LINES.todaySome, { total, done, rest }), seed, "happy"), open: { section: "today" } };
+  return { id: "today", kind: "info", text: spoken(fill(localLine("todaySome"), { total, done, rest }), seed, "happy"), open: { section: "today" } };
 }
 
 function answerTodo(f: QuickFacts, seed: string): QuickAnswer {
   const open = (f.open ?? []).filter((t) => cleanTitle(t.title) && (t.priority ?? 2) <= 3);
-  if (!open.length) return { id: "next_todo", kind: "info", text: spoken(QUICK_LINES.todoEmpty, seed, "calm"), open: { section: "todos" } };
+  if (!open.length) return { id: "next_todo", kind: "info", text: spoken(localLine("todoEmpty"), seed, "calm"), open: { section: "todos" } };
   const sorted = [...open].sort((a, b) => (a.priority ?? 2) - (b.priority ?? 2)); // 같은 우선순위는 받은 순서 그대로
   const top = sorted.slice(0, 3);
   return {
     id: "next_todo",
     kind: "info",
-    text: spoken(fill(QUICK_LINES.todoTop, { title: cleanTitle(top[0].title).slice(0, 30) }), seed, "busy"),
+    text: spoken(fill(localLine("todoTop"), { title: cleanTitle(top[0].title).slice(0, 30) }), seed, "busy"),
     detail: top.map((t) => `- ${PRIO_LABEL[t.priority ?? 2] ?? "P2"} ${cleanTitle(t.title)}`).join("\n") + (sorted.length > 3 ? `\n- 그 밖에 ${sorted.length - 3}개` : ""),
     open: { section: "todos" },
   };
@@ -193,23 +209,23 @@ function answerTodo(f: QuickFacts, seed: string): QuickAnswer {
 
 function answerEvent(f: QuickFacts, seed: string): QuickAnswer {
   const cal = f.calendar;
-  if (!cal?.enabled) return { id: "next_event", kind: "info", text: spoken(QUICK_LINES.calOff, seed, "calm"), open: { section: "setup", id: "extras" } };
+  if (!cal?.enabled) return { id: "next_event", kind: "info", text: spoken(localLine("calOff"), seed, "calm"), open: { section: "setup", id: "extras" } };
   const now = f.now.getTime();
   const list = cal.meetings
     .filter((m) => Number.isFinite(Date.parse(m.start)) && Number.isFinite(Date.parse(m.end)) && Date.parse(m.end) > now)
     .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
-  if (!list.length) return { id: "next_event", kind: "info", text: spoken(QUICK_LINES.calNone, seed, "calm") };
+  if (!list.length) return { id: "next_event", kind: "info", text: spoken(localLine("calNone"), seed, "calm") };
   const m = list[0];
   const where = m.location ? ` · 📍 ${cleanTitle(m.location).slice(0, 30)}` : "";
   const title = cleanTitle(m.subject).slice(0, 40) || "제목 없음";
   if (Date.parse(m.start) <= now) {
     const next = list.find((x) => Date.parse(x.start) > now);
     return {
-      id: "next_event", kind: "info", text: fill(QUICK_LINES.calNow, { title, end: hhmmKst(m.end), where }),
-      ...(next ? { detail: `그다음은 〈${cleanTitle(next.subject).slice(0, 40)}〉, ${whenText(next.start, f.now)}이에요.` } : {}),
+      id: "next_event", kind: "info", text: fill(localLine("calNow"), { title, end: hhmmKst(m.end), where }),
+      ...(next ? { detail: fill(localLine("calThen"), { title: cleanTitle(next.subject).slice(0, 40), when: whenText(next.start, f.now) }) } : {}),
     };
   }
-  return { id: "next_event", kind: "info", text: fill(QUICK_LINES.calNext, { title, when: whenText(m.start, f.now), where }) };
+  return { id: "next_event", kind: "info", text: fill(localLine("calNext"), { title, when: whenText(m.start, f.now), where }) };
 }
 
 // 순수 함수. 같은 seed 면 같은 답(응원 문구 고르기·말투 양념)
@@ -218,7 +234,8 @@ export function quickAnswer(id: QuickAskId, f: QuickFacts, seed = `quick:${seoul
   if (id === "today") return answerToday(f, s);
   if (id === "next_todo") return answerTodo(f, s);
   if (id === "next_event") return answerEvent(f, s);
-  const lines = QUICK_LINES.cheer;
+  if (id === "dance") return { id: "dance", kind: "done", text: phrase("dance", {}, (seedHash(s) % 1000) / 1000) }; // 춤 한마디(문구 dance) — 영상은 데몬이 튼다
+  const lines = character().cheer ?? QUICK_LINES.cheer;
   return { id: "cheer", kind: "done", text: spoken(lines[seedHash(s) % lines.length], s, "happy") };
 }
 
@@ -231,5 +248,6 @@ export function localAsk(id: unknown, src: QuickSources): QuickAnswer | undefine
   if (id === "today") { facts.today = src.today(); facts.open = src.open(); }
   if (id === "next_todo") facts.open = src.open();
   if (id === "next_event") facts.calendar = src.calendar();
-  return quickAnswer(id, facts);
+  // 응원·춤은 누를 때마다 다른 줄(같은 시간대에도)
+  return quickAnswer(id, facts, id === "cheer" || id === "dance" ? `quick:${now.getTime()}:${Math.random()}` : undefined);
 }

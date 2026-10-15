@@ -31,6 +31,7 @@ import { listRules, rulesContext, RULE_SCHEMA } from "./todo-rules.ts";
 import { guidelinesFor } from "./guidelines.ts";
 import { ledgerContext } from "./todo-ledger.ts";
 import { TONE } from "./voice.ts";
+import { withCharacter } from "./characters.ts";
 import { localThought, type LocalTodo } from "./local-mode.ts";
 import { LOCAL_ONLY, remoteJson, resolveAnthropicModel, resolveHttpModel, type ProviderDeps } from "./providers.ts";
 import { GH_HINT, GH_SERVER, ghEnabled, ghMcpServer } from "./gh.ts";
@@ -57,7 +58,7 @@ export const SCHEMA = {
   additionalProperties: false,
   required: ["bubble", "reply_md", "todos", "done_todo_ids", "proposals"],
   properties: {
-    bubble: { type: "string", description: "캐릭터 머리 위 말풍선. 존댓말, 40자 이내 한 문장." },
+    bubble: { type: "string", description: "캐릭터 머리 위 말풍선. 정해진 캐릭터 말투로, 40자 이내 한 문장." },
     reply_md: { type: "string", description: "Slack에 보낼 상세 내용(Markdown). 링크 포함." },
     todos: {
       type: "array",
@@ -324,7 +325,7 @@ async function askOther<T>(provider: string, cfg: Config, prompt: string, schema
       const facts = opts.facts ?? {};
       return localThought(facts.now ?? new Date(), facts.open ?? [], facts.done ?? []) as T;
     }
-    const system = opts.system;
+    const system = withCharacter(opts.system); // 캐릭터 말투(시사가 아니면 첫 문장·말투 줄을 바꾼다)
     if (schema === null) {
       const out = await remoteJson(provider as any, cfg, prompt, TEXT_SCHEMA, { system, model: opts.model, ...opts.deps }) as { reply?: string };
       return String(out?.reply ?? "") as T;
@@ -467,7 +468,7 @@ async function askRun<T>(
     options: {
       cwd: t.cwd,
       model: t.model,
-      systemPrompt: [[opts.system ?? (t.interactive ? INTERACTIVE_SYSTEM : SYSTEM), t.hint].filter(Boolean).join("\n"), loadInstructions()].filter(Boolean).join("\n\n"), // 사용자 AGENTS.md·CLAUDE.md 규칙
+      systemPrompt: [[withCharacter(opts.system ?? (t.interactive ? INTERACTIVE_SYSTEM : SYSTEM)), t.hint].filter(Boolean).join("\n"), loadInstructions()].filter(Boolean).join("\n\n"), // 사용자 AGENTS.md·CLAUDE.md 규칙
       settingSources: t.settingSources,
       ...(t.gh || t.ctx ? { mcpServers: {
         ...(t.gh ? { [GH_SERVER]: { ...ghMcpServer(cfg), timeout: 90_000 } } : {}),
