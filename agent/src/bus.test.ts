@@ -100,6 +100,10 @@ test("bus: /profile/facts 저장·목록·삭제", async () => {
     assert.equal((await post("/profile/facts", JSON.stringify({ text: "내 이름은 홍길동이야, 기억해줘" }))).status, 200);
     assert.deepEqual(await (await fetch(`${base}/profile/facts`)).json(), { facts: [{ text: "내 이름은 홍길동이야, 기억해줘", id: "fact:x" }] });
     assert.equal((await post("/profile/facts", JSON.stringify({ text: "짧" }))).status, 400);
+    const long = `긴 사실 ${"가".repeat(5000)}`;
+    assert.equal((await post("/profile/facts", JSON.stringify({ text: long }))).status, 200, "글자 수 제한 없음");
+    assert.equal(facts.at(-1)?.text, long);
+    facts.pop();
     assert.equal((await post("/profile/facts/forget", JSON.stringify({ text: "내 이름은 홍길동이야, 기억해줘" }))).status, 200);
     assert.equal((await post("/profile/facts/forget", JSON.stringify({ id: "nope" }))).status, 404);
     assert.equal((await post("/profile/facts", JSON.stringify({}), { "x-cy-agent": "1" })).status, 400);

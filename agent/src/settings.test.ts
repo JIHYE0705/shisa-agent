@@ -151,13 +151,14 @@ test("브리핑은 설정의 제외 출처를 따른다(think 가 cfg.briefing.e
   assert.doesNotMatch(excludeBriefingSources(BRIEFING_TASK, cfg.briefing!.exclude), /나에게 할당된 열린 이슈/);
 });
 
-test("validatePhrases: 아는 키만, 모르는 자리표시·줄 수 초과는 거절, 빈 글·기본값과 같은 글은 null(기본값으로)", () => {
+test("validatePhrases: 아는 키만, 모르는 자리표시는 거절(줄 수·길이 제한 없음), 빈 글·기본값과 같은 글은 null(기본값으로)", () => {
   assert.deepEqual(validatePhrases({ dance: "춤!\n 얍 \n", todo_new_one: ["새: {title}"], hello: "", mcp_back: null, merge_done: "머지했어요 🎉 (스이시~사)" }),
     { dance: ["춤!", "얍"], todo_new_one: ["새: {title}"], hello: null, mcp_back: null, merge_done: null });
-  for (const bad of [[], "x", { nope: "a" }, { dance: 3 }, { dance: ["a", 1] }, { todo_new_one: "{title} {pr}" }, { dance: "{title}" },
-    { dance: Array.from({ length: 11 }, (_, i) => `줄${i}`).join("\n") }]) {
+  for (const bad of [[], "x", { nope: "a" }, { dance: 3 }, { dance: ["a", 1] }, { todo_new_one: "{title} {pr}" }, { dance: "{title}" }]) {
     assert.throws(() => validatePhrases(bad), SettingsError, JSON.stringify(bad).slice(0, 60));
   }
+  const many = Array.from({ length: 50 }, (_, i) => `줄${i} ${"x".repeat(2000)}`);
+  assert.deepEqual(validatePhrases({ dance: many.join("\n") }), { dance: many }, "줄 수·길이 제한 없음");
   assert.throws(() => validatePhrases({ todo_new_one: "{pr}" }), /모르는 자리표시 \{pr\} — 쓸 수 있는 것: \{title\}/);
   assert.throws(() => validatePatch({ phrases: { dance: "{x}" } }, cfgOf()), /이 문구는 자리표시를 못 써요/);
   assert.deepEqual(validatePatch({ phrases: { dance: "춤" } }, cfgOf()), { phrases: { dance: ["춤"] } });

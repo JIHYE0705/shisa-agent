@@ -209,7 +209,7 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
           g.hint ? h('div.voice-hint', { text: g.hint }) : null,
           linesOf(g.key).map((line, i) => {
             const area = h('textarea.voice-line', {
-              rows: '3', maxlength: '400', 'aria-label': `${btn.label} ${g.hint || ''} ${i + 1}`.trim(),
+              rows: '3', 'aria-label': `${btn.label} ${g.hint || ''} ${i + 1}`.trim(),
               oninput: (e) => setLine(g.key, i, e.target.value),
             });
             area.value = line;

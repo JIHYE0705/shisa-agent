@@ -223,7 +223,7 @@ test('설정 창 IPC: 연결 해제는 이 창에서만, 아는 id·cap 만 main
   });
   listeners['open-settings']({ sender: 'panel' });
   const mine = { sender: fakeWin.webContents }, other = { sender: 'evil' };
-  const bad = { ok: false, error: 'bad args' };
+  const bad = { ok: false, status: 400, error: 'bad args', data: { error: '앱이 이 요청을 받지 않았어요(보낸 값이 맞지 않아요)' } };
   assert.deepEqual(await handlers['settings-sisa'](mine), { connected: ['gemini'], provider: 'gemini' });
   assert.deepEqual(await handlers['settings-sisa'](other), bad);
   assert.deepEqual(await handlers['settings-brain-disconnect'](mine, 'gemini'), { ok: true });
@@ -232,8 +232,9 @@ test('설정 창 IPC: 연결 해제는 이 창에서만, 아는 id·cap 만 main
   assert.deepEqual(await handlers['settings-connector-disconnect'](mine, 'calendar'), { ok: true, note: '바로 적용돼요.' });
   assert.deepEqual(await handlers['settings-connector-disconnect'](mine, 'github'), bad);
   assert.deepEqual(await handlers['settings-copy'](mine, 'claude mcp remove slack'), { ok: true });
-  assert.deepEqual(await handlers['settings-copy'](mine, 'x'.repeat(500)), bad);
-  assert.deepEqual(calls, [['brain', 'gemini'], ['conn', 'calendar'], ['copy', 'claude mcp remove slack']]);
+  assert.deepEqual(await handlers['settings-copy'](mine, 'x'.repeat(50000)), { ok: true }, '글자 수 제한 없음');
+  assert.deepEqual(await handlers['settings-copy'](mine, ''), bad);
+  assert.deepEqual(calls, [['brain', 'gemini'], ['conn', 'calendar'], ['copy', 'claude mcp remove slack'], ['copy', 'x'.repeat(50000)]]);
 });
 
 test('화면 연결: 패널·설정 창·마법사·프리로드·main 이 연결 해제를 부른다', () => {

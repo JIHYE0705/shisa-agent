@@ -11,7 +11,7 @@ import { BRAIN_PROVIDERS, DEFAULT_GENERAL_MODEL, HOME_DIR, configErrorText, type
 import { modelLabel } from "./models.ts";
 import { AUTO_MERGE_MAX, inAutoMerge, normSlug } from "./auto-merge.ts";
 import { STEP_HEAD } from "./briefing-sources.ts";
-import { PHRASES, PHRASE_MAX_LINES, phraseDef, phraseLines, setPhrases, unknownVars } from "./phrases.ts";
+import { PHRASES, phraseDef, phraseLines, setPhrases, unknownVars } from "./phrases.ts";
 
 export const MODEL_ROLES = ["quick", "general", "code", "light"] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
@@ -168,7 +168,7 @@ export function validateBrain(raw: unknown): BrainPatch {
   return out;
 }
 
-// 문구: 아는 키만, 값은 글(여러 줄)·줄 배열·null. 빈 글·null = 기본값으로. 줄 수·길이 제한, 그 문구가 모르는 {자리표시}는 거절
+// 문구: 아는 키만, 값은 글(여러 줄)·줄 배열·null. 빈 글·null = 기본값으로. 그 문구가 모르는 {자리표시}는 거절(줄 수·길이 제한은 없다)
 export function validatePhrases(raw: unknown): Record<string, string[] | null> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new SettingsError("phrases must be an object");
   const out: Record<string, string[] | null> = {};
@@ -178,7 +178,6 @@ export function validatePhrases(raw: unknown): Record<string, string[] | null> {
     if (v === null) { out[k] = null; continue; }
     if (typeof v !== "string" && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) throw new SettingsError(`phrases.${k} must be text`);
     const lines = phraseLines(v);
-    if (lines.length > PHRASE_MAX_LINES) throw new SettingsError(`phrases.${k}: ${PHRASE_MAX_LINES}줄까지예요`);
     for (const l of lines) {
       const bad = unknownVars(l, def.vars);
       if (bad.length) throw new SettingsError(`phrases.${k}: 모르는 자리표시 ${bad.map((x) => `{${x}}`).join(" ")} — ${def.vars.length ? `쓸 수 있는 것: ${def.vars.map((x) => `{${x}}`).join(" ")}` : "이 문구는 자리표시를 못 써요"}`);

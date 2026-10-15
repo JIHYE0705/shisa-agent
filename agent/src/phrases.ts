@@ -47,8 +47,6 @@ export type PhraseKey = (typeof PHRASES)[number]["key"];
 const DEFS = new Map<string, PhraseDef>(PHRASES.map((p) => [p.key, p]));
 export const phraseDef = (key: string): PhraseDef | undefined => DEFS.get(key);
 
-export const PHRASE_MAX_LINES = 10;
-
 // 사용자가 고친 것(키 → 줄들). 설정 창이 바꾸면 바로 바뀐다(Settings 가 setPhrases)
 let overrides: Record<string, string[]> = {};
 export function setPhrases(o: Record<string, unknown> | undefined): void {

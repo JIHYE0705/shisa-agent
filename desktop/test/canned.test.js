@@ -99,7 +99,8 @@ test('저장한 말로 바꿔 쓴다', () => {
   assert.equal(t, '안녕 **시사**예요.\n오늘은 쉬어요.');
 });
 
-test('sanitizeCanned: 아는 칸만, 빈 줄·너무 긴 줄은 빼고', () => {
-  assert.deepEqual(sanitizeCanned({ tired: ['  a  ', '', 'x'.repeat(500), 3], nope: ['x'] }), { tired: ['a'] });
+test('sanitizeCanned: 아는 칸만, 빈 줄은 빼고, 긴 줄·많은 줄은 그대로(글자 수·줄 수 제한 없음)', () => {
+  assert.deepEqual(sanitizeCanned({ tired: ['  a  ', '', 'x'.repeat(5000), 3], nope: ['x'] }), { tired: ['a', 'x'.repeat(5000)] });
+  assert.equal(sanitizeCanned({ tired: Array.from({ length: 40 }, (_, i) => `줄${i}`) }).tired.length, 40);
   assert.deepEqual(sanitizeCanned(null), {});
 });

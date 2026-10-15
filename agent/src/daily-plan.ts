@@ -19,7 +19,6 @@ export type PlanPorts = {
   edit(id: string, patch: TodoPatch): Todo | undefined;
 };
 
-const TITLE_MAX = 300;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS daily_plan (
@@ -128,7 +127,7 @@ export class DailyPlanService {
     const rows = db.prepare("SELECT date, id, title, done FROM daily_plan WHERE date >= ? ORDER BY date, sort, id").all(this.today()) as any[];
     if (!rows.length) return;
     for (const r of rows) {
-      const t = this.store.addTodo({ title: String(r.title).slice(0, TITLE_MAX), priority: 2, today: r.date });
+      const t = this.store.addTodo({ title: String(r.title), priority: 2, today: r.date });
       if (r.done) this.store.editTodo(t.id, { status: "done" });
     }
     db.prepare("DELETE FROM daily_plan WHERE date >= ?").run(this.today());
@@ -143,7 +142,6 @@ export class DailyPlanService {
   add(title: string, priority = 2): { ok: true; item: PlanItem; plan: DailyPlan } | { ok: false; message: string } {
     const t = tidy(title);
     if (!t) return { ok: false, message: "제목이 비어 있어요" };
-    if (t.length > TITLE_MAX) return { ok: false, message: "제목이 너무 길어요" };
     const todo = this.ports.add({ title: t, priority: prio(priority), today: this.today(), source: "user" });
     return { ok: true, item: planItem(todo), plan: this.state() };
   }
@@ -165,7 +163,7 @@ export class DailyPlanService {
         }
         const t = tidy(op.title ?? "");
         if (!t) { errors.push("추가할 제목이 없어요"); continue; }
-        this.ports.add({ title: t.slice(0, TITLE_MAX), priority: prio(op.priority), today: date, source: "user" });
+        this.ports.add({ title: t, priority: prio(op.priority), today: date, source: "user" });
         applied.push(`추가: ${t.slice(0, 40)}`);
         continue;
       }
@@ -186,7 +184,7 @@ export class DailyPlanService {
       if (op.title !== undefined) {
         const title = tidy(op.title);
         if (!title) { errors.push("제목이 비어 있어요"); continue; }
-        if (title !== it.title) patch.title = title.slice(0, TITLE_MAX);
+        if (title !== it.title) patch.title = title;
       }
       if (op.priority !== undefined && prio(op.priority, it.priority) !== it.priority) patch.priority = prio(op.priority, it.priority);
       if (op.done !== undefined && !!op.done !== it.done) patch.status = op.done ? "done" : "open";

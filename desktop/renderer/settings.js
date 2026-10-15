@@ -134,7 +134,7 @@ function renderBrains() {
       ...copy, ...confirmOpts(`brain:${r.id}`),
       onConfirm: async () => {
         const res = await cy.disconnectBrain(r.id).catch(() => null);
-        if (!res?.ok) return { ok: false, error: res?.error || '끊지 못했어요. 시사에 연결되지 않았어요' };
+        if (!res?.ok) return { ok: false, error: res?.data?.error || res?.error || '끊지 못했어요. 시사에 연결되지 않았어요' };
         sisaView = res;
         const s = await cy.getSettings().catch(() => null);
         if (s?.ok) settings = s.data;
@@ -462,7 +462,7 @@ function rowEl(r) {
       ...copy, ...confirmOpts(r.id),
       onConfirm: async () => {
         const res = await cy.disconnectConnector(cap).catch(() => null);
-        if (!res?.ok) return { ok: false, error: res?.error || '끊지 못했어요. 시사에 연결되지 않았어요' };
+        if (!res?.ok) return { ok: false, error: res?.data?.error || res?.error || '끊지 못했어요. 시사에 연결되지 않았어요' };
         flash([copy.done, res.note].filter(Boolean).join(' '));
         refreshRows();
         return res;

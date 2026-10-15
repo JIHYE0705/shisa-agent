@@ -24,7 +24,6 @@ export function autoMergeNext(list, slug, add) {
   if (add) return has ? cur : [...cur, slug];
   return cur.filter((x) => x.toLowerCase() !== slug.toLowerCase());
 }
-export const PHRASE_MAX_LINES = 10; // 데몬(agent/src/phrases.ts)과 같은 제한
 
 // 렌더러가 보낸 저장 본문 → 데몬에 넘길 모양(모르는 키·이상한 값이면 null). 진짜 검증(목록 안의 모델인가)은 데몬이
 export function sanitizeSettingsPatch(p) {
@@ -176,10 +175,9 @@ export function phraseSaveValue(p, text) {
   const l = lines(text);
   return !l.length || l.join('\n') === phraseDefaultText(p) ? null : l.join('\n');
 }
-// 저장 전 검사(데몬도 다시 본다): 줄 수·모르는 자리표시 → 이유, 괜찮으면 ''
+// 저장 전 검사(데몬도 다시 본다): 모르는 자리표시 → 이유, 괜찮으면 ''. 줄 수·길이 제한은 없다
 export function phraseProblem(p, text) {
   const l = lines(text);
-  if (l.length > PHRASE_MAX_LINES) return `${PHRASE_MAX_LINES}줄까지예요`;
   const vars = Array.isArray(p?.vars) ? p.vars : [];
   const bad = [...new Set(l.flatMap((x) => [...x.matchAll(/\{([^{}\s]*)\}/g)].map((m) => m[1])))].filter((v) => !vars.includes(v));
   if (bad.length) return `모르는 자리표시 ${bad.map((v) => `{${v}}`).join(' ')}${vars.length ? ` — 쓸 수 있는 것: ${vars.map((v) => `{${v}}`).join(' ')}` : ' — 이 문구는 자리표시를 못 써요'}`;

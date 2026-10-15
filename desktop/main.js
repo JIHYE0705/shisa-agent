@@ -40,6 +40,7 @@ import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLi
 import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, loginItemPlan, loginItemHint, defaultLoginPref, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
 import { createDaemonHost } from './src/daemon-host.js';
 import { RELEASES_API, checkDue, latestRelease, shouldNotify, updateBubble } from './src/update-check.js';
+import { denied } from './src/denied.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CY_AGENT_PORT) || 47823;
@@ -1051,8 +1052,6 @@ function endDrag() {
 // 우리 창에서 온 IPC 만 받는다
 const fromOurs = (e) => e.sender === win?.webContents || e.sender === panel?.webContents || e.sender === sessionWin?.webContents;
 const fromDebug = (e) => e.sender === debugWin?.webContents;
-const denied = () => ({ ok: false, error: 'bad args' });
-
 function setupIPC() {
   // 설정 창: 모델·브리핑 출처·연결 상태(트레이 "설정…", 패널 ⚙, ⌘,)
   settingsUi = setupSettings({
@@ -1111,7 +1110,7 @@ function setupIPC() {
     if (typeof url === 'string' && isSafeLink(url)) shell.openExternal(url).catch(() => {});
   });
   ipcMain.handle('copy-text', (e, text) => {
-    if (!fromOurs(e) || typeof text !== 'string' || !text || text.length > 8000) return denied();
+    if (!fromOurs(e) || typeof text !== 'string' || !text) return denied(); // 글자 수 제한 없음
     clipboard.writeText(text);
     return { ok: true };
   });
@@ -1479,7 +1478,7 @@ function setupIPC() {
     if (!fromOurs(e)) return denied();
     const b = body && typeof body === 'object' ? body : {};
     const out = {};
-    if (typeof b.title === 'string' && b.title.trim()) out.title = b.title.trim().slice(0, 200);
+    if (typeof b.title === 'string' && b.title.trim()) out.title = b.title.trim();
     if (['chat', 'todo', 'hover'].includes(b.kind)) out.kind = b.kind;
     if (typeof b.todoId === 'string' && b.todoId && b.todoId.length <= 500) out.todoId = b.todoId;
     return post('/chat/threads', out);
@@ -1487,7 +1486,7 @@ function setupIPC() {
   ipcMain.handle('chat-thread-edit', (e, id, patch) => {
     if (!fromOurs(e) || !okThreadId(id) || !patch || typeof patch !== 'object') return denied();
     const p = {};
-    if (typeof patch.title === 'string' && patch.title.trim()) p.title = patch.title.trim().slice(0, 200);
+    if (typeof patch.title === 'string' && patch.title.trim()) p.title = patch.title.trim();
     if (typeof patch.archived === 'boolean') p.archived = patch.archived;
     return Object.keys(p).length ? post(`/chat/threads/${id}`, p) : denied();
   });
@@ -1522,7 +1521,7 @@ function setupIPC() {
 
   ipcMain.handle('decide', async (e, proposalId, action) => {
     if (!fromOurs(e) || typeof proposalId !== 'string' || !proposalId || !['approve', 'hold'].includes(action)) {
-      return { ok: false, error: 'bad args' };
+      return denied();
     }
     return post(`/proposals/${encodeURIComponent(proposalId)}/${action}`);
   });

@@ -100,15 +100,15 @@ test('설정 창 IPC: 이 창에서 온 것만, 저장 본문은 걸러서 PUT, 
     preload: 'p', html: 'h',
   });
   const mine = { sender: fakeWin.webContents }, other = { sender: 'evil' };
-  assert.deepEqual(await handlers['settings-get'](mine), { ok: false, error: 'bad args' }, '창이 아직 없다');
+  assert.deepEqual(await handlers['settings-get'](mine), { ok: false, status: 400, error: 'bad args', data: { error: '앱이 이 요청을 받지 않았어요(보낸 값이 맞지 않아요)' } }, '창이 아직 없다');
   listeners['open-settings']({ sender: 'panel' });
   assert.equal(ui.window, fakeWin);
   await handlers['settings-get'](mine);
-  assert.deepEqual(await handlers['settings-get'](other), { ok: false, error: 'bad args' });
+  assert.deepEqual(await handlers['settings-get'](other), { ok: false, status: 400, error: 'bad args', data: { error: '앱이 이 요청을 받지 않았어요(보낸 값이 맞지 않아요)' } });
   await handlers['settings-put'](mine, { models: { quick: 'claude-haiku-5-5' } });
-  assert.deepEqual(await handlers['settings-put'](mine, { port: 1 }), { ok: false, error: 'bad args' });
+  assert.deepEqual(await handlers['settings-put'](mine, { port: 1 }), { ok: false, status: 400, error: 'bad args', data: { error: '앱이 이 요청을 받지 않았어요(보낸 값이 맞지 않아요)' } });
   await handlers['connections-check'](mine, 'services');
-  assert.deepEqual(await handlers['connections-check'](mine, '../x'), { ok: false, error: 'bad args' });
+  assert.deepEqual(await handlers['connections-check'](mine, '../x'), { ok: false, status: 400, error: 'bad args', data: { error: '앱이 이 요청을 받지 않았어요(보낸 값이 맞지 않아요)' } });
   assert.deepEqual(requests.map((r) => r.slice(0, 3)), [['GET', '/settings'], ['PUT', '/settings', { models: { quick: 'claude-haiku-5-5' } }], ['POST', '/connections/check', { id: 'services' }]]);
   listeners['settings-open-panel'](mine, 'setup');
   listeners['settings-open-panel'](mine, 'https://evil.example/');
@@ -117,7 +117,7 @@ test('설정 창 IPC: 이 창에서 온 것만, 저장 본문은 걸러서 PUT, 
   assert.deepEqual(await handlers['settings-caps'](mine), { claude: false, codex: false });
   caps = { claude: true, codex: true };
   assert.deepEqual(await handlers['settings-caps'](mine), { claude: true, codex: true });
-  assert.deepEqual(await handlers['settings-caps'](other), { ok: false, error: 'bad args' });
+  assert.deepEqual(await handlers['settings-caps'](other), { ok: false, status: 400, error: 'bad args', data: { error: '앱이 이 요청을 받지 않았어요(보낸 값이 맞지 않아요)' } });
 });
 
 test('캐릭터 한 번 클릭 → 패널, 더블클릭 → 말 걸기(뇌가 없으면 춤 + 연결 안내), 보내면 hover 스레드(chat-send 가 kind hover)', () => {
@@ -154,7 +154,7 @@ test('문구: 저장 본문(키 → 글|null)·묶기·보일 글·저장 값·�
   assert.equal(phraseProblem(todo, '{title} 왔어요'), '');
   assert.match(phraseProblem(todo, '{pr} {title}'), /모르는 자리표시 \{pr\} — 쓸 수 있는 것: \{title\}/);
   assert.match(phraseProblem(dance, '{title}'), /자리표시를 못 써요/);
-  assert.match(phraseProblem(dance, Array.from({ length: 11 }, (_, i) => `줄${i}`).join('\n')), /10줄까지/);
+  assert.equal(phraseProblem(dance, Array.from({ length: 50 }, (_, i) => `줄${i}`).join('\n')), '', '줄 수 제한 없음');
   assert.equal(phraseProblem(dance, 'x'.repeat(5000)), '');
 });
 

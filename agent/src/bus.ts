@@ -884,7 +884,6 @@ export class Bus {
         const body = await readJson(req);
         const text = typeof body.text === "string" ? body.text.trim() : "";
         if (!text) throw new BadRequest("text required");
-        if (text.length > 500) throw new BadRequest("text too long");
         const category = typeof body.category === "string" ? body.category : undefined;
         const r = await h.profileRemember(text, category) as { ok?: boolean; error?: string; fact?: unknown };
         if (r && r.ok === false) return json(res, 400, { ok: false, error: r.error ?? "invalid fact" });

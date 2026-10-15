@@ -248,6 +248,15 @@ test("extractRememberedFact: 기억해줘 단서를 떼고 사실만 남긴다",
   assert.equal(extractRememberedFact("오늘 날씨 어때"), null);
 });
 
+test("rememberFact: 사용자가 맡긴 긴 글도 자르지 않는다(글자 수 제한 없음)", () => {
+  const s = new Store(":memory:");
+  const long = `내가 좋아하는 것은 ${"가".repeat(3000)}`;
+  const a = rememberFact(s, { text: `${long}, 기억해줘` }, T0);
+  assert.equal(a.ok, true);
+  if (a.ok) assert.equal(a.fact.text, long);
+  assert.equal(extractRememberedFact(`${long} 기억해줘`), long);
+});
+
 test("rememberFact: 직접 맡긴 사실은 바로 높은 신뢰도로, API 문장도 된다", () => {
   const s = new Store(":memory:");
   const a = rememberFact(s, { text: "내 이름은 홍길동이야, 기억해줘" }, T0);

@@ -153,7 +153,7 @@ export function extractRememberedFact(utterance: string): string | null {
     .replace(/^[:.\-\s]+/, "")
     .replace(/\s+/g, " ")
     .trim();
-  return fact.length >= 4 ? clip(fact, RULES.maxTextLen) : null;
+  return fact.length >= 4 ? fact : null; // 사용자가 한 말은 자르지 않는다
 }
 
 function guessCategory(text: string): FactCategory {
@@ -165,7 +165,7 @@ export type RememberResult = { ok: true; fact: Fact; created: boolean } | { ok: 
 // 사용자가 직접 맡긴 사실. 자동 학습(0.4)보다 높은 신뢰도. 예전에 지운 같은 문장이면 다시 살린다.
 export function rememberFact(store: Store, input: { text: string; category?: string; evidence?: string[] }, now = new Date()): RememberResult {
   const stripped = extractRememberedFact(input.text);
-  const text = clip(stripped ?? input.text, RULES.maxTextLen);
+  const text = (stripped ?? input.text).replace(/\s+/g, " ").trim(); // 사용자가 맡긴 글은 자르지 않는다
   if (text.length < 4) return { ok: false, error: "기억할 내용이 너무 짧아요" };
   if (looksLikeInstruction(text)) return { ok: false, error: "지시는 기억으로 남기지 않아요" };
   const cat = CATEGORIES.includes(input.category as FactCategory) ? (input.category as FactCategory) : guessCategory(text);

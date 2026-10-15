@@ -271,7 +271,7 @@ async function load() {
     raw = r.data;
     error = null;
   } else {
-    error = r?.error ? '시사에 연결되지 않았어요.' : `대시보드를 못 가져왔어요 (HTTP ${r?.status ?? '?'})`;
+    error = r?.error && !r?.status ? '시사에 연결되지 않았어요.' : `대시보드를 못 가져왔어요 (HTTP ${r?.status ?? '?'})`;
   }
   renderAll();
   if (again) { again = false; load(); }

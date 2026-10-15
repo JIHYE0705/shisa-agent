@@ -645,7 +645,7 @@ export class Store {
   createThread(t: { title: string; kind?: ThreadKind; todoId?: string; at?: string }): Thread {
     const id = randomUUID(), at = t.at ?? now();
     this.db.prepare("INSERT INTO chat_threads (id, title, kind, todo_id, created, updated) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(id, t.title.slice(0, 200), t.kind ?? "chat", t.todoId ?? null, at, at);
+      .run(id, t.title, t.kind ?? "chat", t.todoId ?? null, at, at);
     return this.thread(id)!;
   }
   thread(id: string): Thread | undefined {
@@ -674,7 +674,7 @@ export class Store {
   }
   editThread(id: string, patch: { title?: string; archived?: boolean }): Thread | undefined {
     if (!this.thread(id)) return undefined;
-    if (patch.title !== undefined) this.db.prepare("UPDATE chat_threads SET title = ? WHERE id = ?").run(patch.title.slice(0, 200), id);
+    if (patch.title !== undefined) this.db.prepare("UPDATE chat_threads SET title = ? WHERE id = ?").run(patch.title, id);
     if (patch.archived !== undefined) this.db.prepare("UPDATE chat_threads SET archived = ? WHERE id = ?").run(patch.archived ? 1 : 0, id);
     return this.thread(id);
   }

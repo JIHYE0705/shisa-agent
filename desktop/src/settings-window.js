@@ -3,6 +3,7 @@
 import { sanitizeSettingsPatch, sanitizeAppPrefs, okCheckId, okPanelTarget } from './settings.js';
 import { sanitizeGuidelineAdd, sanitizeGuidelinePatch, okGuidelineId } from './guidelines.js';
 import { okBrainId, okCap } from './disconnect.js';
+import { denied } from './denied.js';
 
 export const SETTINGS_SIZE = { width: 720, height: 760 };
 
@@ -13,7 +14,6 @@ export function setupSettings(deps) {
   let win = null;
 
   const isMine = (e) => !!win && !win.isDestroyed() && e.sender === win.webContents;
-  const denied = () => ({ ok: false, error: 'bad args' });
 
   function create() {
     win = new deps.BrowserWindow({
@@ -69,7 +69,7 @@ export function setupSettings(deps) {
   ipcMain.handle('settings-sisa', (e) => (isMine(e) && deps.sisa ? deps.sisa() : denied()));
   ipcMain.handle('settings-brain-disconnect', (e, id) => (isMine(e) && okBrainId(id) && deps.disconnectBrain ? deps.disconnectBrain(id) : denied()));
   ipcMain.handle('settings-connector-disconnect', (e, cap) => (isMine(e) && okCap(cap) && deps.disconnectConnector ? deps.disconnectConnector(cap) : denied()));
-  ipcMain.handle('settings-copy', (e, text) => (isMine(e) && typeof text === 'string' && text && text.length <= 200 && deps.copyText ? deps.copyText(text) : denied()));
+  ipcMain.handle('settings-copy', (e, text) => (isMine(e) && typeof text === 'string' && text && deps.copyText ? deps.copyText(text) : denied()));
   // [설치 안내]·[AI 고르기] → 패널의 그 탭
   ipcMain.on('settings-open-panel', (e, section) => {
     if (isMine(e) && okPanelTarget(section)) deps.openPanel?.(section);

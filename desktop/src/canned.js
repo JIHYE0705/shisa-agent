@@ -16,8 +16,7 @@ export const CANNED = [
   { id: 'ai', label: '자유롭게 대화하고 싶어요' },
 ];
 
-export const CANNED_LINE_MAX = 400;
-export const CANNED_MAX_LINES = 20;
+// 줄 길이·줄 수 제한은 두지 않는다(사용자가 쓴 글은 막거나 자르지 않는다)
 
 export const CANNED_CATALOG = [
   { key: 'today:e', button: 'today', hint: '할 일 없음', lines: [
@@ -164,8 +163,7 @@ export function sanitizeCanned(raw) {
     if (!Array.isArray(src[key])) continue;
     const lines = src[key]
       .map((s) => (typeof s === 'string' ? s.replace(/\r\n/g, '\n').trim() : ''))
-      .filter((s) => s && s.length <= CANNED_LINE_MAX)
-      .slice(0, CANNED_MAX_LINES);
+      .filter(Boolean);
     if (lines.length) out[key] = lines;
   }
   return out;

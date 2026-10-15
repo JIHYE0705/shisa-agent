@@ -46,6 +46,9 @@ test("저장소: 보관·삭제·페이지(updated 커서, 메시지 n 커서)",
   assert.equal(s.deleteThread(ids[1]), false);
   assert.equal(s.threadMessages(ids[1]).length, 0);
   assert.equal(s.editThread("nope", { title: "x" }), undefined);
+  const long = "제목".repeat(1000); // 사용자가 붙인 대화 이름은 자르지 않는다
+  assert.equal(s.createThread({ title: long }).title, long);
+  assert.equal(s.editThread(ids[0], { title: `${long}!` })?.title, `${long}!`);
 });
 
 function setup(converse: Converse) {

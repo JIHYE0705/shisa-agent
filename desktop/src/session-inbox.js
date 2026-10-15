@@ -95,7 +95,7 @@ export function cleanBtw(saved) {
   for (const [id, list] of Object.entries(saved)) {
     if (!/^[\w-]{1,64}$/.test(id) || !Array.isArray(list)) continue;
     const ok = list.filter((x) => x && typeof x.q === 'string' && typeof x.id === 'string').slice(-BTW_KEEP)
-      .map((x) => ({ id: x.id, q: x.q.slice(0, 8000), at: typeof x.at === 'string' ? x.at : '', ...(typeof x.a === 'string' ? { a: x.a.slice(0, 8000) } : x.loading ? { error: '창을 닫아서 답을 못 받았어요' } : typeof x.error === 'string' ? { error: x.error.slice(0, 300) } : {}) }));
+      .map((x) => ({ id: x.id, q: x.q, at: typeof x.at === 'string' ? x.at : '', ...(typeof x.a === 'string' ? { a: x.a.slice(0, 8000) } : x.loading ? { error: '창을 닫아서 답을 못 받았어요' } : typeof x.error === 'string' ? { error: x.error.slice(0, 300) } : {}) }));
     if (ok.length) out[id] = ok;
   }
   return out;

@@ -133,7 +133,7 @@ test('설정 창 IPC: 행동 지침은 이 창에서만, 인자는 걸러서 데
   });
   ui.show();
   const mine = { sender: fakeWin.webContents }, other = { sender: 'evil' };
-  const bad = { ok: false, error: 'bad args' };
+  const bad = { ok: false, status: 400, error: 'bad args', data: { error: '앱이 이 요청을 받지 않았어요(보낸 값이 맞지 않아요)' } };
   await handlers['guidelines-get'](mine);
   await handlers['guidelines-add'](mine, { text: '표 쓰지 마', scope: 'chat' });
   await handlers['guidelines-edit'](mine, 'gl-1', { active: false });

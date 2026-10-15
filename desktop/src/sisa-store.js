@@ -1,7 +1,7 @@
 // 시사의 AI 연결 저장 모양(sisa-ai.json). 파일 읽기·쓰기는 main 이 하고, 여기는 값만 다룬다.
 // 키는 밖으로 내보내는 값(view)에 절대 넣지 않는다.
 import { sanitizeCanned } from './canned.js';
-import { PERSONA_MAX, isStockPersona } from './persona.js';
+import { isStockPersona } from './persona.js';
 
 export const KEY_PROVIDERS = ['gemini', 'claude', 'openai'];
 export const CLI_PROVIDERS = ['claudecode', 'codexcli'];
@@ -37,7 +37,7 @@ export function normalizeSisa(raw) {
     provider: ALL_PROVIDERS.includes(d.provider) || d.provider === 'none' ? d.provider : '',
     chatModels,
     codeModel: isModelId(d.codeModel) ? d.codeModel : 'default',
-    persona: typeof d.persona === 'string' && !isStockPersona(d.persona) ? d.persona.slice(0, PERSONA_MAX) : '',
+    persona: typeof d.persona === 'string' && !isStockPersona(d.persona) ? d.persona : '',
     canned: sanitizeCanned(d.canned),
     done: obj(d.done),
   };
@@ -133,7 +133,7 @@ export function withVoice(data, { persona, canned } = {}) {
   const d = normalizeSisa(data);
   let next = d;
   if (persona !== undefined) {
-    const p = typeof persona === 'string' ? persona.replace(/\r\n/g, '\n').trim().slice(0, PERSONA_MAX) : '';
+    const p = typeof persona === 'string' ? persona.replace(/\r\n/g, '\n').trim() : '';
     next = { ...next, persona: isStockPersona(p) ? '' : p };
   }
   if (canned !== undefined) next = { ...next, canned: sanitizeCanned(canned) };
