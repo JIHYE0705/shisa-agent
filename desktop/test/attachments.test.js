@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ATTACH_LIMITS, ATTACH_ERRORS, admitFiles, filesFromTransfer, hasFiles, pastedName, downscaleTarget, normAttachments, attachUrl, resolveAttachUrl,
+  ATTACH_ERRORS, admitFiles, filesFromTransfer, hasFiles, pastedName, downscaleTarget, normAttachments, attachUrl, resolveAttachUrl,
   chipView, sendable, attachSummary, cleanAttachIds, cleanUpload, guessKind, okStoredName, fmtSize,
 } from '../src/attachments.js';
 import { mergeMessages, appendLocal, dropLocal, isDoubleSend } from '../src/threads.js';
@@ -27,16 +27,14 @@ test('attachments: 종류 추측·크기 글·저장 이름 모양', () => {
   assert.equal(okStoredName(`${ID}-a b.png`), false, '공백은 저장 이름에 없다');
 });
 
-test('admitFiles: 개수·크기·합 크기 한도와 같은 파일 두 번, 이유는 사용자 글로', () => {
-  const r = admitFiles([], [F('a.png', 10, 'image/png'), F('a.png', 10, 'image/png'), F('empty.txt', 0), F('big.mov', ATTACH_LIMITS.file + 1)]);
-  assert.deepEqual(r.add.map((x) => [x.name, x.kind]), [['a.png', 'image']]);
-  assert.deepEqual(r.errors, [ATTACH_ERRORS.empty('empty.txt'), ATTACH_ERRORS.tooBig('big.mov')]);
-  const nine = Array.from({ length: 9 }, (_, i) => ({ sig: `s${i}`, size: 1 }));
-  const r2 = admitFiles(nine, [F('x.txt', 1), F('y.txt', 1), F('z.txt', 1)]);
-  assert.deepEqual(r2.add.map((x) => x.name), ['x.txt']);
-  assert.deepEqual(r2.errors, [ATTACH_ERRORS.tooMany]);
-  const r3 = admitFiles([{ sig: 'big', size: ATTACH_LIMITS.total - 5 }], [F('a.bin', 10)]);
-  assert.deepEqual([r3.add.length, r3.errors], [0, [ATTACH_ERRORS.totalBig]]);
+test('admitFiles: 크기·합·개수 상한 없음, 빈 파일·같은 파일 두 번만 빼고, 이유는 사용자 글로', () => {
+  const GB = 1024 ** 3;
+  const r = admitFiles([], [F('a.png', 10, 'image/png'), F('a.png', 10, 'image/png'), F('empty.txt', 0), F('big.mov', 3 * GB)]);
+  assert.deepEqual(r.add.map((x) => [x.name, x.kind]), [['a.png', 'image'], ['big.mov', 'file']]);
+  assert.deepEqual(r.errors, [ATTACH_ERRORS.empty('empty.txt')]);
+  const many = Array.from({ length: 40 }, (_, i) => ({ sig: `s${i}`, size: GB }));
+  const r2 = admitFiles(many, [F('x.txt', 1), F('y.txt', 1), F('z.txt', 1)]);
+  assert.deepEqual([r2.add.map((x) => x.name), r2.errors], [['x.txt', 'y.txt', 'z.txt'], []]);
   // 이미 붙인 것(sig 같음)은 조용히 건너뛴다
   const sig = r.add[0].sig;
   assert.deepEqual(admitFiles([{ sig, size: 10 }], [F('a.png', 10, 'image/png')]), { add: [], errors: [] });
@@ -117,7 +115,7 @@ test('cleanAttachIds·cleanUpload: 메인 IPC 검사', () => {
   assert.deepEqual(cleanAttachIds([ID, ID, ID2]), [ID, ID2]);
   assert.equal(cleanAttachIds([ID, '../x']), null);
   assert.equal(cleanAttachIds('x'), null);
-  assert.equal(cleanAttachIds(Array.from({ length: 11 }, () => ID)), null);
+  assert.deepEqual(cleanAttachIds(Array.from({ length: 30 }, (_, i) => `${ID.slice(0, -2)}${String(i).padStart(2, '0')}`)).length, 30); // 개수 상한 없음
   const bytes = new Uint8Array([1, 2]);
   assert.deepEqual(cleanUpload(' a.png ', 'image/png', bytes), { name: 'a.png', mime: 'image/png', bytes });
   assert.equal(cleanUpload('a.bin', 'bad mime;x', bytes).mime, 'application/octet-stream');

@@ -1449,7 +1449,7 @@ function setupIPC() {
       ...(Number.isInteger(r.data?.position) ? { position: r.data.position } : {}),
     };
   });
-  // 첨부 올리기(패널·캐릭터·세션 창) — 바이트는 30MB 까지(데몬도 다시 본다)
+  // 첨부 올리기(패널·캐릭터·세션 창) — 크기 상한 없음
   ipcMain.handle('chat-attach', (e, name, mime, bytes) => {
     const u = fromOurs(e) ? cleanUpload(name, mime, bytes) : null;
     return u ? uploadAttachment(u.name, u.mime, u.bytes) : denied();

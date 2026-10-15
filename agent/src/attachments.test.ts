@@ -54,15 +54,15 @@ test("attachments: 올리기 → 보내기 전 검사 → 대화 폴더로 옮�
   assert.match(a.file, /^[0-9a-f-]{36}-화면_캡처\.png$/);
   assert.deepEqual(st.stage("", "", PNG), { error: ATTACH_ERR.badName });
   assert.deepEqual(st.stage("empty.txt", "text/plain", Buffer.alloc(0)), { error: ATTACH_ERR.empty });
-  assert.deepEqual(st.stage("big.bin", "", Buffer.alloc(ATTACH_LIMITS.file + 1)), { error: ATTACH_ERR.tooBig });
+  const huge = st.stage("big.bin", "", Buffer.alloc(60 * 1024 * 1024)); // 크기 상한 없음
+  assert.ok(!("error" in huge));
 
   assert.equal(st.check([a.id]), undefined);
   assert.equal(st.check(["00000000-0000-4000-8000-000000000000"]), ATTACH_ERR.missing);
-  assert.equal(st.check(Array.from({ length: ATTACH_LIMITS.count + 1 }, () => a.id)), ATTACH_ERR.tooMany);
-  const big1 = st.stage("b1.bin", "", Buffer.alloc(ATTACH_LIMITS.file));
-  const big2 = st.stage("b2.bin", "", Buffer.alloc(ATTACH_LIMITS.file));
-  assert.ok(!("error" in big1) && !("error" in big2));
-  assert.equal(st.check([big1.id, big2.id]), ATTACH_ERR.totalBig);
+  assert.equal(st.check(Array.from({ length: 30 }, () => a.id)), undefined); // 개수 상한 없음
+  const big2 = st.stage("b2.bin", "", Buffer.alloc(60 * 1024 * 1024));
+  assert.ok(!("error" in huge) && !("error" in big2));
+  assert.equal(st.check([huge.id, big2.id]), undefined); // 합 상한 없음
 
   const [got] = st.claim([a.id], "thread-1");
   assert.equal(got.name, "화면 캡처.png");
@@ -310,7 +310,7 @@ async function serve(extra: Partial<BusHandlers> = {}) {
   return { bus, base: `http://127.0.0.1:${(bus.server!.address() as any).port}` };
 }
 
-test("bus: 첨부 올리기·읽기·열기 — 헤더 필수, 폴더 밖은 404, 너무 크면 413", async () => {
+test("bus: 첨부 올리기·읽기·열기 — 헤더 필수, 폴더 밖은 404, 크기·개수 상한 없음", async () => {
   const dir = tmp();
   const st = new AttachmentStore(dir, noShrink);
   const opened: string[] = [];
@@ -335,8 +335,8 @@ test("bus: 첨부 올리기·읽기·열기 — 헤더 필수, 폴더 밖은 404
     assert.equal(ok.status, 201);
     const meta = (await ok.json()).attachment;
     assert.deepEqual([meta.name, meta.kind, meta.size, meta.file, meta.at], ["스샷 1.png", "image", PNG.length, `${meta.id}-스샷_1.png`, meta.at]);
-    const big = await up({ "x-cy-agent": "1", "x-file-name": "big.bin" }, new Uint8Array(ATTACH_LIMITS.file + 10));
-    assert.equal(big.status, 413);
+    const big = await up({ "x-cy-agent": "1", "x-file-name": "big.bin" }, new Uint8Array(40 * 1024 * 1024));
+    assert.equal(big.status, 201, "크기 상한 없음");
 
     // 보내기: 글 없이 첨부만 OK, 모양 틀린 id 400, 없는 첨부 400(이유)
     const post = (body: unknown) => fetch(`${base}/chat`, { method: "POST", headers: { "x-cy-agent": "1", "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -344,7 +344,7 @@ test("bus: 첨부 올리기·읽기·열기 — 헤더 필수, 폴더 밖은 404
     assert.equal((await post({ text: "", attachments: [meta.id] })).status, 202);
     assert.deepEqual(chats.at(-1), ["", { attachments: [meta.id] }]);
     assert.equal((await post({ text: "x", attachments: ["../etc"] })).status, 400);
-    assert.equal((await post({ text: "x", attachments: Array.from({ length: 11 }, () => meta.id) })).status, 400);
+    assert.equal((await post({ text: "x", attachments: Array.from({ length: 11 }, () => meta.id) })).status, 202, "개수 상한 없음");
     const miss = await post({ text: "x", attachments: ["00000000-0000-4000-8000-000000000000"] });
     assert.equal(miss.status, 400);
     assert.equal((await miss.json()).error, ATTACH_ERR.missing);

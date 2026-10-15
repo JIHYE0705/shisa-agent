@@ -12,7 +12,7 @@ import type { GuidelinesApi } from "./guidelines.ts";
 import { FOCUS_CMDS, DAY_RE, type FocusApi, type FocusCmd } from "./focus.ts";
 import { createReadStream, statSync } from "node:fs";
 import { extname } from "node:path";
-import { ATTACH_ID, ATTACH_LIMITS, attachmentInput, attachmentRef, type Attachment, type ContentBlock } from "./attachments.ts";
+import { ATTACH_ID, attachmentInput, attachmentRef, type Attachment, type ContentBlock } from "./attachments.ts";
 
 export type Mood = "idle" | "thinking" | "working" | "alert";
 export type Bubble = {
@@ -485,8 +485,7 @@ export class Bus {
         let name = "";
         try { name = decodeURIComponent(String(req.headers["x-file-name"] ?? "")); } catch { throw new BadRequest("bad x-file-name"); }
         if (!name.trim() || name.length > 1000) throw new BadRequest("x-file-name required");
-        const bytes = await readRaw(req, ATTACH_LIMITS.file);
-        if (!bytes) return json(res, 413, { error: "파일이 너무 커요 — 하나에 30MB까지 붙일 수 있어요" });
+        const bytes = await readRaw(req);
         const r = h.attachments.stage(name, String(req.headers["content-type"] ?? ""), bytes);
         return "error" in r ? json(res, 400, r) : json(res, 201, r);
       }
@@ -791,7 +790,7 @@ export class Bus {
         const body = await readJson(req);
         const text = typeof body?.text === "string" ? body.text.trim() : "";
         const atts = body.attachments ?? undefined;
-        if (atts !== undefined && (!Array.isArray(atts) || atts.length > ATTACH_LIMITS.count || !atts.every((x: unknown) => typeof x === "string" && ATTACH_ID.test(x)))) throw new BadRequest(`attachments must be up to ${ATTACH_LIMITS.count} attachment ids`);
+        if (atts !== undefined && (!Array.isArray(atts) || !atts.every((x: unknown) => typeof x === "string" && ATTACH_ID.test(x)))) throw new BadRequest("attachments must be attachment ids");
         if (!text && !atts?.length) throw new BadRequest("text required");
         const todoId = body.todoId ?? undefined, threadId = body.threadId ?? undefined, kind = body.kind ?? undefined, parentRunId = body.parentRunId ?? undefined, clientId = body.clientId ?? undefined;
         if (clientId !== undefined && (typeof clientId !== "string" || !/^[\w-]{1,64}$/.test(clientId))) throw new BadRequest("clientId must match [\\w-]{1,64}");
@@ -907,7 +906,7 @@ export class Bus {
 function runAttachIds(body: any): string[] {
   const a = body?.attachments;
   if (a === undefined || a === null) return [];
-  if (!Array.isArray(a) || a.length > ATTACH_LIMITS.count || !a.every((x: unknown) => typeof x === "string" && ATTACH_ID.test(x))) throw new BadRequest(`attachments must be up to ${ATTACH_LIMITS.count} attachment ids`);
+  if (!Array.isArray(a) || !a.every((x: unknown) => typeof x === "string" && ATTACH_ID.test(x))) throw new BadRequest("attachments must be attachment ids");
   return [...new Set(a as string[])];
 }
 function claimRun(h: BusHandlers, runId: string, ids: string[]): { list: Attachment[]; bucket: string } | { error: string; status: number } {
@@ -920,15 +919,11 @@ function claimRun(h: BusHandlers, runId: string, ids: string[]): { list: Attachm
 const ATTACH_TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf" };
 
 // 날 본문(첨부 올리기). max 를 넘으면 undefined(413)
-async function readRaw(req: IncomingMessage, max: number): Promise<Uint8Array | undefined> {
-  let size = 0, over = Number(req.headers["content-length"] ?? 0) > max;
+// 본문 바이트 그대로(첨부 — 크기 상한 없음)
+async function readRaw(req: IncomingMessage): Promise<Uint8Array> {
   const chunks: Buffer[] = [];
-  for await (const c of req) { // 넘쳐도 끝까지 읽어 버린다(소켓을 끊으면 413 을 못 보낸다)
-    size += c.length;
-    if (size > max) over = true;
-    if (!over) chunks.push(c);
-  }
-  return over ? undefined : Buffer.concat(chunks);
+  for await (const c of req) chunks.push(c);
+  return Buffer.concat(chunks);
 }
 
 // JSON 본문(최대 MAX_BODY). optional이면 빈 본문은 {}
