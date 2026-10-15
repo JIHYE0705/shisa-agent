@@ -778,8 +778,8 @@ askInput.addEventListener('keydown', async (e) => {
   hideAsk();
   sendChat(text, ids);
 });
-askInput.addEventListener('blur', () => { if (askFocused && !picking) hideAsk(); });
-window.addEventListener('blur', () => { if (askFocused && !picking) hideAsk(); if (mergeAskFocused) closeMergeAsk(mergeAskFocused, true); });
+askInput.addEventListener('blur', () => { if (askFocused && !picking && !askPauseTimer) hideAsk(); }); // 칩 행동 동안 잠깐 숨긴 건 닫는 게 아니다
+window.addEventListener('blur', () => { if (askFocused && !picking && !askPauseTimer) hideAsk(); if (mergeAskFocused) closeMergeAsk(mergeAskFocused, true); });
 
 // 호버 판정 — 클릭 투과 중에도 mousemove 는 넘어오니 좌표로 본다
 function updateHover(el) {
@@ -905,7 +905,12 @@ function pauseAsk(ms) {
   clearTimeout(askPauseTimer);
   ask.classList.add('paused');
   requestAnimationFrame(recheckHit);
-  askPauseTimer = setTimeout(() => { askPauseTimer = null; ask.classList.remove('paused'); requestAnimationFrame(recheckHit); }, ms);
+  askPauseTimer = setTimeout(() => {
+    askPauseTimer = null;
+    ask.classList.remove('paused');
+    if (askOpen) askInput.focus({ preventScroll: true }); // 숨긴 동안 빠진 포커스를 돌려준다
+    requestAnimationFrame(recheckHit);
+  }, ms);
 }
 function talk() {
   if (brain.ready === false) return noBrain();
