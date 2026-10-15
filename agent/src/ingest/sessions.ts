@@ -1,8 +1,9 @@
 // Claude Code / Codex 세션 JSONL → 지식그래프(session · project · file 노드).
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, sep } from "node:path";
 import type { Store } from "../store.ts";
+import { IS_WIN, winNorm } from "../plat.ts";
 
 export type SessionDigest = {
   id: string;
@@ -155,8 +156,10 @@ function* walkJsonl(dir: string): Generator<string> {
 // (~/.cy-agent, ~/.cy-agent-xxx 등)의 두뇌 대화·자동수정 세션도 내 작업 기록이 아니다
 export function isCyAgentCwd(cwd: string | undefined, skipCwdPrefix?: string, home = homedir()): boolean {
   if (!cwd) return false;
-  if (skipCwdPrefix && cwd.startsWith(skipCwdPrefix)) return true;
-  return cwd.startsWith(join(home, ".cy-agent"));
+  // Windows: 드라이브 글자·대소문자·구분자가 섞여 기록될 수 있다(c:\ · C:/)
+  const starts = (p: string) => (IS_WIN ? winNorm(cwd).startsWith(winNorm(p)) : cwd.startsWith(p));
+  if (skipCwdPrefix && starts(skipCwdPrefix)) return true;
+  return starts(join(home, ".cy-agent"));
 }
 
 // 바뀐 파일만 다시 읽는다(mtime 기준). 반환: 새로 반영한 세션 수
@@ -169,7 +172,7 @@ export function ingestSessions(
   const cutoff = Date.now() - sinceMs;
   for (const [tool, dir] of [["claude", dirs.claude], ["codex", dirs.codex]] as const) {
     for (const path of walkJsonl(dir)) {
-      if (path.includes("/subagents/")) continue; // 서브에이전트 트랜스크립트는 부모 세션에 포함
+      if (path.includes("/subagents/") || path.includes(`${sep}subagents${sep}`)) continue; // 서브에이전트 트랜스크립트는 부모 세션에 포함
       let mtime: number;
       try { mtime = statSync(path).mtimeMs; } catch { continue; }
       if (mtime < cutoff || store.markOf(path) === mtime) continue;

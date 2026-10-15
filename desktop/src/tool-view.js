@@ -13,9 +13,23 @@ export function ellipsize(s, max = ARG_MAX) {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
+const WIN_ABS = /^[A-Za-z]:[\\/]/;
+
+// 윈도우 경로: 대소문자 무시, \ · / 둘 다. C:\Users\<나> → ~
+function shortWinPath(s, cwd) {
+  const base = typeof cwd === 'string' && WIN_ABS.test(cwd) ? cwd.replace(/[\\/]+$/, '') : '';
+  if (base) {
+    const lo = s.toLowerCase(), b = base.toLowerCase();
+    if (lo === b) return '.';
+    if (lo.startsWith(b) && /[\\/]/.test(s[base.length] ?? '')) return s.slice(base.length + 1);
+  }
+  return s.replace(/^[A-Za-z]:[\\/]Users[\\/][^\\/]+(?=[\\/]|$)/i, '~');
+}
+
 // 경로 줄이기: run 폴더 아래면 상대 경로, 홈 아래면 ~/…
 export function shortPath(p, cwd) {
   const s = String(p ?? '');
+  if (WIN_ABS.test(s)) return shortWinPath(s, cwd);
   if (!s.startsWith('/')) return s;
   const base = typeof cwd === 'string' && cwd.startsWith('/') ? cwd.replace(/\/+$/, '') : '';
   if (base) {
@@ -70,7 +84,7 @@ export function toolHeader(rawName, rawInput, { cwd } = {}) {
   if (name === 'Grep' || name === 'Glob') {
     const i = input.lastIndexOf(' in ');
     const path = i >= 0 ? input.slice(i + 4) : '';
-    if (i >= 0 && path.startsWith('/')) return out(name, `${input.slice(0, i)} in ${shortPath(path, cwd)}`);
+    if (i >= 0 && (path.startsWith('/') || WIN_ABS.test(path))) return out(name, `${input.slice(0, i)} in ${shortPath(path, cwd)}`);
     return out(name, input);
   }
   if (name === 'WebFetch') return out(name, pick(input, 'url') ?? input);

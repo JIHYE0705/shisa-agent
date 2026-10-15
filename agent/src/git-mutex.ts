@@ -10,8 +10,9 @@ import { promisify } from "node:util";
 const execFileP = promisify(execFile);
 
 // 비동기 셸(긴 테스트·네트워크 git 이 데몬을 멈추지 않게). 실패하면 stdout·stderr 를 단 예외
-export async function shAsync(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv, timeout = 15 * 60e3): Promise<string> {
-  const r = await execFileP(cmd, args, { cwd, env: { ...process.env, ...env }, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024 });
+// verbatim: Windows 의 cmd.exe /d /s /c "…"(plat.ts winSpawnSpec) — 인자를 Node 가 다시 따옴표로 감싸지 않게
+export async function shAsync(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv, timeout = 15 * 60e3, verbatim = false): Promise<string> {
+  const r = await execFileP(cmd, args, { cwd, env: { ...process.env, ...env }, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true, ...(verbatim ? { windowsVerbatimArguments: true } : {}) });
   return String(r.stdout ?? "").trim();
 }
 

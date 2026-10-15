@@ -68,3 +68,9 @@ test('normalizeBubble: linkLabel 은 링크가 있을 때만, 짧게', () => {
   assert.equal(normalizeBubble({ id: 'a', text: 'x', linkLabel: '열기' }).linkLabel, undefined);
   assert.equal(normalizeBubble({ id: 'a', text: 'x', link: 'https://example.com', linkLabel: '가'.repeat(40) }).linkLabel.length, 20);
 });
+
+test('updateBubble win32: 설치본은 새 Setup.exe 를 실행하라고, 레포 체크아웃·맥 문구는 그대로', () => {
+  assert.match(updateBubble({ version: '0.2.0', platform: 'win32' }).text, /Setup\.exe 를 받아 실행/);
+  assert.match(updateBubble({ version: '0.2.0', platform: 'darwin' }).text, /dmg/);
+  assert.match(updateBubble({ version: '0.2.0', platform: 'win32', checkout: true }).text, /update\.sh/);
+});

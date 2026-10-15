@@ -111,6 +111,30 @@ test('stop: SIGTERM 으로 끄고, 그 뒤로는 다시 띄우지 않는다', as
   assert.equal(h.children.length, 1);
 });
 
+test('stop: IPC 로 띄웠으면(윈도우) 신호 대신 "shutdown" 메시지, 안 꺼지면 SIGKILL', async () => {
+  const h = harness();
+  const host = createDaemonHost(h.deps);
+  await host.start();
+  const c = h.children[0];
+  c.connected = true;
+  c.sent = [];
+  c.send = (m) => { c.sent.push(m); setImmediate(() => c.emit('exit', 0, null)); };
+  await host.stop();
+  assert.deepEqual(c.sent, ['shutdown']);
+  assert.deepEqual(c.signals, []);
+  assert.equal(host.mode, 'stopped');
+
+  const h2 = harness();
+  const host2 = createDaemonHost(h2.deps);
+  await host2.start();
+  const c2 = h2.children[0];
+  Object.assign(c2, { connected: true, send: () => {}, dieOn: [] }); // 메시지에 안 꺼짐
+  const p = host2.stop();
+  await h2.advance(KILL_AFTER_MS);
+  await p;
+  assert.deepEqual(c2.signals, ['SIGKILL']);
+});
+
 test('stop: SIGTERM 에 안 꺼지면 기다렸다 SIGKILL', async () => {
   const h = harness();
   const host = createDaemonHost(h.deps);

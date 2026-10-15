@@ -241,8 +241,9 @@ test("GET /status: 뒤에서 하는 정리는 Codex 로 · MCP 커넥터는 Clau
   const hasServer = () => true;
   // codex 뇌: 빈 실행 파일 하나를 둔 가짜 PATH(실행은 하지 않는다 — PATH 만 본다)
   const bin = mkdtempSync(join(tmpdir(), "cy-fake-codex-"));
-  writeFileSync(join(bin, "codex"), "#!/bin/sh\nexit 1\n");
-  chmodSync(join(bin, "codex"), 0o755);
+  const exe = process.platform === "win32" ? "codex.cmd" : "codex"; // Windows: PATHEXT 로 찾는다(npm 이 까는 codex.cmd)
+  writeFileSync(join(bin, exe), "#!/bin/sh\nexit 1\n");
+  chmodSync(join(bin, exe), 0o755);
   const env = { PATH: bin };
   const cx = statusOf(withBrain("codex", conns), { env, hasServer, claude: () => false });
   assert.deepEqual(cx.features.background, { by: "codex", ready: true, detail: "Codex 로 돌아요" });

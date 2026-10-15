@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { findBin } from './agent-login.js';
+import { execBin } from './win-exec.js';
 
 // gemini 는 모델이 자주 바뀌어(옛 모델은 새 사용자에게 막힌다) 키로 목록을 받아 가장 새 flash 를 쓴다.
 // 목록을 못 받으면 아래 값을 쓴다.
@@ -116,7 +117,7 @@ export function completeCli({ system, messages, model }, { exec = execFile, bin 
       ...(model && model !== 'default' ? ['--model', model] : []),
       '--', cliPrompt(messages),
     ];
-    const child = exec(bin, args, { cwd, timeout, maxBuffer: 256 * 1024 }, (err, stdout) => {
+    const child = execBin(exec, bin, args, { cwd, timeout, maxBuffer: 256 * 1024 }, (err, stdout) => {
       const text = String(stdout ?? '').trim();
       if (err || !text) resolve({ ok: false, error: 'Claude Code 가 대답하지 못했습니다.' });
       else resolve({ ok: true, text });
@@ -140,7 +141,7 @@ export function completeCodex({ system, messages, model }, { exec = execFile, bi
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sisa-codex-'));
     const out = path.join(dir, 'last.txt');
     const args = ['exec', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '-s', 'read-only', '--color', 'never', ...(model && model !== 'default' ? ['-m', model] : []), '-o', out, '--', prompt];
-    const child = exec(bin, args, { cwd, timeout, maxBuffer: 1024 * 1024 }, (err) => {
+    const child = execBin(exec, bin, args, { cwd, timeout, maxBuffer: 1024 * 1024 }, (err) => {
       let text = '';
       try { text = fs.readFileSync(out, 'utf8').trim(); } catch { /* 답 파일 없음 */ }
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 무시 */ }

@@ -59,8 +59,9 @@ function ensureApp(icns) {
   return bin;
 }
 
-const icns = ensureIcon();
-const bin = ensureApp(icns);
+// 윈도우: .app 복제·아이콘 없이 electron.exe 를 그대로 띄운다
+const win = process.platform === 'win32';
+const bin = win ? path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe') : ensureApp(ensureIcon());
 const child = spawn(bin, [ROOT], {
   stdio: 'inherit',
   env: process.env,

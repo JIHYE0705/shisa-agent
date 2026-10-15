@@ -29,6 +29,7 @@ import { isReadOnlyBash } from "./bash-readonly.ts";
 import { isSubagentTool, subagentCall } from "./subagents.ts";
 import type { ActionCard, ActionVia, PendingAction } from "./actions.ts";
 import { repoLocks, type RepoLocks } from "./repo-lock.ts";
+import { IS_WIN, bashPathWin, isFsRoot, msysToWin, pathKey, pathWithin, realish, samePath, winLocalPath, winNorm, winPathForms, winShellNorm } from "./plat.ts";
 
 export const PERMISSION_TTL_MS = 10 * 60e3;
 // 서비스·도구를 인자로 받는 MCP 중계 도구(이름이 …__invoke, 입력 { service, tool, args }) — 규칙·카드를 "서비스.도구" 단위로
@@ -79,25 +80,57 @@ const ENV_OK = /^\.env\.(example|sample|template|dist)$/i;
 
 const homeOf = (c: PermCtx) => c.home ?? homedir();
 const cyHomes = (c: PermCtx) => [...new Set([c.cyHome ?? HOME_DIR, resolve(homeOf(c), ".cy-agent")])];
-const within = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWith(sep) ? dir : dir + sep);
-const expandHome = (p: string, c: PermCtx) => (p === "~" ? homeOf(c) : p.startsWith("~/") ? resolve(homeOf(c), p.slice(2)) : p);
+// Windows: 경로는 대소문자 무관·8.3 짧은 이름·끝 점·:스트림 — 비교는 실제 경로(realish) + pathKey 로(plat.ts). POSIX 는 예전 그대로
+const W = IS_WIN;
+const within = (p: string, dir: string) => (W ? pathWithin(p, dir) : p === dir || p.startsWith(dir.endsWith(sep) ? dir : dir + sep));
+const real = (p: string) => (W ? realish(p) : p);
+const baseOf = (p: string) => (W ? basename(pathKey(p)) : basename(p));
+// bash: 셸 글의 경로(Windows Git Bash 의 /c/Users/… → C:\Users\…). 파일 도구 경로는 Windows 경로 그대로
+const expandHome = (raw: string, c: PermCtx, bash = false) => {
+  const p = W && bash ? msysToWin(raw) : raw;
+  return p === "~" ? homeOf(c) : p.startsWith("~/") || (W && p.startsWith("~\\")) ? resolve(homeOf(c), p.slice(2)) : p;
+};
 
 // 비밀 경로(하드 차단): config.json·cy.db · ~/.claude* · .env*
 // env 가 false 면 .env 는 보지 않는다(파일 수정 도구 — .env 만들기·쓰기는 된다)
+// Windows: /c/… 를 Git Bash 경로로 읽은 것도 본다(막는 쪽이라 둘 중 하나만 걸려도 막는다)
 export function secretPathWhy(raw: string, c: PermCtx, env = true): string | undefined {
-  const p = resolve(c.cwd, expandHome(raw, c));
-  for (const h of cyHomes(c)) {
-    if (p === resolve(h, "config.json")) return "~/.cy-agent/config.json(토큰)";
-    if (basename(p).startsWith("cy.db") && within(p, h)) return "cy.db(데몬 상태)";
+  if (W && msysToWin(raw) !== raw) { const w = secretPathOne(raw, c, env, true); if (w) return w; }
+  return secretPathOne(raw, c, env, false);
+}
+// Windows: UNC·장치 경로(\\localhost\c$\… · //서버/… · \\?\UNC\… · \\.\…)는 실제 경로를 C:\… 와 맞춰 볼 수 없다 → 비밀 경로처럼 막는다(\\?\C:\… 는 C:\… 로 본다)
+const UNC_WHY = "UNC·장치 경로(\\\\서버\\… · \\\\?\\… · \\\\.\\…) — 비밀 파일인지 확인할 수 없음(드라이브 경로 C:\\… 로)";
+function secretPathOne(raw0: string, c: PermCtx, env: boolean, bash: boolean): string | undefined {
+  const raw = W ? winLocalPath(raw0) : raw0;
+  if (raw === undefined) return UNC_WHY;
+  const p0 = real(resolve(c.cwd, expandHome(raw, c, bash)));
+  const p = W ? winLocalPath(p0) : p0;
+  if (p === undefined) return UNC_WHY;
+  for (const h0 of cyHomes(c)) {
+    const h = real(h0);
+    if (samePath(p, resolve(h, "config.json"))) return "~/.cy-agent/config.json(토큰)";
+    if (baseOf(p).startsWith("cy.db") && within(p, h)) return "cy.db(데몬 상태)";
   }
-  const home = homeOf(c);
-  if (within(p, resolve(home, ".claude")) || basename(p).startsWith(".claude") && dirname(p) === home) return "~/.claude*(Claude 설정·자격 증명)";
-  if (env && p.split(sep).some((part) => /^\.env(\..*)?$/i.test(part) && !ENV_OK.test(part))) return `${basename(p)}(비밀일 수 있는 .env 파일)`;
+  const home = real(homeOf(c));
+  if (within(p, real(resolve(home, ".claude"))) || baseOf(p).startsWith(".claude") && samePath(dirname(p), home)) return "~/.claude*(Claude 설정·자격 증명)";
+  if (env && (W ? pathKey(p).split("\\") : p.split(sep)).some((part) => /^\.env(\..*)?$/i.test(part) && !ENV_OK.test(part))) return `${basename(p)}(비밀일 수 있는 .env 파일)`;
+  return undefined;
+}
+
+// Windows 셸 글(Git Bash · cmd · PowerShell)에서 비밀 경로 언급: 대소문자·역슬래시·/c/… 모양·%USERPROFILE%·8.3 이름까지
+function winBashSecretWhy(cmd: string, c: PermCtx): string | undefined {
+  const n = winNorm(cmd);
+  if (/\.cy-agent\/+config\.json|\bcy\.db\b/.test(n)) return "~/.cy-agent 의 토큰·데몬 상태(config.json · cy.db)";
+  if (cyHomes(c).some((h) => winPathForms(h).some((f) => n.includes(`${f}/config.json`)))) return "~/.cy-agent/config.json(토큰)";
+  const homes = ["~", "$home", "${home}", "$userprofile", "${userprofile}", "%userprofile%", "$env:userprofile", "%homedrive%%homepath%", ...winPathForms(homeOf(c))];
+  // 아무 드라이브의 users/<이름>/.claude(짧은 이름 CHAEYO~1 · 다른 대소문자 포함)도
+  if (homes.some((h) => n.includes(`${h}/.claude`)) || /(^|[^\w.-])(?:[a-z]:|\/[a-z]|\/cygdrive\/[a-z])?\/users\/[^/\s'"]+\/+\.claude/.test(n)) return "~/.claude*(Claude 설정·자격 증명)";
   return undefined;
 }
 
 // 셸 글에서 비밀 경로 언급
 function bashSecretWhy(cmd: string, c: PermCtx): string | undefined {
+  if (W) { const w = winBashSecretWhy(cmd, c); if (w) return w; }
   const home = homeOf(c);
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (/\.cy-agent\/config\.json|\bcy\.db\b/.test(cmd)) return "~/.cy-agent 의 토큰·데몬 상태(config.json · cy.db)";
@@ -137,12 +170,20 @@ export function globRe(seg: string): RegExp {
   try { return new RegExp(`^${out}$`, "i"); } catch { return /^$/; }
 }
 const ENV_NAMES = [".env", ".env.local", ".env.production", ".env.development", ".env.test"];
+// Windows: glob 앞부분이 홈(대소문자·/c/… · $USERPROFILE · users/<누구든>)인가
+const winHomePrefix = (prefix: string, home: string) => {
+  const n = winNorm(prefix).replace(/\/+$/, "");
+  return ["~", "$home", "${home}", "$userprofile", "${userprofile}", ...winPathForms(home)].includes(n) || /(^|\/)users\/[^/]+$/.test(n);
+};
 // glob 낱말이 비밀 파일(.env* · ~/.cy-agent 의 config.json·cy.db · ~/.claude*)을 가리킬 수 있으면 그 이유
 function globSecretWhy(cmd: string, c: PermCtx): string | undefined {
   const home = homeOf(c);
-  for (const word of normShell(cmd).split(/[\s;|&()<>=`]+/)) {
+  // Windows: 역슬래시를 남긴 낱말(C:\Users\…\.cy-agent\conf?g.json)도 — normShell 은 역슬래시를 걷어 낸다
+  const words = normShell(cmd).split(/[\s;|&()<>=`]+/);
+  if (W) words.push(...cmd.replace(/["']/g, "").split(/[\s;|&()<>=`]+/));
+  for (const word of words) {
     if (!GLOB_CH.test(word)) continue;
-    const segs = word.split("/");
+    const segs = W ? word.split(/[\\/]/) : word.split("/");
     let cy = false;
     for (let i = 0; i < segs.length; i++) {
       const seg = segs[i], last = i === segs.length - 1;
@@ -150,8 +191,8 @@ function globSecretWhy(cmd: string, c: PermCtx): string | undefined {
       const re = GLOB_CH.test(seg) ? globRe(seg) : undefined;
       if (re && ENV_NAMES.some((n) => re.test(n))) return `${word}(.env 비밀 파일을 가리킬 수 있는 glob)`;
       if (seg === ".cy-agent" || re?.test(".cy-agent")) cy = true;
-      if (re && (re.test(".claude") || re.test(".claude.json")) && (i === 0 || segs.slice(0, i).join("/").replace(/^(~|\$HOME|\$\{HOME\})/, home) === home)) return `${word}(~/.claude* 를 가리킬 수 있는 glob)`;
-      if (last && re && (cy || cyHomes(c).some((h) => word.startsWith(h))) && (re.test("config.json") || re.test("cy.db"))) return `${word}(~/.cy-agent 의 토큰·데몬 상태를 가리킬 수 있는 glob)`;
+      if (re && (re.test(".claude") || re.test(".claude.json")) && (i === 0 || segs.slice(0, i).join("/").replace(/^(~|\$HOME|\$\{HOME\})/, home) === home || (W && winHomePrefix(segs.slice(0, i).join("/"), home)))) return `${word}(~/.claude* 를 가리킬 수 있는 glob)`;
+      if (last && re && (cy || cyHomes(c).some((h) => word.startsWith(h) || (W && winPathForms(h).some((f) => winNorm(word).startsWith(f))))) && (re.test("config.json") || re.test("cy.db"))) return `${word}(~/.cy-agent 의 토큰·데몬 상태를 가리킬 수 있는 glob)`;
     }
   }
   return undefined;
@@ -164,7 +205,16 @@ export function bashNeedsCard(cmd: string, c: PermCtx): boolean {
   if ([...flat.matchAll(/\.env(?:\.[\w.-]+)?/gi)].some((m) => !ENV_OK.test(m[0]))) return true;
   const cyMention = (s: string) => /\.cy-agent(?!\/(worktrees|brain|attachments)\/(?!.*\.\.))/.test(s) || cyHomes(c).some((h) => s.includes(h) && !/(worktrees|brain|attachments)\//.test(s.slice(s.indexOf(h) + h.length + 1, s.indexOf(h) + h.length + 13)));
   if (cyMention(n)) return true;
-  if (/[$`]/.test(cmd) && /env|\.en?\b|cy-agent|cy\.db|config\.json/i.test(n)) return true;
+  // Windows: 역슬래시·대소문자 섞인 .cy-agent 언급도(winNorm — 판 워크트리·두뇌·첨부 폴더는 빼고)
+  if (W) {
+    // 실제 경로로 풀 수 없는 낱말(짧은 이름 ~1 인데 위치를 모름 · UNC //서버)
+    if (winBashPaths(cmd, c).card) return true;
+    const wn = winNorm(cmd);
+    if (/\.cy-agent(?!\/(worktrees|brain|attachments)\/(?!.*\.\.))/.test(wn)) return true;
+    for (const f of cyHomes(c).flatMap((h) => winPathForms(h))) {
+      for (let at = wn.indexOf(f); at >= 0; at = wn.indexOf(f, at + 1)) if (!/^\/(worktrees|brain|attachments)\/(?!.*\.\.)/.test(wn.slice(at + f.length))) return true;
+    }
+  }  if (/[$`]/.test(cmd) && /env|\.en?\b|cy-agent|cy\.db|config\.json/i.test(n)) return true;
   return false;
 }
 // 데몬 API 주소: 루프백 전체(127.0.0.0/8 · 127.1 · 정수 2130706433 · 16진 0x7f… · 8진 0177… · [::1] · [::ffff:127…] · localhost · 0.0.0.0 · 0)
@@ -206,6 +256,77 @@ export function shellWords(s: string): string[] {
 }
 const SEGMENTS = /\|\||&&|[;|&\n]/;
 
+// 셸 낱말 나누기 — bash 처럼 따옴표·역슬래시를 푼다('git' · g\it · "gi"t → git · 줄 이음 \⏎ 는 지운다). 판정용.
+// $'…'(ANSI-C 따옴표)는 풀지 않고 $ 를 남긴다 — 그런 낱말은 판정하는 쪽에서 "확인할 수 없음"으로
+export function shellWordsNorm(s: string): string[] {
+  const out: string[] = [];
+  let cur: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "'") { const end = s.indexOf("'", i + 1), e = end < 0 ? s.length : end; cur = (cur ?? "") + s.slice(i + 1, e); i = e; continue; }
+    if (ch === '"') {
+      cur ??= "";
+      let j = i + 1;
+      for (; j < s.length && s[j] !== '"'; j++) {
+        if (s[j] === "\\" && s[j + 1] === "\n") { j++; continue; }
+        if (s[j] === "\\" && /["\\$`]/.test(s[j + 1] ?? "")) j++;
+        cur += s[j] ?? "";
+      }
+      i = j;
+      continue;
+    }
+    if (ch === "\\") { if (s[i + 1] !== "\n") cur = (cur ?? "") + (s[i + 1] ?? ""); i++; continue; }
+    if (/\s/.test(ch)) { if (cur !== null) out.push(cur); cur = null; continue; }
+    cur = (cur ?? "") + ch;
+  }
+  if (cur !== null) out.push(cur);
+  return out;
+}
+
+// 셸 글의 cd·git -C 대상 → 새 위치. 모르면 ""(변수·치환·cd - · 모르는 위치에서 상대 경로 · Windows 의 /tmp 같은 Git Bash 안쪽 경로)
+function shellDir(base: string, d: string, c: PermCtx): string {
+  if (/[$`]/.test(d) || d.startsWith("-")) return ""; // cd - · cd -P x(옵션)도 모름
+  const e = W ? bashPathWin(d) : d;
+  if (!e) return "";
+  const x = expandHome(e, c, true);
+  if (!base && !isAbsolute(x)) return "";
+  return resolve(base || c.cwd, x);
+}
+
+// Windows(Git Bash): 셸 낱말을 경로로 풀어(cd 로 옮긴 위치까지 따라가서) 파일 도구와 같은 비밀 경로 판정(secretPathWhy — 실제 경로라 8.3 짧은 이름
+// CY-AGE~1 · CONFIG~1.JSO 도 풀린다)에 넣는다. why: 하드 차단 이유. card: 확인할 수 없음 → 묻지 않고 허용하지 않는다(승인 카드)
+//   - 짧은 이름 모양(~숫자)인데 위치를 모르거나 glob·변수가 섞임 · UNC(//서버 · \\서버) → card
+const SHORT_NAME = /~\d/;
+function winBashPaths(cmd: string, c: PermCtx): { why?: string; card?: boolean } {
+  let cwd = c.cwd, card = false;
+  for (const seg of shellSegments(cmd)) {
+    const words = shellWordsNorm(seg);
+    const cands = new Set<string>();
+    for (const w0 of words) {
+      const w = w0.replace(/^\d*[<>]+&?|^\(+|\)+$/g, "");
+      if (!w) continue;
+      cands.add(w);
+      if (w.includes("=")) cands.add(w.slice(w.indexOf("=") + 1));
+      const rev = /^[^:]{2,}:(.+)$/.exec(w); // REV:경로(드라이브 C: 는 아님 · https://… 같은 URL 도 아님)
+      if (rev && !rev[1].startsWith("//")) cands.add(rev[1]);
+    }
+    for (const p of cands) {
+      if (!p) continue;
+      if (/^[\\/]{2}/.test(p)) { card = true; continue; }
+      if (/[$`]/.test(p)) { if (SHORT_NAME.test(p)) card = true; continue; }
+      if (!cwd) { if (SHORT_NAME.test(p) || /(^|[\\/])(config\.json|cy\.db[^\\/]*|\.claude[^\\/]*)$/i.test(p)) card = true; continue; }
+      if (SHORT_NAME.test(p) && GLOB_CH.test(p)) { card = true; continue; }
+      const why = secretPathWhy(p, { ...c, cwd }, false);
+      if (why && why !== UNC_WHY) return { why };
+      if (why) card = true;
+    }
+    let at = 0;
+    while (at < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at]) || ["sudo", "env", "command", "exec", "nohup", "time", "builtin"].includes(words[at]))) at++;
+    if (words[at] === "cd" || words[at] === "pushd") { const d = words[at + 1]; cwd = !d ? homeOf(c) : shellDir(cwd, d, c); }
+  }
+  return card ? { card } : {};
+}
+
 function rmVerdict(words: string[], c: PermCtx): string | undefined {
   let rec = false, opts = true;
   const targets: string[] = [];
@@ -219,9 +340,9 @@ function rmVerdict(words: string[], c: PermCtx): string | undefined {
   const allowed = [...rootsOf(c), c.brainDir].map((r) => resolve(r));
   for (const t of targets) {
     if (/[$`]/.test(t)) return `rm -r 대상 ${t} 을(를) 확인할 수 없음(변수·치환)`;
-    const p = resolve(c.cwd, expandHome(t.replace(/\/\*+$/, "") || "/", c));
-    if (p === "/" || p === homeOf(c) || within(homeOf(c), p)) return `rm -r 로 ${t} 지우기`;
-    if (allowed.includes(p)) return `rm -r 로 허용 루트 자체(${t}) 지우기`;
+    const p = resolve(c.cwd, expandHome((W ? t.replace(/[\\/]\*+$/, "") : t.replace(/\/\*+$/, "")) || "/", c, true));
+    if (isFsRoot(p) || samePath(p, homeOf(c)) || within(homeOf(c), p) || (W && (within(real(homeOf(c)), real(p)) || samePath(real(p), real(homeOf(c)))))) return `rm -r 로 ${t} 지우기`;
+    if (allowed.some((a) => samePath(a, p) || (W && samePath(real(a), real(p))))) return `rm -r 로 허용 루트 자체(${t}) 지우기`;
     if (!insideRoots(p, allowed)) return `rm -r 로 허용 루트(repoRoots · ~/.cy-agent/brain) 밖 ${t} 지우기`;
   }
   return undefined;
@@ -230,7 +351,12 @@ function rmVerdict(words: string[], c: PermCtx): string | undefined {
 const GH_MERGE = /\bgh\s+pr\s+merge\b|\bgh\s+api\b[^;&|\n]*\/pulls\/\d+\/merge\b/;
 // 하드 차단된 gh pr merge: 모델이 "여기선 막혔으니 GitHub에서 누르세요"로 끝내지 않게 무엇을 해야 하는지까지 알려 준다
 export const GH_MERGE_WHY = "gh pr merge — 대화에서 gh 로 직접 머지하지 않는다. 대신 답의 merges 에 그 PR(링크 또는 owner/repo#번호)을 넣어라 — 사용자가 이번 말로 직접 시켰으면 userSaid: true(데몬이 사용자 말과 검사를 확인하고 바로 머지), 아니면 데몬이 이 대화에 머지 승인 카드(검사·충돌·리뷰 + ✓/✗)와 캐릭터 말풍선을 띄우고 사용자가 ✓ 를 눌러야 머지된다. reply_md 는 짧게, GitHub·다른 화면에서 누르라고 안내하지 않는다";
-const GIT_WRITE = /\bgit\b(?:\s+-{1,2}[\w-]+(?:[ =](?!push\b|merge\b|commit\b)\S+)?)*\s+(push|merge|commit)\b/;
+// 글 판정(첫 거름): git · GIT · git.exe · 경로/git.exe 다음 옵션들 뒤 push|merge|commit. 따옴표·역슬래시를 걷은 글(normShell)로도 본다
+const GIT_WRITE = /\bgit(?:\.exe)?\b(?:\s+-{1,2}[\w-]+(?:[ =](?!push\b|merge\b|commit\b)\S+)?)*\s+(push|merge|commit)\b/i;
+// 하위 명령 이름을 바꿀 수 있는 git 설정(-c alias.p=push p · --config-env · git config alias.x push · --exec-path) — 무엇이 도는지 확인할 수 없다
+const GIT_ALIAS = /\bgit(?:\.exe)?\b[^\n;&|]*?(?:\s-c\s*alias\.|\s-calias\.|\s--config-env\b|\s--exec-path\b|\sconfig\b[^\n;&|]*\salias\.)/i;
+const gitWriteText = (s: string) => { const n = normShell(s.replace(/\\\r?\n/g, "")); return GIT_WRITE.test(s) || GIT_WRITE.test(n) || GIT_ALIAS.test(n); }; // 줄 이음(\⏎)도 걷는다
+const isGitName = (w: string) => /^git(\.exe)?$/i.test(basename(w.replace(/\\/g, "/")));
 
 // ── git 쓰기(commit·push·merge) ─────────────────────────────────────
 // 대화에서 되는 곳: cy-agent 가 만든 워크트리(~/.cy-agent/worktrees · 레포의 .claude/worktrees) 또는 cy/ 브랜치. 그래도 기본·보호 브랜치
@@ -253,6 +379,8 @@ export const protectedBranch = (b: string, st: Pick<GitState, "defaultBranch">) 
 export function cySafePlace(st: GitState, c: PermCtx): boolean {
   if (st.branch.startsWith("cy/")) return true;
   if (cyHomes(c).some((h) => within(st.top, resolve(h, "worktrees")))) return true;
+  // Windows: git 은 C:/Users/… 처럼 / 로 준다 · 대소문자 무관
+  if (W) return winNorm(st.top).split("/").some((part, i, all) => part === "worktrees" && all[i - 1] === ".claude" && i < all.length - 1 && !!all[i + 1]);
   return st.top.split(sep).some((part, i, all) => part === "worktrees" && all[i - 1] === ".claude" && i < all.length - 1);
 }
 
@@ -300,32 +428,47 @@ function pushWhy(args: string[], st: GitState): string | undefined {
   return bad ? `${bad} 는 기본·보호 브랜치라 대화에서 푸시하지 않음(머지는 merges 흐름으로)` : undefined;
 }
 
+// Windows: Git Bash 에서 cmd·PowerShell·wsl 로 감싸 부르기(sh -c 와 같이 안을 볼 수 없다)
+const WIN_WRAP = /(^|[^\w.-])(cmd(\.exe)?\s+\/+[ck]\b|powershell|pwsh|wsl)(\.exe)?\b/i;
+// Windows 의 재귀 삭제(cmd rd/rmdir/del /s · PowerShell Remove-Item -Recurse) — 대상을 확인할 수 없어 막는다
+const WIN_RECURSIVE_RM = /(^|[^\w.-])((rd|rmdir|del|erase)\b[^;&|\n]*\s\/+s\b|(remove-item|ri)\b[^;&|\n]*\s-r(ecurse)?\b)/i;
 // 셸 명령 속 git commit·push·merge → 막는 이유(없으면 undefined = 그 git 쓰기는 괜찮다)
 export function gitWriteWhy(cmd: string, c: PermCtx): string | undefined {
-  if (!GIT_WRITE.test(cmd)) return undefined;
+  // 첫 거름: 글에 git 쓰기·alias 가 보이거나, git 을 말하면서 변수·치환이 있으면($G push · git $'\x70ush') 낱말로 본다
+  const loose = /\bgit\b/i.test(normShell(cmd)) && /[$`]/.test(cmd);
+  if (!gitWriteText(cmd) && !loose) return undefined;
   const subst = [...cmd.matchAll(/\$\(([\s\S]*?)\)|`([^`]*)`/g)].map((m) => m[1] ?? m[2] ?? "");
-  if (subst.some((x) => GIT_WRITE.test(unquote(x))) || /\beval\b|\b(ba|z|da)?sh\s+-c\b|\bxargs\b|\bsource\b/.test(cmd))
+  if (gitWriteText(cmd) && (subst.some((x) => gitWriteText(unquote(x))) || /\beval\b|\b(ba|z|da)?sh\s+-c\b|\bxargs\b|\bsource\b/.test(normShell(cmd)) || (W && WIN_WRAP.test(normShell(cmd)))))
     return "git 쓰기를 명령 치환·eval·sh -c·xargs 안에서 — 확인할 수 없음";
   const probe = c.gitProbe ?? realGitProbe;
   let cwd = c.cwd;
   for (const seg of shellSegments(cmd)) {
-    const words = shellWords(seg).filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    // 따옴표·역슬래시를 푼 낱말('git' · g\it · "C:/Program Files/Git/cmd/git.exe")
+    const words = shellWordsNorm(seg).filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
     let at = 0;
     while (at < words.length && ["sudo", "env", "command", "exec", "nohup", "time", "builtin"].includes(words[at])) at++;
     const w = words.slice(at);
     if (!w.length) continue;
-    if (w[0] === "cd" || w[0] === "pushd") { const d = w[1]; cwd = !d ? homeOf(c) : /[$`]/.test(d) || d === "-" ? "" : resolve(cwd || c.cwd, expandHome(d, c)); continue; }
-    if (basename(w[0]) !== "git") { if (GIT_WRITE.test(unquote(seg))) return "git 쓰기를 알아볼 수 없는 방식으로 — 확인할 수 없음"; continue; }
+    if (w[0] === "cd" || w[0] === "pushd") { const d = w[1]; cwd = !d ? homeOf(c) : shellDir(cwd, d, c); continue; }
+    if (!isGitName(w[0])) {
+      if (gitWriteText(unquote(seg))) return "git 쓰기를 알아볼 수 없는 방식으로 — 확인할 수 없음";
+      if (/[$`]/.test(w[0]) && w.slice(1).some((x) => /^(push|merge|commit)$/i.test(x))) return "명령 이름이 변수·치환인 git 쓰기 — 확인할 수 없음";
+      continue;
+    }
     let dir = cwd, i = 1;
     for (; i < w.length; i++) {
       const a = w[i];
-      if (a === "-C") { const d = w[++i] ?? ""; dir = /[$`]/.test(d) || !dir ? "" : resolve(dir, expandHome(d, c)); continue; }
-      if (a === "-c") { i++; continue; }
+      if (a === "-C") { const d = w[++i] ?? ""; dir = dir ? shellDir(dir, d, c) : ""; continue; }
+      if (a === "-c" || /^-c./.test(a)) { const v = a === "-c" ? w[++i] ?? "" : a.slice(2); if (/^alias\./i.test(v) || /[$`]/.test(v)) return "git -c alias.… — 하위 명령이 무엇인지 확인할 수 없음"; continue; }
       if (/^--(git-dir|work-tree)\b/.test(a)) return "git --git-dir·--work-tree 로 쓰기 — 확인할 수 없음";
+      if (/^--(config-env|exec-path)\b/.test(a)) return "git --config-env·--exec-path — 하위 명령이 무엇인지 확인할 수 없음";
       if (a.startsWith("-")) continue;
       break;
     }
     const sub = w[i];
+    if (sub === undefined) continue;
+    if (/[$`]/.test(sub)) return "git 하위 명령이 변수·치환 — 확인할 수 없음";
+    if (sub === "config" && w.slice(i + 1).some((x) => /^alias\./i.test(x))) return "git config 로 alias 만들기 — 확인할 수 없음";
     if (sub !== "push" && sub !== "merge" && sub !== "commit") continue;
     if (!dir) return `git ${sub} — 어느 폴더인지 확인할 수 없음`;
     const st = probe(dir);
@@ -341,10 +484,15 @@ export function hardDeny(toolName: string, input: unknown, c: PermCtx): Verdict 
   const i = (input ?? {}) as Record<string, unknown>;
   const no = (why: string): Verdict => ({ allow: false, reason: `차단됨(승인해도 안 됨): ${why}` });
   if (toolName === "Bash") {
-    const cmd = typeof i.command === "string" ? i.command : "";
+    const raw = typeof i.command === "string" ? i.command : "";
+    // Windows: GIT.exe push = git push(이름 대소문자·.exe) → 판정 전에 다듬는다
+    const cmd = W ? winShellNorm(raw) : raw;
+    if (W && WIN_RECURSIVE_RM.test(cmd)) return no("cmd·PowerShell 의 재귀 삭제(rd /s · del /s · Remove-Item -Recurse) — 대상을 확인할 수 없음");
     // 따옴표 쪼개기·빈 변수 끼우기를 걷은 글로도 본다(.e''nv · .e${x}nv)
     const secret = bashSecretWhy(cmd, c) ?? bashSecretWhy(normShell(cmd), c) ?? bashSecretWhy(dropVars(normShell(cmd)), c) ?? globSecretWhy(cmd, c);
     if (secret) return no(secret);
+    // Windows: 낱말을 실제 경로로 풀어서도(8.3 짧은 이름 · cd 로 옮긴 위치)
+    if (W) { const wp = winBashPaths(raw, c); if (wp.why) return no(wp.why); }
     const api = daemonApiWhy(cmd, c.port);
     if (api) return no(api);
     if (GH_MERGE.test(cmd)) return no(GH_MERGE_WHY);
@@ -364,7 +512,8 @@ export function hardDeny(toolName: string, input: unknown, c: PermCtx): Verdict 
     }
     for (const k of ["pattern", "glob"]) {
       const v = i[k];
-      if (typeof v === "string" && (/(^|[\\/*{,])\.env(?!\.(example|sample|template|dist)\b)/i.test(v) || /\.claude|\.cy-agent|cy\.db/.test(v)))
+      if (W && typeof v === "string" && winLocalPath(v) === undefined) return no(`${v} — ${UNC_WHY}`);
+      if (typeof v === "string" && (/(^|[\\/*{,])\.env(?!\.(example|sample|template|dist)\b)/i.test(v) || (W ? /\.claude|\.cy-agent|cy\.db/i : /\.claude|\.cy-agent|cy\.db/).test(v)))
         return no(`${v} 은(는) 비밀 파일을 가리킬 수 있음`);
       // Glob 패턴·Grep glob 은 glob 으로도 맞춰 본다(**/.en? · .[e]nv)
       if (typeof v === "string" && (k === "glob" || toolName === "Glob") && GLOB_CH.test(v)) {
@@ -420,7 +569,7 @@ export function writeRepo(toolName: string, input: unknown, c: PermCtx): string 
   const i = (input ?? {}) as Record<string, unknown>;
   const target = EDIT_TOOLS.has(toolName) ? (i.file_path ?? i.notebook_path) : typeof i.command === "string" ? i.command.match(/^\s*cd\s+("[^"]+"|'[^']+'|[^\s;&|]+)\s*(?:&&|;|$)/)?.[1]?.replace(/^["']|["']$/g, "") : undefined;
   if (typeof target === "string" && target) {
-    const at = repoOf(resolve(c.cwd, expandHome(target, c)), roots);
+    const at = repoOf(resolve(c.cwd, expandHome(target, c, toolName === "Bash")), roots);
     if (at) return at;
   }
   if (!insideRoots(c.cwd, roots)) return undefined;

@@ -3,6 +3,7 @@
 //   agent = { runId, toolUseId, description, status: running|done|failed|stopped, tools, last, startedAt, endedAt?, via?, background?, worktree? }
 //   background: 채팅이 백그라운드로 넘긴 에이전트(답과 따로 돌고, 끝나면 결과가 대화에 새 답으로) — 카드에서 멈출 수 있다. 상한·대기 없이 바로 돈다
 //   worktree: 워크트리 격리 에이전트의 { path, branch? }(자기 워크트리에서 돌았다)
+import { isAbsPath } from './resume.js';
 
 const STATUSES = new Set(['running', 'done', 'failed', 'stopped']);
 const SESSION_STATUSES = new Set(['running', 'done', 'failed', 'stopped']);
@@ -28,7 +29,7 @@ export function normAgents(raw) {
       ...(typeof a.endedAt === 'string' ? { endedAt: a.endedAt } : {}),
       ...(a.via === 'cli' ? { via: 'cli' } : {}),
       ...(a.background === true ? { background: true } : {}),
-      ...(a.worktree && typeof a.worktree.path === 'string' && a.worktree.path.startsWith('/')
+      ...(a.worktree && isAbsPath(a.worktree.path)
         ? { worktree: { path: a.worktree.path, ...(typeof a.worktree.branch === 'string' && a.worktree.branch ? { branch: a.worktree.branch } : {}) } } : {}),
     });
   }

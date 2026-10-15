@@ -41,6 +41,10 @@ import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, loginItemPlan, logi
 import { createDaemonHost } from './src/daemon-host.js';
 import { RELEASES_API, checkDue, latestRelease, shouldNotify, updateBubble } from './src/update-check.js';
 import { denied } from './src/denied.js';
+import { squirrelPlan, loginItemTarget, appUserModelId } from './src/squirrel.js';
+
+// 윈도우 Squirrel 설치기가 --squirrel-* 로 띄운 실행이면 바로 가기만 고치고 끝낸다(맨 아래 시작 부분에서 갈린다)
+const SQUIRREL = squirrelPlan({ platform: process.platform, argv: process.argv, execPath: process.execPath });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CY_AGENT_PORT) || 47823;
@@ -603,6 +607,7 @@ function createSession() {
     show: false,
     title: '작업 세션',
     acceptFirstMouse: true,
+    autoHideMenuBar: true, // 윈도우: 메뉴 막대는 Alt 로만(맥은 상관없음)
     webPreferences: {
       preload: path.join(__dirname, 'preload-session.cjs'),
       contextIsolation: true,
@@ -791,6 +796,20 @@ async function uploadAttachment(name, mime, bytes) {
 
 // "Claude Code에서 열기": 기록된 cwd 아래 세션 기록이 없을 때 ~/.claude/projects/*/<sid>.jsonl(파일 이름 정확히)을 찾아
 // 그 기록에 적힌 실제 cwd. 일반 파일·폴더만(심볼릭 링크 안 따라감), 앞 256KB 만 읽는다. 없으면 null
+// 윈도우: Windows Terminal(앱 실행 별칭 — 재분석 지점이라 lstat 로 본다). 없으면 null
+function windowsTerminal() {
+  const base = process.env.LOCALAPPDATA;
+  if (!base) return null;
+  const p = path.join(base, 'Microsoft', 'WindowsApps', 'wt.exe');
+  try { fs.lstatSync(p); return p; } catch { return null; }
+}
+// 새 콘솔의 환경: 앱 환경 + 데몬과 같은 PATH 보충(설치 직후라 ~/.local/bin 이 아직 PATH 에 없을 수 있다)
+function consoleEnv() {
+  const full = daemonEnv(process.env, { home: os.homedir(), platform: process.platform });
+  const key = Object.keys(full).find((k) => k.toUpperCase() === 'PATH');
+  return key ? { ...process.env, [key]: full[key] } : { ...process.env };
+}
+
 function findSessionCwd(claudeDir, sid) {
   if (!okSessionId(sid)) return null;
   const root = path.join(claudeDir, 'projects');
@@ -847,12 +866,27 @@ function rebuildTrayMenu() {
   if (tray) tray.setContextMenu(Menu.buildFromTemplate(menuTemplate()));
 }
 
-function createTray() {
+// 맥: 검정 템플릿(메뉴 막대 색을 따른다). 윈도우: 작업 표시줄 알림 영역엔 템플릿이 없어 캐릭터 그림을 16·32px 로
+function trayImage() {
+  if (process.platform === 'win32') {
+    const src = nativeImage.createFromPath(path.join(__dirname, 'assets', 'character.png'));
+    if (!src.isEmpty()) {
+      const img = nativeImage.createEmpty();
+      for (const s of [1, 2]) img.addRepresentation({ scaleFactor: s, width: 16 * s, height: 16 * s, buffer: src.resize({ width: 16 * s, height: 16 * s, quality: 'best' }).toPNG() });
+      return img;
+    }
+  }
   const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'trayTemplate.png'));
   img.setTemplateImage(true);
-  tray = new Tray(img);
+  return img;
+}
+
+function createTray() {
+  tray = new Tray(trayImage());
   tray.setToolTip('시사 비서');
   rebuildTrayMenu();
+  // 윈도우: 왼쪽 클릭은 패널(관례), 오른쪽 클릭은 메뉴(setContextMenu 가 알아서)
+  if (process.platform === 'win32') tray.on('click', () => showPanel(null));
 }
 
 // ---- 앱(Dock·Cmd+Tab·메뉴 막대) ----
@@ -997,6 +1031,7 @@ function createDebugWindow() {
     title: '도움 보내기',
     alwaysOnTop: true,
     acceptFirstMouse: true,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload-debug.cjs'),
       contextIsolation: true,
@@ -1085,7 +1120,9 @@ function setupIPC() {
       // 안전장치: 드래그 끝 신호를 놓쳐도 20초 지나면 스스로 끝낸다(창이 커서를 계속 따라다니거나 클릭이 안 먹는 상태 방지)
       if (Date.now() - drag.started > 20e3) return endDrag();
       const p = screen.getCursorScreenPoint();
-      win.setPosition(p.x - drag.offX, p.y - drag.offY);
+      // 윈도우: 배율 다른 모니터로 넘어갈 때 setPosition 은 크기 고정 투명 창의 크기를 바꿀 수 있다 → 크기까지 박아 setBounds
+      if (process.platform === 'win32') win.setBounds({ x: p.x - drag.offX, y: p.y - drag.offY, ...SIZE });
+      else win.setPosition(p.x - drag.offX, p.y - drag.offY);
     }, 16);
   });
 
@@ -1325,12 +1362,29 @@ function setupIPC() {
       worktreesDir: path.join(process.env.CY_AGENT_HOME ?? path.join(home, '.cy-agent'), 'worktrees'),
       exists: (p) => fs.existsSync(p),
       findSession: (sid) => findSessionCwd(claudeDir, sid),
+      platform: process.platform,
+      wt: process.platform === 'win32' ? windowsTerminal() : null,
     });
     if (!plan.ok) return plan;
     try {
       if (plan.mkdir) fs.mkdirSync(plan.cwd, { recursive: true }); // 지워진 워크트리 — claude 가 cwd 로 프로젝트를 찾게 빈 폴더만
     } catch {
       return { ok: false, error: '작업 폴더를 다시 만들지 못했어요.' };
+    }
+    // 윈도우: Windows Terminal → 안 되면 cmd 새 창(셸 없이 execFile, cmd 줄은 resume.js 가 짠 그대로)
+    if (plan.launches) {
+      return new Promise((resolve) => {
+        const tryAt = (i) => {
+          const l = plan.launches[i];
+          if (!l) { resolve({ ok: false, error: '터미널을 열지 못했어요.' }); return; }
+          execFile(l.file, l.args, { timeout: 15000, env: consoleEnv(), ...(l.verbatim ? { windowsVerbatimArguments: true } : {}) }, (err) => {
+            if (err) { tryAt(i + 1); return; }
+            post(`/runs/${id}/sync`, { watch: true }).catch(() => {});
+            resolve({ ok: true });
+          });
+        };
+        tryAt(0);
+      });
     }
     return new Promise((resolve) => {
       execFile('osascript', plan.args, { timeout: 15000 }, (err) => {
@@ -1630,7 +1684,8 @@ function registerAssetProtocol() {
 // 이미 그 포트에 데몬이 있거나(터미널로 띄움) launchd 가 맡고 있으면(ops/install.sh) 띄우지 않는다. 로그: ~/.cy-agent/logs/(daemon.log · com.cy-agent.daemon.log)
 let daemonHost = null;
 let daemonStopping = false;
-const launchdPlist = () => fs.existsSync(path.join(os.homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_DAEMON}.plist`));
+// 윈도우엔 launchd 가 없다(터미널 설치도 없음)
+const launchdPlist = () => process.platform !== 'win32' && fs.existsSync(path.join(os.homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_DAEMON}.plist`));
 
 async function daemonAlive() {
   try {
@@ -1649,8 +1704,10 @@ function spawnDaemon(entry, dir) {
   try {
     return spawn(process.execPath, [entry], {
       cwd: dir,
-      env: daemonEnv(process.env, { port: PORT, home: os.homedir() }),
-      stdio: ['ignore', fd, fd],
+      env: daemonEnv(process.env, { port: PORT, home: os.homedir(), platform: process.platform }),
+      // 윈도우: IPC 채널을 열어 끌 때 "shutdown" 을 보낸다(앱이 갑자기 죽으면 연결이 끊겨 데몬도 스스로 끈다)
+      stdio: process.platform === 'win32' ? ['ignore', fd, fd, 'ipc'] : ['ignore', fd, fd],
+      windowsHide: true, // 윈도우: 데몬용 검은 콘솔 창을 띄우지 않는다
     });
   } finally {
     fs.closeSync(fd);
@@ -1683,12 +1740,14 @@ async function startDaemonHost() {
 
 // ---- 로그인할 때 자동 실행(app.setLoginItemSettings) — dmg 로 깐 앱만. 터미널 설치·개발·시험 실행은 건드리지 않는다 ----
 const loginPlan = () => loginItemPlan({ platform: process.platform, packaged: app.isPackaged, launchd: launchdPlist(), env: process.env, pref: state.openAtLogin });
+// 윈도우 설치본은 Update.exe --processStart <exe> 로 등록(업데이트로 app-<ver> 폴더가 바뀌어도 남게). 맥은 {}
+const loginTarget = () => loginItemTarget({ platform: process.platform, packaged: app.isPackaged, execPath: process.execPath, exists: (p) => fs.existsSync(p) });
 
 function applyLoginItem() {
   const p = loginPlan();
   if (!p.manage || typeof p.openAtLogin !== 'boolean') return;
   try {
-    if (app.getLoginItemSettings().openAtLogin !== p.openAtLogin) app.setLoginItemSettings({ openAtLogin: p.openAtLogin });
+    if (app.getLoginItemSettings(loginTarget()).openAtLogin !== p.openAtLogin) app.setLoginItemSettings({ openAtLogin: p.openAtLogin, ...loginTarget() });
   } catch (e) {
     console.error('[login-item]', e?.message ?? e);
   }
@@ -1726,7 +1785,7 @@ async function checkForUpdate() {
     if (!rel || !shouldNotify({ latest: rel.version, current: app.getVersion(), notified: state.updateNotified })) return;
     state.updateNotified = rel.version;
     saveState();
-    send('bubble', updateBubble({ version: rel.version, url: rel.url, checkout: isCheckout() }));
+    send('bubble', updateBubble({ version: rel.version, url: rel.url, checkout: isCheckout(), platform: process.platform }));
   } catch (e) {
     if (DEBUG) console.error('[update]', e?.message ?? e);
   }
@@ -1738,7 +1797,7 @@ const appPrefs = {
     const p = loginPlan();
     let on = false;
     if (p.manage) {
-      try { on = app.getLoginItemSettings().openAtLogin === true; } catch { on = state.openAtLogin === true; }
+      try { on = app.getLoginItemSettings(loginTarget()).openAtLogin === true; } catch { on = state.openAtLogin === true; }
     }
     return { ok: true, version: app.getVersion(), openAtLogin: { available: p.manage, on, hint: loginItemHint(p.reason) }, updateCheck: state.updateCheck !== false };
   },
@@ -1760,8 +1819,45 @@ const appPrefs = {
   },
 };
 
+// ---- 윈도우 Squirrel 설치 이벤트(src/squirrel.js): Update.exe 로 바로 가기 만들기·지우기만 하고 끝. 창·데몬은 안 띄운다 ----
+function handleSquirrel(plan) {
+  let quit = false;
+  const done = () => { if (quit) return; quit = true; app.quit(); };
+  if (plan.removeLoginItem) {
+    try { app.setLoginItemSettings({ openAtLogin: false, ...loginTarget() }); } catch (e) { console.error('[squirrel]', e?.message ?? e); }
+  }
+  if (!plan.run) { done(); return; }
+  try {
+    const child = spawn(plan.run[0], plan.run[1], { detached: true, stdio: 'ignore', windowsHide: true });
+    child.on('error', done);
+    child.on('close', done);
+    setTimeout(done, 10_000); // Update.exe 가 안 끝나도 Squirrel 이 너무 오래 기다리지 않게
+  } catch {
+    done();
+  }
+}
+
+// 윈도우 로그오프·종료: 오래 기다려 주지 않으니 집중 그만하기는 짧게(0.8초), 그다음 바로 데몬 끄기
+function onSessionEnd() {
+  quitting = true;
+  const stopDaemon = () => {
+    if (!daemonHost?.pid || daemonStopping) return;
+    daemonStopping = true;
+    Promise.resolve(daemonHost.stop()).catch(() => {});
+  };
+  if (lastFocus?.active && connected && !focusStopped) {
+    focusStopped = true;
+    Promise.resolve(post('/focus/stop', {}, 800)).catch(() => {}).finally(stopDaemon);
+  } else stopDaemon();
+}
+
 // ---- 시작 ----
-if (!app.requestSingleInstanceLock()) {
+// 윈도우: Squirrel 이 만든 바로 가기의 앱 ID(com.squirrel.<id>.<exe>)와 맞춰야 알림·작업 표시줄이 같은 앱으로 묶인다.
+// Squirrel 실행보다 먼저 — 로그인 항목(Run 값) 이름도 같은 ID 라 제거 때 엉뚱한 값을 지우지 않게
+if (process.platform === 'win32' && app.isPackaged) app.setAppUserModelId(appUserModelId(process.execPath));
+if (SQUIRREL) {
+  handleSquirrel(SQUIRREL);
+} else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.whenReady().then(() => {
@@ -1774,6 +1870,8 @@ if (!app.requestSingleInstanceLock()) {
     setupAppActivation();
     registerDebugShortcut();
     createWindow();
+    // 윈도우 로그오프·종료는 before-quit 을 안 거친다(창의 session-end 만 온다) → 집중 기록·데몬 끄기를 여기서 짧게
+    if (process.platform === 'win32') win?.on('session-end', onSessionEnd);
     createTray();
     startDaemonHost().catch((e) => console.error('[daemon]', e?.message ?? e));
     connectLoop();

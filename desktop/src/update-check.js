@@ -53,9 +53,12 @@ export function shouldNotify({ latest, current, notified }) {
 }
 
 // 캐릭터 말풍선. checkout: 터미널 설치(레포 체크아웃) — dmg 대신 ./ops/update.sh 로 받는다
-export function updateBubble({ version, url, checkout = false }) {
+// platform 'win32': 설치본은 새 Setup.exe 를 실행(Squirrel 이 덮어 깐다)
+export function updateBubble({ version, url, checkout = false, platform }) {
   const text = checkout
     ? `새 버전 v${version} 가 나왔어요. 받은 레포 폴더에서 ./ops/update.sh 를 실행하면 바뀌어요.`
-    : `새 버전 v${version} 가 나왔어요. 새 dmg 를 받아 응용 프로그램에 덮어 넣으면 돼요. 할 일·기록은 그대로예요.`;
+    : platform === 'win32'
+      ? `새 버전 v${version} 가 나왔어요. 새 Setup.exe 를 받아 실행하면 바뀌어요. 할 일·기록은 그대로예요.`
+      : `새 버전 v${version} 가 나왔어요. 새 dmg 를 받아 응용 프로그램에 덮어 넣으면 돼요. 할 일·기록은 그대로예요.`;
   return { id: BUBBLE_ID, kind: 'info', text, link: url || RELEASES_PAGE, linkLabel: checkout ? '바뀐 점 보기' : '받으러 가기', ttlMs: 120000 };
 }

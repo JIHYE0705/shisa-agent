@@ -18,6 +18,7 @@ import { RunInbox, injectedPrompt, MaxTurnsError, MAX_TURNS_NOTE } from "./run-i
 import { cleanupWorktree } from "./worktree-keep.ts";
 import { repoGit, shAsync } from "./git-mutex.ts";
 import { WorktreeIsolation } from "./agent-worktrees.ts";
+import { IS_WIN, pathWithin, spawnSpec, type Plat, type SpawnSpec } from "./plat.ts";
 
 export type FixResult = {
   ok: boolean; summary: string; prUrl?: string; branch?: string; log: string[];
@@ -35,6 +36,11 @@ function sh(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): 
 export function resolveRepo(cfg: Pick<Config, "repoRoots">, repo: string): string {
   const abs = resolve(repo);
   if (!existsSync(abs)) throw new Error(`레포 경로가 없어요: ${repo}`);
+  if (IS_WIN) { // Windows: 대소문자·8.3 이름 무시(realpath.native + pathWithin)
+    const real = realpathSync.native(abs);
+    if (!cfg.repoRoots.some((r) => { try { return pathWithin(real, realpathSync.native(resolve(r))); } catch { return false; } })) throw new Error(`허용된 레포 루트 밖이에요: ${repo}`);
+    return sh("git", ["rev-parse", "--show-toplevel"], real);
+  }
   const real = realpathSync(abs);
   const inside = cfg.repoRoots.some((r) => { const root = realpathSync(resolve(r)); return real === root || real.startsWith(root + sep); });
   if (!inside) throw new Error(`허용된 레포 루트 밖이에요: ${repo}`);
@@ -52,13 +58,13 @@ function pythonTest(dir: string, mainDir?: string): string[] {
   for (const base of [dir, mainDir]) {
     if (!base) continue;
     for (const v of [".venv", "venv"]) {
-      const py = join(base, v, "bin", "python");
+      const py = IS_WIN ? join(base, v, "Scripts", "python.exe") : join(base, v, "bin", "python"); // Windows venv 는 Scripts\python.exe
       if (existsSync(py)) return [py, "-m", "pytest", "-q"];
     }
   }
   if (existsSync(join(dir, "uv.lock"))) return ["uv", "run", "pytest", "-q"];
   if (existsSync(join(dir, "poetry.lock"))) return ["poetry", "run", "pytest", "-q"];
-  return ["python3", "-m", "pytest", "-q"];
+  return [IS_WIN ? "python" : "python3", "-m", "pytest", "-q"]; // Windows 엔 보통 python3 가 없다
 }
 
 // 워크트리의 원래 체크아웃(git common dir 의 부모). 못 찾으면 undefined
@@ -389,9 +395,15 @@ export function userShellArgs(cmd: string[], shell = process.env.SHELL || "/bin/
   const script = `${rc ? `[ -f "${rc}" ] && . "${rc}" >/dev/null 2>&1; ` : ""}exec "$@"`;
   return [shell, ["-lc", script, "cy-test", ...cmd]];
 }
+// 테스트 명령을 띄울 것. POSIX: 로그인 셸 + rc(userShellArgs). Windows: 로그인 셸 없이 바로 —
+// npm·npx·pnpm·yarn 은 .cmd 껍데기라 cmd.exe /d /s /c 로(인자는 따옴표·^ 로 막는다), .exe 는 그대로
+export function testSpawn(cmd: string[], plat: Plat = process.platform, env: NodeJS.ProcessEnv = process.env, exists?: (p: string) => boolean): SpawnSpec {
+  if (plat !== "win32") { const [file, args] = userShellArgs(cmd); return { file, args, verbatim: false }; }
+  return spawnSpec(cmd[0], cmd.slice(1), env, plat, exists);
+}
 async function runInUserShell(cmd: string[], cwd: string): Promise<string> {
-  const [sh0, args] = userShellArgs(cmd);
-  return shAsync(sh0, args, cwd, { CLAUDECODE: "1" });
+  const sp = testSpawn(cmd);
+  return shAsync(sp.file, sp.args, cwd, { CLAUDECODE: "1" }, undefined, sp.verbatim);
 }
 
 type ShipSpec = {

@@ -17,12 +17,14 @@
     "package": "node scripts/package.mjs",
     "dist": "node scripts/dist.mjs",
     "dist:x64": "node scripts/dist.mjs --arch=x64",
+    "dist:win": "node ../windows/dist-win.mjs",
     "demo": "node scripts/demo.mjs"
   },
   "devDependencies": {
     "@electron/packager": "20.2.1",
     "dompurify": "3.4.16",
     "electron": "44.7.0",
+    "electron-winstaller": "5.4.4",
     "marked": "18.0.14"
   },
   "engines": {

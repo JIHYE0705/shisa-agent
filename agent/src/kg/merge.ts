@@ -6,6 +6,7 @@
 // - 이슈 상태·결정 내용은 근거 시각이 최신인 것이 이긴다. 이전 값은 history에 남긴다.
 // - 기존 노드는 지우지도 덮어쓰지도 않는다(세션·Slack 수집이 쓰는 노드의 props는 그대로). KG 속성은 kg_entities에 따로 둔다.
 import { basename } from "node:path";
+import { IS_WIN, LOCAL_PROJECT_SQL, isAbsPath, isLocalProjectId } from "../plat.ts";
 import { defaultSelfNames, displayUserName, userAliases } from "../config.ts";
 import type { Store } from "../store.ts";
 import type { Chunk } from "./chunks.ts";
@@ -100,7 +101,7 @@ export class Resolver {
         const keys = personVariants(r.label, p);
         if (p.isMe) for (const k of keys) this.persons.set(k, r.id);
         else for (const k of keys) if (!this.persons.has(k)) this.persons.set(k, r.id);
-      } else if (r.id.startsWith("project:/")) {
+      } else if (isLocalProjectId(r.id)) {
         const k = normKey(basename(String(p.path ?? r.id.slice(8))));
         if (k && !this.projects.has(k)) this.projects.set(k, r.id);
       }
@@ -124,7 +125,7 @@ export class Resolver {
     if (kind === "project") {
       for (const k of keys) { const id = this.projects.get(k); if (id) return id; }
       // 경로 자체가 이름에 들어 있는 경우
-      for (const n of names) if (n.startsWith("/")) { const id = this.projects.get(normKey(basename(n))); if (id) return id; }
+      for (const n of names) if (isAbsPath(n)) { const id = this.projects.get(normKey(basename(n))); if (id) return id; }
       if (hint.cwd && keys.includes(normKey(basename(hint.cwd)))) return `project:${hint.cwd}`;
     }
     return `${kind}:${slug(names[0]) || keys[0] || "unknown"}`;
@@ -133,7 +134,7 @@ export class Resolver {
   // 레포 엔티티가 로컬 프로젝트 노드와 같은 이름이면 그 프로젝트
   projectFor(names: string[]): string | undefined {
     for (const n of names) {
-      const id = this.projects.get(normKey(n.startsWith("/") || n.includes("/") ? basename(n.replace(/\.git$/, "")) : n));
+      const id = this.projects.get(normKey(isAbsPath(n) || n.includes("/") || (IS_WIN && n.includes("\\")) ? basename(n.replace(/\.git$/, "")) : n));
       if (id) return canonical(this.store, id);
     }
     return undefined;
@@ -314,7 +315,7 @@ export function knownNames(store: Store, maxChars = 1600): string {
     if (!add(`- ${r.kind}: ${r.name}${a.length ? ` (${a.join(", ")})` : ""}`)) break;
   }
   // 아직 KG에 없는 로컬 레포 이름
-  const projs = store.db.prepare("SELECT id FROM nodes WHERE kind = 'project' AND id LIKE 'project:/%' ORDER BY updated DESC LIMIT 40").all() as any[];
+  const projs = store.db.prepare(`SELECT id FROM nodes WHERE kind = 'project' AND ${LOCAL_PROJECT_SQL} ORDER BY updated DESC LIMIT 40`).all() as any[];
   for (const p of projs) {
     const b = basename(p.id.slice(8));
     if (seen.has(normKey(b))) continue;

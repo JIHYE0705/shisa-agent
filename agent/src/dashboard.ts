@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { sep } from "node:path";
 import { HOME_DIR } from "./config.ts";
 import type { Config } from "./config.ts";
+import { IS_WIN, isFsRoot, pathWithin, realish, samePath, winNorm } from "./plat.ts";
 import type { Store, Node, ProposalStatus, Todo, TodoDoneBy } from "./store.ts";
 import { gitActivity, type Commit, type RepoActivity } from "./git.ts";
 import { listRules, ruleSummary } from "./todo-rules.ts";
@@ -44,13 +45,14 @@ export type DashboardDeps = {
 };
 
 const DAY = 864e5;
-const within = (path: string, root: string) => path === root || path.startsWith(root + sep);
+const within = (path: string, root: string) => (IS_WIN ? pathWithin(path, root) : path === root || path.startsWith(root + sep));
 
 // 프로젝트라고 보기 어려운 cwd: 루트·홈, 임시 폴더, 데몬 자신, 데스크톱 앱 스크래치 공간
-const NOISE_ROOTS = ["/tmp", "/private/tmp", "/private/var/folders", "/var/folders", tmpdir(), HOME_DIR];
+// Windows: tmpdir() 이 8.3 짧은 이름(C:\Users\ABCDEF~1\…)일 수 있어 긴 이름(realish)도 넣는다
+const NOISE_ROOTS = IS_WIN ? [tmpdir(), realish(tmpdir()), HOME_DIR] : ["/tmp", "/private/tmp", "/private/var/folders", "/var/folders", tmpdir(), HOME_DIR];
 export function isNoisePath(path: string): boolean {
-  if (path === "/" || path === homedir()) return true;
-  if (path.includes(`${sep}scratch-workspaces${sep}`)) return true;
+  if (IS_WIN ? isFsRoot(path) || samePath(path, homedir()) : path === "/" || path === homedir()) return true;
+  if (path.includes(`${sep}scratch-workspaces${sep}`) || (IS_WIN && winNorm(path).includes("/scratch-workspaces/"))) return true;
   return NOISE_ROOTS.some((r) => within(path, r));
 }
 

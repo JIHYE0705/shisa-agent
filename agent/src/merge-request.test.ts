@@ -88,7 +88,9 @@ test("막힌 gh pr merge 시도에서 PR 꺼내기(-R·링크·cd), 인자 없�
   assert.deepEqual(mergeAttempt("gh pr merge 268 --squash --delete-branch", "/code/speaker"), { ref: { number: 268 }, cwd: "/code/speaker" });
   assert.deepEqual(mergeAttempt("gh pr merge -R acme/speaker 268 --squash", "/x"), { ref: { repo: "acme/speaker", number: 268 }, cwd: "/x" });
   assert.deepEqual(mergeAttempt(`gh pr merge ${URL268} --squash`, "/x")!.ref, { url: URL268, repo: "acme/speaker", number: 268 });
-  assert.equal(mergeAttempt("cd /code/speaker && gh pr merge 268", "/brain")!.cwd, "/code/speaker");
+  const spk = process.platform === "win32" ? "C:\\code\\speaker" : "/code/speaker"; // Windows 절대 경로는 C:\…
+  assert.equal(mergeAttempt(`cd ${spk} && gh pr merge 268`, "/brain")!.cwd, spk);
+  if (process.platform === "win32") assert.equal(mergeAttempt("cd /c/code/speaker && gh pr merge 268", "/brain")!.cwd, "C:\\code\\speaker"); // Git Bash 모양
   assert.equal(mergeAttempt("gh pr merge --squash", "/x"), null);
   assert.equal(mergeAttempt("gh pr view 268", "/x"), null);
 });

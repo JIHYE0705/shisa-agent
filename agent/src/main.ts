@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { WAIT_SETUP, markFreshInstall, modelWorkAllowed, sessionsAllowed } from "./onboarding.ts";
 import { execFile } from "node:child_process";
+import { openSpec } from "./plat.ts";
 import { CalendarSync, alertDetail } from "./calendar-sync.ts";
 import { withRun, asRoutine } from "./runs.ts";
 import { KgBackfill } from "./kg/backfill.ts";
@@ -126,7 +127,8 @@ function reloadConnectors(): { changed: boolean; restarting: boolean } {
   const changed = connectorsChanged(cfg.connectors, resolveConnectors());
   const restarting = changed && process.env.CY_AGENT_SUPERVISED === "1";
   if (changed) console.log(`[connectors] config.json 의 연결이 바뀜, ${restarting ? "다시 시작해요" : "데몬을 다시 켜야 다 반영돼요"}`);
-  if (restarting) setTimeout(() => process.kill(process.pid, "SIGTERM"), 500);
+  // Windows 에서 제게 SIGTERM 을 보내면 핸들러 없이 바로 끝나므로 핸들러를 직접 부른다
+  if (restarting) setTimeout(() => (process.platform === "win32" ? void shutdown() : process.kill(process.pid, "SIGTERM")), 500);
   return { changed, restarting };
 }
 const settings = new Settings(cfg, { onChange: (keys) => {
@@ -196,7 +198,7 @@ await bus.listen(cfg.port, {
   attachments: {
     stage: (name, mime, bytes) => agent.stageAttachment(name, mime, bytes),
     file: (threadId, file) => agent.attachmentPath(threadId, file),
-    open: (p) => { execFile("/usr/bin/open", [p], () => {}); }, // 기본 앱으로(경로는 bus 가 첨부 폴더 안인지 확인한 것)
+    open: (p) => { const o = openSpec(p); execFile(o.file, o.args, { windowsVerbatimArguments: o.verbatim, windowsHide: true }, () => {}); }, // 기본 앱으로(경로는 bus 가 첨부 폴더 안인지 확인한 것)
     claimRun: (runId, ids) => (runs.getRun(runId, Number.MAX_SAFE_INTEGER) ? agent.claimRunAttachments(runId, ids) : { error: "no such run" }),
   },
   profileFacts: () => agent.memories(),
@@ -449,10 +451,19 @@ function onboardedNow() {
   if (calendar.enabled) calendar.sync().catch(() => {});
 }
 
-for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, async () => {
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   stopCalendar();
   try { focus.checkpoint(); } catch { /* 꺼지는 중 */ }
   await canvas.flush().catch(() => {});
   bus.close();
   process.exit(0);
-});
+}
+for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => void shutdown());
+// Windows 는 SIGTERM 을 보내면(child.kill) 핸들러 없이 바로 죽는다 — 앱이 IPC 로 띄웠으면 "shutdown" 메시지·연결 끊김으로 깔끔히 끈다
+if (process.platform === "win32" && process.send) {
+  process.on("message", (m) => { if (m === "shutdown" || (m as { type?: unknown } | null)?.type === "shutdown") void shutdown(); });
+  process.on("disconnect", () => void shutdown());
+}

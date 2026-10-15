@@ -10,6 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { BG_MARK } from "./bg-agents.ts";
+import { isAbsPath } from "./plat.ts";
 
 export type RunKind = "fix" | "briefing" | "chat" | "profile" | "kg" | "calendar" | "slack-ingest" | "todo-auto" | "action" | "other";
 export const RUN_KINDS: RunKind[] = ["fix", "briefing", "chat", "profile", "kg", "calendar", "slack-ingest", "todo-auto", "action", "other"];
@@ -607,7 +608,7 @@ export function logSdkMessage(run: RunHandle, m: any, opts: LogOpts = {}) {
   if (m.type === "system" && m.subtype === "init") {
     if (m.session_id) run.setSession(m.session_id);
     // SDK 가 실제로 돈 폴더(세션 기록 ~/.claude/projects/<이 폴더>/ — "Claude Code에서 열기"·터미널 기록 불러오기가 여기서 찾는다)
-    if (typeof m.cwd === "string" && m.cwd.startsWith("/") && m.cwd.length <= 1000 && !/[\0\r\n]/.test(m.cwd)) run.setCwd(m.cwd);
+    if (typeof m.cwd === "string" && isAbsPath(m.cwd) && m.cwd.length <= 1000 && !/[\0\r\n]/.test(m.cwd)) run.setCwd(m.cwd);
     run.log({ type: "system", text: `세션 시작 · ${m.model ?? ""}${m.cwd ? ` · ${m.cwd}` : ""}` });
     return;
   }

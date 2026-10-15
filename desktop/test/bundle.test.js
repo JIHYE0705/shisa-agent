@@ -47,6 +47,27 @@ test('daemonEnv: 앱 환경을 넘기고 Node 로 실행·재시작 허용·포�
   assert.ok(!daemonEnv({}, {}).PATH.includes('~')); // 홈을 모르면 ~ 경로는 뺀다
 });
 
+test('daemonEnv win32: "Path" 키를 그대로 고치고 ; 로 잇고, ~/.local/bin·%APPDATA%\\npm·Program Files 를 채운다(대소문자 무시 중복 제거)', () => {
+  const src = { Path: 'C:\\Windows\\system32;C:\\Users\\me\\.local\\bin', APPDATA: 'C:\\Users\\me\\AppData\\Roaming', ProgramFiles: 'C:\\Program Files', CY_AGENT_PORT: '48300' };
+  const env = daemonEnv(src, { home: 'C:\\Users\\me', platform: 'win32' });
+  assert.equal(env.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(env.CY_AGENT_SUPERVISED, '1');
+  assert.equal(env.CY_AGENT_PORT, '48300');
+  assert.equal(env.PATH, undefined); // 두 번째 PATH 키를 만들지 않는다
+  const parts = env.Path.split(';');
+  assert.deepEqual(parts.slice(0, 2), ['C:\\Windows\\system32', 'C:\\Users\\me\\.local\\bin']);
+  for (const d of ['C:\\Users\\me\\AppData\\Roaming\\npm', 'C:\\Program Files\\Git\\cmd', 'C:\\Program Files\\GitHub CLI', 'C:\\Program Files\\nodejs']) assert.ok(parts.includes(d), d);
+  assert.equal(new Set(parts.map((p) => p.toLowerCase())).size, parts.length);
+  assert.equal(parts.filter((p) => /\.local\\bin$/i.test(p)).length, 1);
+  assert.equal(src.Path, 'C:\\Windows\\system32;C:\\Users\\me\\.local\\bin'); // 원본은 그대로
+  // Path 가 없으면 "Path" 로 만들고, 모르는 %변수%·홈은 뺀다
+  const bare = daemonEnv({}, { platform: 'win32' });
+  assert.equal(bare.Path, '');
+  const up = daemonEnv({ PATH: 'C:\\a' }, { home: 'C:\\Users\\me\\', platform: 'win32' });
+  assert.deepEqual(up.PATH.split(';'), ['C:\\a', 'C:\\Users\\me\\.local\\bin']);
+  assert.equal(up.Path, undefined);
+});
+
 test('restartDelay·nextFailures: 빨리 죽을수록 점점 길게, 오래 살았으면 처음부터', () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7].map((n) => restartDelay(n)), [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]);
   assert.equal(restartDelay(-3), 1000);
@@ -69,6 +90,11 @@ test('loginItemPlan: dmg 앱만, 시험·터미널 설치·개발 실행은 건�
     assert.equal(loginItemPlan({ ...ok, env, pref: true }).manage, false, JSON.stringify(env));
   }
   assert.equal(loginItemPlan({ ...ok, platform: 'linux', pref: true }).reason, 'platform');
+  // 윈도우(Squirrel 설치)도 앱이 다룬다
+  assert.deepEqual(loginItemPlan({ ...ok, platform: 'win32', pref: true }), { manage: true, reason: 'ok', openAtLogin: true });
+  assert.equal(loginItemPlan({ ...ok, platform: 'win32' }).reason, 'unset');
+  assert.equal(loginItemPlan({ ...ok, platform: 'win32', packaged: false, pref: true }).reason, 'dev');
+  assert.equal(loginItemPlan({ ...ok, platform: 'win32', env: { CY_NO_LOGIN_ITEM: '1' }, pref: true }).reason, 'test');
   assert.match(loginItemHint('launchd'), /launchd/);
   assert.equal(loginItemHint('ok'), '');
 });

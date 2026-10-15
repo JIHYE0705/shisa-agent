@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { findOnPath, spawnSpec } from "./plat.ts";
 import { DEFAULT_GENERAL_MODEL, type BrainProvider, type Config } from "./config.ts";
 
 export type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
@@ -339,6 +340,7 @@ export async function anthropicJson(
 // PATH만 본다. codex 바이너리는 실행하지 않는다.
 export function commandOnPath(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
   if (!/^[A-Za-z0-9._+-]+$/.test(name)) return false;
+  if (process.platform === "win32") return !!findOnPath(name, env); // PATHEXT(.cmd 등)·Path 키
   for (const dir of (env.PATH ?? "").split(delimiter)) {
     if (!dir) continue;
     try {
@@ -377,12 +379,20 @@ export function parseCodexStdout(stdout: string): unknown {
   return parseModelJson(trimmed, "codex 출력에서 JSON을 읽지 못했어요.");
 }
 
+// Windows: cmd.exe 를 죽여도 그 아래 codex 는 남는다 → taskkill /T 로 나무째
+export function killTree(pid: number | undefined) {
+  if (process.platform !== "win32" || !pid) return;
+  try { spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => {}); } catch {}
+}
+
 export function defaultExecFile(file: string, args: readonly string[], opts: { input?: string; timeout?: number; cwd?: string } = {}): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, [...args], { cwd: opts.cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    // Windows: npm 이 깐 codex 는 codex.cmd → cmd.exe /d /s /c 로(인자는 고정 플래그뿐, 프롬프트는 stdin)
+    const sp = spawnSpec(file, args);
+    const child = spawn(sp.file, sp.args, { cwd: opts.cwd, windowsHide: true, windowsVerbatimArguments: sp.verbatim, stdio: ["pipe", "pipe", "pipe"] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    const timer = setTimeout(() => { child.kill(); reject(new Error("codex 실행 시간이 초과됐어요.")); }, opts.timeout ?? 120_000);
+    const timer = setTimeout(() => { killTree(child.pid); child.kill(); reject(new Error("codex 실행 시간이 초과됐어요.")); }, opts.timeout ?? 120_000);
     child.stdout.on("data", (d) => out.push(d));
     child.stderr.on("data", (d) => err.push(d));
     child.on("error", () => { clearTimeout(timer); reject(new Error("codex 실행이 실패했어요.")); });

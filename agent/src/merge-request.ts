@@ -9,6 +9,7 @@
 // 머지 직전에 상태를 새로 읽어 다시 막는다(그 사이 검사가 깨졌을 수 있다). 사람이 ✓ 를 누르지 않으면 머지는 없다.
 import { execFile } from "node:child_process";
 import type { ActionCard } from "./actions.ts";
+import { isAbsPath, msysToWin } from "./plat.ts";
 
 export const MERGE_TYPE = "pr_merge"; // pending_actions.type
 
@@ -183,10 +184,10 @@ export function mergeAttempt(cmd: string, cwd: string): { ref: PrRef; cwd: strin
     target ??= w;
   }
   const cd = cmd.match(/(?:^|[;&|]\s*)cd\s+("[^"]+"|'[^']+'|\S+)\s*&&[^;]*\bgh\s+pr\s+merge\b/);
-  const dir = cd ? cd[1].replace(/^['"]|['"]$/g, "") : cwd;
+  const dir = cd ? msysToWin(cd[1].replace(/^['"]|['"]$/g, "")) : cwd; // Windows Git Bash 의 /c/… 도
   if (!target) return null; // 현재 브랜치의 PR(인자 없음)은 어느 PR 인지 확실하지 않다 — 모델이 merges 로 다시 말하게
   const ref = parsePrRef(target, repo);
-  return ref ? { ref, cwd: dir.startsWith("/") ? dir : cwd } : null;
+  return ref ? { ref, cwd: isAbsPath(dir) ? dir : cwd } : null;
 }
 
 // MergeRec id(머지 승인 라우트 /proposals/:id/merge 와 같은 [\w-] 모양): pr-owner-repo-268

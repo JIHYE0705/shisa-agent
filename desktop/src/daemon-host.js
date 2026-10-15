@@ -73,7 +73,10 @@ export function createDaemonHost(deps) {
       const finish = () => { if (done) return; done = true; deps.clearTimeout(kt); st.mode = 'stopped'; resolve(); };
       child.on('exit', finish);
       const kt = deps.setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* 이미 꺼짐 */ } finish(); }, KILL_AFTER_MS);
-      try { child.kill('SIGTERM'); } catch { finish(); }
+      // 윈도우는 SIGTERM 이 곧 강제 종료라 데몬이 정리를 못 한다 — IPC 로 띄웠으면 "shutdown" 메시지를 먼저(안 되면 SIGTERM)
+      let asked = false;
+      try { if (child.connected && typeof child.send === 'function') { child.send('shutdown'); asked = true; } } catch { asked = false; }
+      if (!asked) try { child.kill('SIGTERM'); } catch { finish(); }
     });
   }
 

@@ -11,6 +11,7 @@ import { join, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { compactInput, redact, toolDiff, LIMITS, type Run, type RunEventInput, type RunRegistry } from "./runs.ts";
 import type { Store } from "./store.ts";
+import { isAbsPath } from "./plat.ts";
 
 export const CLI_LIMITS = {
   readPerSync: 8 * 1024 * 1024,   // 한 번에 파일 하나에서 읽는 양
@@ -48,7 +49,7 @@ export function findSessionFile(claudeDir: string, sid: string, cwd?: string): S
   const root = join(claudeDir, "projects");
   if (!plainDir(root)) return undefined;
   const at = (dirName: string): SessionFiles | undefined => {
-    if (!dirName || dirName.includes("/") || dirName === "." || dirName === "..") return undefined;
+    if (!dirName || dirName.includes("/") || dirName.includes(sep) || dirName === "." || dirName === "..") return undefined;
     const projectDir = join(root, dirName), file = join(projectDir, `${sid}.jsonl`);
     return plainDir(projectDir) && plainFile(file) && inside(root, file) ? { file, projectDir } : undefined;
   };
@@ -85,7 +86,7 @@ export function sessionCwd(text: string, projectDir?: string): string | undefine
     if (!line.includes('"cwd"')) continue;
     let j: any; try { j = JSON.parse(line); } catch { continue; }
     const c = j?.cwd;
-    if (typeof c !== "string" || !c.startsWith("/")) continue;
+    if (typeof c !== "string" || !isAbsPath(c)) continue; // Windows 는 C:\…
     if (want && projectDirName(c) === want) return c;
     first ??= c;
   }

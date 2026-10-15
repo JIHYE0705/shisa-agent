@@ -9,6 +9,9 @@ export const LAUNCHD_DAEMON = 'com.cy-agent.daemon';
 export const DAEMON_LOG = 'com.cy-agent.daemon.log';
 // 데몬이 찾는 CLI(claude·codex·gh·git)가 있는 곳. Finder 로 연 앱은 PATH 가 /usr/bin:/bin 정도라 채워 준다(install.sh 와 같은 순서)
 export const PATH_DIRS = ['~/.local/bin', '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+// 윈도우: 시작 메뉴로 연 앱도 PATH 는 대개 온전하지만, 설치 직후(로그아웃 전)엔 새 경로가 안 들어 있을 수 있어 채워 준다.
+// Claude Code 설치 스크립트는 ~/.local/bin, npm 전역(codex 등)은 %APPDATA%\npm, git·gh 는 Program Files 아래
+export const WIN_PATH_DIRS = ['~/.local/bin', '%APPDATA%/npm', '%ProgramFiles%/Git/cmd', '%ProgramFiles%/GitHub CLI', '%ProgramFiles%/nodejs'];
 // 이만큼 살아 있었으면 정상으로 보고 재시작 간격을 처음부터
 export const STABLE_MS = 60_000;
 
@@ -50,11 +53,28 @@ export function spawnDecision({ daemonDir, hasEntry, env = {}, launchd = false, 
 
 // 데몬 자식 프로세스의 환경. 앱이 받은 CY_AGENT_HOME·CY_AGENT_PORT 등은 그대로 넘기고,
 // ELECTRON_RUN_AS_NODE 로 앱 실행 파일을 Node 로 쓰며, CY_AGENT_SUPERVISED 로 "연결이 바뀌면 스스로 다시 켜기"를 켠다(앱이 다시 띄운다)
-export function daemonEnv(env = {}, { port, home } = {}) {
+export function daemonEnv(env = {}, { port, home, platform = 'darwin' } = {}) {
   const out = { ...env, ELECTRON_RUN_AS_NODE: '1', CY_AGENT_SUPERVISED: '1', CY_AGENT_PORT: String(port || portOf(env)) };
+  if (platform === 'win32') return winPath(out, home);
   const have = String(env.PATH ?? '').split(':').filter(Boolean);
   const extra = PATH_DIRS.map((d) => (d.startsWith('~/') ? (home ? posixJoin(home, d.slice(2)) : null) : d)).filter(Boolean);
   out.PATH = [...new Set([...have, ...extra])].join(':');
+  return out;
+}
+
+// 윈도우 환경변수는 대소문자를 안 가린다: PATH 는 보통 "Path" 로 들어 있어 그 키를 그대로 고친다(둘이 생기면 자식이 어느 쪽을 볼지 모른다)
+function winPath(out, home) {
+  const key = Object.keys(out).find((k) => k.toUpperCase() === 'PATH') ?? 'Path';
+  const envOf = (name) => out[Object.keys(out).find((k) => k.toUpperCase() === name.toUpperCase())];
+  const have = String(out[key] ?? '').split(';').filter(Boolean);
+  const extra = WIN_PATH_DIRS.map((d) => {
+    if (d.startsWith('~/')) return home ? `${home.replace(/[\\/]+$/, '')}\\${d.slice(2).replace(/\//g, '\\')}` : null;
+    const m = /^%([^%]+)%(.*)$/.exec(d);
+    const base = m && envOf(m[1]);
+    return base ? `${String(base).replace(/[\\/]+$/, '')}${m[2].replace(/\//g, '\\')}` : null;
+  }).filter(Boolean);
+  const seen = new Set();
+  out[key] = [...have, ...extra].filter((p) => { const k = p.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).join(';');
   return out;
 }
 
@@ -73,7 +93,7 @@ export function nextFailures(prev, uptimeMs, stableMs = STABLE_MS) {
 //  pref: 사용자가 정한 값(state.json openAtLogin). 아직 없으면(마법사 전) 건드리지 않는다
 //  reason: 'platform' · 'dev'(레포에서 실행) · 'launchd'(터미널 설치) · 'test'(임시 홈·다른 포트·CY_NO_LOGIN_ITEM) · 'unset' · 'ok'
 export function loginItemPlan({ platform = 'darwin', packaged, launchd = false, env = {}, pref }) {
-  if (platform !== 'darwin') return { manage: false, reason: 'platform' };
+  if (platform !== 'darwin' && platform !== 'win32') return { manage: false, reason: 'platform' };
   if (!packaged) return { manage: false, reason: 'dev' };
   if (launchd || env.CY_AGENT_SUPERVISED === '1') return { manage: false, reason: 'launchd' };
   if (env.CY_AGENT_HOME || portOf(env) !== DEFAULT_PORT || env.CY_NO_LOGIN_ITEM === '1') return { manage: false, reason: 'test' };

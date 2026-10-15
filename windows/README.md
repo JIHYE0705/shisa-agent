@@ -1,0 +1,112 @@
+# 시사 비서 — 윈도우 버전
+
+윈도우 화면 구석에도 시사가 살 수 있게 만든 버전입니다. 하는 일과 뇌(AI) 연결은 맥 버전과 같으니 [레포 README](../README.md)의 「하는 일」, 「뭘 연결하면 뭐가 되나」를 봐 주세요.
+데이터는 전부 내 PC(`%USERPROFILE%\.cy-agent\`)에만 저장됩니다. 따로 서버로 올라가는 건 없습니다.
+
+아직 시험 중인 버전입니다. 써 보시고 이상한 점이 있으면 [의견 보내기](../README.md#의견-보내기)로 알려 주세요!
+
+## 쉬운 설치
+
+### 1. 설치 파일 받기
+
+[Releases 페이지](https://github.com/cheo0y/shisa-agent/releases/latest)에서 `Shisa-<버전>-Setup.exe`를 받습니다. 맥용 dmg와 같은 페이지에 있습니다.
+
+- 대부분의 PC(인텔·AMD)는 이 파일이면 됩니다. ARM PC(스냅드래곤 등)도 이 파일로 동작합니다.
+- 설치 없이 써 보고 싶다면 `Shisa-<버전>-win-x64.zip`을 받아 압축을 풀고 `Shisa.exe`를 실행해도 됩니다. 이때는 시작 메뉴 바로 가기와 로그인할 때 자동 실행이 없습니다.
+
+### 2. 실행하기
+
+받은 `Shisa-<버전>-Setup.exe`를 더블클릭합니다. 따로 묻는 것 없이 몇 초 만에 설치되고 시사가 바로 뜹니다. 관리자 권한도 필요 없습니다(내 계정의 `%LOCALAPPDATA%\Shisa`에 깔립니다).
+
+시사는 코드 서명을 하지 않은 앱이라, 처음 실행할 때 파란 「Windows의 PC 보호」(SmartScreen) 창이 뜰 수 있습니다. 이때는
+
+1. 창 안의 「추가 정보」를 누르고,
+2. 아래에 생기는 「실행」 버튼을 누르면 됩니다.
+
+브라우저(Edge 등)가 받기 단계에서 「일반적으로 다운로드되지 않는 파일」이라며 막으면, 받기 목록에서 `…` → 「유지」 → 「추가 정보 표시」 → 「그래도 계속」을 누릅니다.
+
+### 3. 처음 열기와 설치 마법사
+
+설치가 끝나면 캐릭터가 화면 오른쪽 아래에 나타나고 설치 마법사가 열립니다. 순서는 [레포 README의 설치 마법사](../README.md#설치-마법사)와 같습니다. 다음부터는 시작 메뉴나 바탕 화면의 「시사」로 엽니다.
+
+마법사를 마치면 윈도우에 로그인할 때 시사가 알아서 켜집니다. 원하지 않으면 설정(⚙)의 「이 앱」에서 「로그인할 때 시사 켜기」를 끄면 됩니다.
+
+시사는 작업 표시줄 오른쪽 알림 영역(시계 옆, 안 보이면 `^`를 눌러 펼친 곳)에 아이콘으로도 있습니다. 맥의 메뉴 막대 아이콘 대신이라고 보면 됩니다.
+
+### 뇌(AI) 준비 (선택)
+
+건너뛰어도 됩니다. 뇌가 없어도 할 일, 오늘 할 일 표, 일정 알림, 인사와 응원은 그대로 됩니다. 대화나 브리핑 요약을 받고 싶을 때만 하나 연결합니다.
+
+- Claude Code(추천): 시작 메뉴에서 「PowerShell」을 열고 아래 한 줄을 붙여 넣은 뒤 Enter를 누릅니다. 끝나면 `claude`를 쳐서 브라우저로 로그인하고 `/exit`로 나오면 됩니다.
+
+  ```powershell
+  irm https://claude.ai/install.ps1 | iex
+  ```
+
+  Claude Code가 코드를 고치려면 [Git for Windows](https://git-scm.com/download/win)도 있어야 합니다.
+- Codex: [Codex CLI 설치 안내](https://developers.openai.com/codex)대로 설치하고 로그인하세요.
+- API 키: Gemini·OpenAI·Claude API 키가 있다면 설치 마법사에 붙여 넣기만 하면 됩니다.
+
+설치한 뒤에는 시사를 한 번 껐다 켜야 마법사에서 「찾았어요 ✓」로 보일 수 있습니다(새로 깐 프로그램 경로를 앱이 처음 켜질 때 읽기 때문입니다).
+
+## 업데이트
+
+새 버전이 나오면 캐릭터가 「새 버전이 나왔어요」라고 알려 줍니다. Releases 페이지에서 새 `Shisa-<버전>-Setup.exe`를 받아 다시 실행하면 됩니다. 켜져 있는 시사는 알아서 새 버전으로 바뀝니다.
+
+할 일, 대화, 설정 같은 데이터는 앱이 아니라 `%USERPROFILE%\.cy-agent\` 폴더에 있어서 그대로 남습니다.
+
+## 지우기
+
+1. 알림 영역의 시사 아이콘에서 「종료」를 누릅니다.
+2. 「설정」 → 「앱」 → 「설치된 앱」에서 「시사」를 찾아 `…` → 「제거」를 누릅니다.
+3. 데이터까지 지우려면 파일 탐색기 주소 칸에 아래 두 경로를 하나씩 붙여 넣어 열고 폴더째 지웁니다.
+   - `%USERPROFILE%\.cy-agent` (할 일, 대화, 설정, 기록)
+   - `%APPDATA%\cy-agent-desktop` (창 위치 같은 앱 설정)
+
+## 안 될 때
+
+| 증상 | 해결 |
+|---|---|
+| 「Windows의 PC 보호」 창이 뜨고 실행 버튼이 없음 | 「추가 정보」를 누르면 「실행」 버튼이 나타납니다 |
+| 회사 PC라 「관리자가 이 앱을 차단했습니다」가 뜸 | 회사 보안 정책(AppLocker·Defender 등)이 서명 안 된 앱을 막는 경우입니다. 휴대용 zip도 똑같이 막힐 수 있으니 IT 담당자에게 문의해 주세요 |
+| 캐릭터가 안 보임 | 알림 영역(시계 옆 `^`)에 시사 아이콘이 있으면 이미 켜져 있는 것이니, 아이콘을 눌러 「패널 열기」를 해 보세요. 없으면 시작 메뉴에서 시사를 다시 엽니다 |
+| 패널에 「시사 꺼짐」이 계속 보임 | 시사를 종료했다가 다시 열어 주세요. 백신이 `resources\agent` 안의 파일을 막았을 수도 있습니다 |
+| 뇌 고르기에서 Claude Code를 못 찾음 | PowerShell에서 `claude --version`이 되는지 확인하고, 시사를 껐다 다시 켜 주세요 |
+| 그래도 안 됨 | `%USERPROFILE%\.cy-agent\logs` 안의 `.log` 파일을 [의견 보내기](../README.md#의견-보내기)로 함께 보내 주세요 |
+
+## 개발
+
+맥과 같은 `desktop/`, `agent/` 코드를 씁니다. Node.js 26 이상이 필요합니다([nodejs.org](https://nodejs.org/) 또는 `winget install OpenJS.NodeJS`).
+
+```powershell
+cd desktop
+npm ci
+npm run fake-daemon     # PowerShell 창 1: 가짜 데몬(데모 데이터)
+npx electron .          # PowerShell 창 2: 앱
+```
+
+- `npm start`·`npm run dev`는 맥용 개발 실행(Dock 이름·아이콘 바꾸기)이 섞여 있어 윈도우에서는 `npx electron .`가 확실합니다. 렌더러 기록을 보려면 `$env:CY_DEBUG=1; npx electron .`.
+- 진짜 데몬: 다른 창에서 `cd agent; npm ci; node src/main.ts`.
+
+### 배포본 만들기
+
+윈도우 PC에서 실행합니다. 결과는 `desktop/dist/win/`에 나옵니다. 배포 기본은 x64입니다(ARM PC에서도 x64로 만들 수 있습니다).
+
+```powershell
+cd desktop
+npm ci
+npm run dist:win -- --arch=x64        # 또는 레포 맨 위에서: node windows/dist-win.mjs --arch=x64
+npm run dist:win -- --arch=x64 --no-installer   # Setup.exe 없이 앱 폴더와 zip만
+```
+
+자세한 내용과 GitHub Releases에 올리는 법은 [release.md](release.md)에 있습니다.
+
+## 맥 버전과 다른 점
+
+아직 윈도우에서 직접 확인하지 못한 것이 많습니다. 확인되는 대로 이 목록을 줄이겠습니다.
+
+- 코드 서명이 없어서 SmartScreen 경고가 뜹니다.
+- 자동 업데이트는 하지 않습니다. 새 버전 알림을 보고 Setup.exe를 다시 실행합니다.
+- 확인 전: Claude Code·Codex 작업 기록 읽기, 코드 고치기·워크트리, 캘린더·Slack 연결 뒤 데몬 다시 켜기, 캐릭터 창의 투명 배경·항상 위·여러 모니터 위치, 단축키(`⌘` 대신 `Ctrl`), 로그인할 때 자동 실행.
+- 터미널 설치(`ops/install.sh`, launchd)는 맥 전용입니다. 윈도우는 Setup.exe만 지원합니다.
+- ARM 전용 빌드(`--arch=arm64`)는 만들 수는 있지만 릴리스에는 올리지 않습니다.
