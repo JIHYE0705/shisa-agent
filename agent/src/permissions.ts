@@ -304,7 +304,7 @@ function pushWhy(args: string[], st: GitState): string | undefined {
 export function gitWriteWhy(cmd: string, c: PermCtx): string | undefined {
   if (!GIT_WRITE.test(cmd)) return undefined;
   const subst = [...cmd.matchAll(/\$\(([\s\S]*?)\)|`([^`]*)`/g)].map((m) => m[1] ?? m[2] ?? "");
-  if (subst.some((x) => GIT_WRITE.test(unquote(x))) || /\beval\b|\b(ba|z|da)?sh\s+-c\b|\bxargs\b|\bsource\b/.test(cmd))
+  if (subst.some((x) => GIT_WRITE.test(unquote(x))) || /(?:^|[\s;&|(])(?:eval|xargs|source)(?=\s|$)|(?:^|[\s;&|(/])(?:ba|z|da)?sh\s+-c\b/.test(cmd)) // 이름 속 -eval 같은 건 명령이 아님
     return "git 쓰기를 명령 치환·eval·sh -c·xargs 안에서 — 확인할 수 없음";
   const probe = c.gitProbe ?? realGitProbe;
   let cwd = c.cwd;

@@ -273,6 +273,7 @@ const states: Record<string, GitState> = {
   "/h/code/trunk": { top: "/h/code/trunk", branch: "cy/t", defaultBranch: "trunk" },
   "/h/code/wt-main": { top: "/h/.cy-agent/worktrees/wt-main", branch: "main", defaultBranch: "main" },
   "/h/code/up": { top: "/h/code/up", branch: "cy/up", defaultBranch: "main", upstream: "origin/develop" },
+  "/h/code/adk-eval": { top: "/h/code/adk-eval", branch: "cy/survey", defaultBranch: "main" },
 };
 const pctx = (cwd: string): PermCtx => ({ roots: ["/h/code"], brainDir: "/h/.cy-agent/brain", cwd, home: HOME, cyHome: "/h/.cy-agent", gitProbe: probe(states) });
 const ok = (cwd: string, command: string) => hardDeny("Bash", { command }, pctx(cwd)).allow;
@@ -295,6 +296,11 @@ test("채팅 git commit/push: cy 워크트리·cy/ 브랜치에선 됨, 기본·
   assert.ok(!ok("/h/code/up", "git push")); // 업스트림이 develop
   assert.ok(!ok("/h/nowhere", "git commit -m x")); // 레포 아님
   assert.ok(!ok(WT, "bash -c 'git push'"));
+  assert.ok(!ok(WT, "/bin/sh -c 'git push'"));
+  assert.ok(!ok(WT, "eval git push"));
+  assert.ok(!ok(WT, "echo x | xargs git commit -m"));
+  assert.ok(ok("/h/code", "git -C /h/code/adk-eval commit -m x")); // 레포 이름 속 eval 은 명령이 아님
+  assert.ok(ok("/h/code/adk-eval", "git commit -m x && git push -u origin cy/survey"));
   assert.ok(!ok(WT, "echo $(git push)"));
   assert.ok(!ok(WT, "gh pr merge 3 --squash"));
   assert.ok(!ok(WT, "gh api -X PUT repos/o/r/pulls/3/merge"));
