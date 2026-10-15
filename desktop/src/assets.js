@@ -14,9 +14,16 @@ export const CHARACTER_FILES = [
   ['character/studying.png', 'image/png'],
   ['character/dance.png', 'image/png'],
 ];
+// A small allowlist per user-selectable theme; never serve arbitrary paths.
+export const THEME_IDS = ['chiikawa', 'hachiware', 'usagi', 'kurimanju'];
+export const THEME_FILES = [
+  ...['eyes_open.png', 'eyes_closed.png', 'eyes_open@2x.png', 'eyes_closed@2x.png', 'studying.png', 'dance.png'].map((name) => [name, 'image/png']),
+  ...['studying.webm', 'dance.webm'].map((name) => [name, 'video/webm']),
+];
 export const ALLOWED = new Map([
   ['character.png', 'image/png'],
   ...CHARACTER_FILES,
+  ...THEME_IDS.flatMap((id) => THEME_FILES.map(([name, mime]) => [`themes/${id}/${name}`, mime])),
   ...IMAGES.map((n) => [`reactions/${n}.jpg`, 'image/jpeg']),
 ]);
 
