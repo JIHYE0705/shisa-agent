@@ -10,6 +10,7 @@ import { initialChat, chatReducer, isBusy, summarizeReply, stopTargets, busyCapt
 import { createAttachTray } from './attach-tray.js';
 import { hasFiles, filesFromTransfer, ATTACH_ERRORS } from '../src/attachments.js';
 import { normFocus, focusBubble } from '../src/focus.js';
+import { THEMES, THEME_KEY, themeId, themeImage } from '../src/character-themes.js';
 import { CHAR_DIR, STILL_SRCS, VIDEOS, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf } from '../src/character.js';
 
 const cy = window.cy;
@@ -18,6 +19,26 @@ const wrap = document.getElementById('char-wrap');
 const img = document.getElementById('char');
 
 const closedImg = document.getElementById('char-closed');
+const themePicker = document.getElementById('mascot-theme');
+const selectedTheme = () => themeId(localStorage.getItem(THEME_KEY));
+for (const [id, name] of Object.entries(THEMES)) {
+  const option = document.createElement('option');
+  option.value = id;
+  option.textContent = name;
+  themePicker.append(option);
+}
+themePicker.value = selectedTheme();
+themePicker.addEventListener('change', () => {
+  localStorage.setItem(THEME_KEY, themeId(themePicker.value));
+  wrap.classList.remove('blink-ready', 'blink');
+  img.removeAttribute('src');
+  stillIdx = 0;
+  closedImg.removeAttribute('src');
+  for (const video of Object.values(videos)) { video.pause(); delete video.dataset.fallback; delete video.dataset.failed; video.removeAttribute('src'); video.load(); }
+  showVideo(null);
+  loadStill();
+  if (shownView !== 'idle') { const active = shownView; shownView = 'idle'; startVideo(active); shownView = active; }
+});
 
 // ---- 캐릭터 그림: 눈 뜬 그림(cy-asset://app/character/, ~/.cy-agent/assets) → 예전 character.png → 번들 png → svg ----
 // 눈 감은 그림까지 있으면 깜빡임을 켠다. 두 장 다 미리 디코드해 두고 보이기만 바꿔서 깜빡임(로딩) 없음.
@@ -33,7 +54,7 @@ let haveEyes = false;
 async function loadStill() {
   const scales = window.devicePixelRatio > 1 ? ['@2x', ''] : [''];
   for (const sc of scales) {
-    const open = `${CHAR_DIR}/eyes_open${sc}.png`, closed = `${CHAR_DIR}/eyes_closed${sc}.png`;
+    const open = themeImage(selectedTheme(), `eyes_open${sc}.png`), closed = themeImage(selectedTheme(), `eyes_closed${sc}.png`);
     if (!(await probe(open))) continue;
     const both = await probe(closed);
     haveEyes = true;
@@ -42,7 +63,7 @@ async function loadStill() {
     if (both) { closedImg.src = closed; wrap.classList.add('blink-ready'); }
     return true;
   }
-  if (!img.getAttribute('src')) { stillIdx = 1; img.src = STILL_SRCS[1]; }
+  if (!img.getAttribute('src')) { stillIdx = 0; img.src = STILL_SRCS[0]; }
   return false;
 }
 // 그림이 나중에 생길 수도 있다(설치 전에 켜 둔 경우) — 눈 그림을 찾을 때까지 1분마다 다시 본다
@@ -78,12 +99,17 @@ let shownView = 'idle';
 let danceCap = null;
 for (const [k, v] of Object.entries(videos)) {
   v.muted = true;
-  v.poster = VIDEOS[k].poster;
+  v.poster = themeImage(selectedTheme(), `${k === 'dancing' ? 'dance' : 'studying'}.png`);
   // 첫 장면이 실제로 나올 때 바꿔 끼운다(그 전엔 정지 그림 그대로)
   v.addEventListener('playing', () => { if (shownView === k) showVideo(k); });
   v.addEventListener('error', () => {
     v.dataset.failed = '1';
-    if (shownView === k) showVideo(null); // 영상이 없으면 정지 그림(+기분 애니메이션)으로
+    if (!v.dataset.fallback) {
+      v.dataset.fallback = '1';
+      v.src = VIDEOS[k].src;
+      v.poster = VIDEOS[k].poster;
+      v.play().catch(() => { if (shownView === k) showVideo(null); });
+    } else if (shownView === k) showVideo(null); // 기본 영상도 없으면 정지 그림으로
   });
 }
 function showVideo(k) {
@@ -96,7 +122,12 @@ function showVideo(k) {
 }
 function startVideo(k) {
   const v = videos[k];
-  if (!v.getAttribute('src') || v.dataset.failed) { delete v.dataset.failed; v.src = VIDEOS[k].src; }
+  if (!v.getAttribute('src') || v.dataset.failed) {
+    delete v.dataset.failed;
+    delete v.dataset.fallback;
+    v.poster = themeImage(selectedTheme(), `${k === 'dancing' ? 'dance' : 'studying'}.png`);
+    v.src = themeImage(selectedTheme(), `${k === 'dancing' ? 'dance' : 'studying'}.webm`);
+  }
   try { v.currentTime = 0; } catch { /* 아직 메타데이터 전 */ }
   const p = v.play();
   if (p) p.catch(() => {});
