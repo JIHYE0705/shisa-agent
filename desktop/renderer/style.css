@@ -481,3 +481,19 @@ html, body {
   #char, #char-body, #char-wrap.sleepy #char-body, #dots i, #zzz, .sticker, .bubble, #focus, #focus-label::before { animation: none !important; }
 }
 
+
+/* Personal Chiikawa mascot switcher */
+#mascot-theme-label {
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  z-index: 12;
+  font: 11px system-ui, sans-serif;
+  color: #555;
+  background: rgba(255,255,255,.95);
+  border: 1px solid rgba(40,40,40,.12);
+  border-radius: 12px;
+  padding: 4px 7px;
+  pointer-events: auto;
+}
+#mascot-theme { font: inherit; max-width: 110px; background: transparent; border: 0; color: inherit; }
