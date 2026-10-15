@@ -192,7 +192,7 @@ launchctl kickstart -k gui/$(id -u)/com.cy-agent.daemon
 brew install node git
 ```
 
-`node -v`를 쳐서 `v26` 이상이 나오고, `git --version`을 쳐서 버전 숫자가 나오면 됩니다.
+`node -v`를 쳐서 `v24` 이상이 나오고, `git --version`을 쳐서 버전 숫자가 나오면 됩니다.
 
 git은 코드를 내려받는 프로그램입니다. 1단계에서 Homebrew를 깔 때 함께 설치되는 Command Line Tools에도 들어 있어서, 위 명령을 실행했다면 따로 할 일은 없습니다. Homebrew 없이 git만 설치하고 싶다면 아래 방법 중 하나를 쓰면 됩니다.
 
@@ -270,7 +270,7 @@ cd ~/shisa-agent && ./ops/uninstall.sh
 | 앱: 패널에 「시사 꺼짐」이 계속 보임 | 시사를 종료했다가 다시 열어 주세요. 그래도 같으면 아래 「그래도 안 됨」 |
 | 터미널: `command not found: brew` | 1번 끝에 나온 Next steps 두 줄을 실행했는지 확인하고, 터미널을 껐다 다시 열어 보세요 |
 | 터미널: `command not found: git` | 터미널에 `xcode-select --install`을 입력해 설치하거나, Download ZIP으로 받아 주세요(3단계) |
-| 터미널: `node -v`가 26보다 낮게 나옴 | `brew upgrade node` |
+| 터미널: `node -v`가 24보다 낮게 나옴 | `brew upgrade node` |
 | 터미널: `./ops/install.sh`가 「Node.js 가 없습니다」나 「너무 낮습니다」라며 멈춤 | 2단계로 돌아가 `brew install node` 또는 `brew upgrade node` |
 | 터미널: `permission denied: ./ops/install.sh` | `sh ops/install.sh`로 실행해 주세요(ZIP으로 받으면 실행 권한이 빠질 수 있습니다) |
 | 터미널: `./ops/update.sh`가 「최신 버전을 받지 못했습니다」라며 멈춤 | 인터넷 연결을 확인하고, 레포 폴더에 직접 만든 커밋이나 파일이 있으면 정리한 뒤 다시 실행해 주세요 |

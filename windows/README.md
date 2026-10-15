@@ -85,7 +85,7 @@
 
 ## 개발
 
-맥과 같은 `desktop/`, `agent/` 코드를 씁니다. Node.js 26 이상이 필요합니다([nodejs.org](https://nodejs.org/) 또는 `winget install OpenJS.NodeJS`).
+맥과 같은 `desktop/`, `agent/` 코드를 씁니다. Node.js 24 이상이 필요합니다([nodejs.org](https://nodejs.org/) 또는 `winget install OpenJS.NodeJS`).
 
 ```powershell
 cd desktop
