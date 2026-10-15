@@ -94,18 +94,18 @@ test("새 할 일: to_do_new 스티커 + 목록 detail + 패널 할 일 열기",
   assert.equal(b.image, "to_do_new");
   assert.equal(b.text, "새 할 일이 2개 생겼어요~");
   assert.deepEqual(b.open, { section: "todos", id: "slack:1" });
-  assert.equal(b.detail, "- **[P1]** 할 일 slack:1 · slack\n  팀원이 물어봄\n- **[P2]** 할 일 mail:2 · mail");
+  assert.equal(b.detail, "- **[오늘 꼭]** 할 일 slack:1 · slack\n  팀원이 물어봄\n- **[이번 주]** 할 일 mail:2 · mail");
 });
 
 test("할 일 목록 마크다운: 1–3개는 글머리표, 4개 넘으면 표, 많으면 …외 N개, 표 칸의 | 는 바꿈", () => {
-  assert.equal(todoListMd([todo("a", 1)], "브리핑"), "- **[P1]** 할 일 a · slack");
+  assert.equal(todoListMd([todo("a", 1)], "브리핑"), "- **[오늘 꼭]** 할 일 a · slack");
   const many = Array.from({ length: 8 }, (_, i) => todo(`t${i}`, (i % 2) + 1, { title: i === 0 ? "A | B" : `일 ${i}` }));
   const md = todoListMd(many, "브리핑");
   const lines = md.split("\n");
   assert.equal(lines[0], "| | 할 일 | 출처 |");
   assert.equal(lines[1], "|---|---|---|");
-  assert.equal(lines[2], "| **P1** | A / B | slack |");
-  assert.equal(lines.filter((l) => l.startsWith("| **P")).length, 6);
+  assert.equal(lines[2], "| **오늘 꼭** | A / B | slack |");
+  assert.equal(lines.filter((l) => l.startsWith("| **")).length, 6);
   assert.match(md, /…외 2개$/);
   assert.equal(todoListMd([{ id: "x", title: "줄\n바꿈" }], "슬랙"), "- 줄 바꿈 · 슬랙");
 });

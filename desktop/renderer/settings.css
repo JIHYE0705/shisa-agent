@@ -38,7 +38,7 @@
 html, body {
   margin: 0; min-height: 100%;
   background: var(--surface); color: var(--fg);
-  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", "Malgun Gothic", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 button, select { font: inherit; color: var(--fg); }
@@ -115,7 +115,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
 .gl-add { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 
 /* 문구 */
-.card code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); padding: 0 4px; border-radius: 4px; }
+.card code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code); padding: 0 4px; border-radius: 4px; }
 .ph-groups details { border-top: 1px solid var(--line); }
 .ph-groups details:first-child { border-top: 0; }
 .ph-groups summary { font-weight: 600; color: var(--fg); font-size: 12.5px; }
@@ -161,3 +161,11 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
 .dc-cmd code { background: var(--line); padding: 2px 6px; border-radius: 5px; font-size: 12px; user-select: text; overflow-wrap: anywhere; }
 .dc-acts { display: flex; gap: 6px; }
 button.danger { background: var(--err-fg); color: #fff; }
+
+/* 캐릭터 고르기: 그림 카드 넷 */
+.char-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.char-opt { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); cursor: pointer; font-size: 12px; user-select: none; }
+.char-opt img { width: 64px; height: 64px; object-fit: contain; }
+.char-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.char-opt:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; background: var(--accent-soft); font-weight: 600; }
+.char-opt:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }

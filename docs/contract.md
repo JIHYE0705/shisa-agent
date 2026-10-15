@@ -17,7 +17,7 @@
 |---|---|---|
 | `bubble` | `Bubble`(아래) | 말풍선. 같은 `id`로 다시 오면 통째로 바꾼다 |
 | `clear` | `{ id }` | 말풍선 걷기 |
-| `state` | `{ mood: idle\|thinking\|working\|alert, activity: idle\|studying\|dancing, runs: [{ id, kind, title, startedAt }], danceId? }` | 캐릭터 상태 |
+| `state` | `{ mood: idle\|thinking\|working\|alert, activity: idle\|studying\|dancing, runs: [{ id, kind, title, startedAt }], danceId?, character }` | 캐릭터 상태. `character`는 고른 캐릭터 id(`shisa`·`hachi`·`rakko`·`momonga`)이고, 바뀌면 바로 다시 보낸다 |
 | `status` | `{ status: Status }` | 연결 상태가 바뀜(`GET /status`와 같은 모양) |
 | `dashboard` | `{}` | 대시보드를 다시 가져오라는 신호 |
 | `open_panel` | `{ section: overview\|projects\|todos\|today\|chat\|null }` | 패널을 그 탭으로 열기 |
@@ -42,6 +42,7 @@ type Bubble = {
 
 - `studying`: 데몬이 스스로 돌리는 세션(run)이 있을 때다(사용자 대화 `chat` 제외).
 - `dancing`: 일정 알림(기본 10분 전, 설정 `calendarAlert`) 때 8초 동안이다.
+- 앱은 캐릭터마다 다른 영상을 튼다. 시사는 `assets/character/`의 `studying`·`dance`이고, 다른 캐릭터는 `assets/characters/<id>/`의 `study`(집중·공부 중)와 `plan`(일정 알림·춤)이다.
 
 ## 상태·설정
 
@@ -60,9 +61,15 @@ type Bubble = {
   "user": { "name": "길동" },
   "onboarded": true,
   "configError": "설정 파일(config.json)에 문법 오류가 있어 …",  // 있을 때만. 파일을 못 읽어 안전 모드로 켬
-  "configNotes": ["ingestIntervalMin 값이 이상해서 …"]         // 있을 때만. 이상한 설정 값을 기본값으로 바꾼 것들
+  "configNotes": ["ingestIntervalMin 값이 이상해서 …"],        // 있을 때만. 이상한 설정 값을 기본값으로 바꾼 것들
+  "daemon": "shisa",                 // 늘 같은 값: 이 포트의 주인이 시사 데몬이다(GET /status 에만, SSE status 엔 없음)
+  "pid": 12345,                      // 데몬 프로세스 id
+  "stopping": true                   // 있을 때만. 꺼지는 중(곧 포트가 빈다)
 }
 ```
+
+- `daemon`·`pid`·`stopping`: 앱(desktop `daemonAlive`)은 2xx JSON 에 `daemon: "shisa"`가 있어야 그 포트에 시사 데몬이 있다고 본다. 이 칸이 생기기 전의 데몬은 `brain.provider`가 있는 모양으로 알아본다. 다른 프로그램이 답하면 데몬을 띄워 본다.
+- 데몬은 `cy.db`를 열기 전에 포트부터 잡는다. 이미 누가 쓰고 있으면 한 줄 남기고 종료 코드 75로 끝난다. 앱은 이걸 충돌로 세지 않고 그 포트를 다시 지켜본다(처음 1분은 2초마다, 그 뒤로는 1분마다).
 
 - `configError`: `config.json`이 JSON 문법 오류이거나 `{ … }` 모양이 아니면 데몬은 안전 모드로 켠다. 설치 마법사 전처럼 작업 기록·레포를 읽지 않고, 뇌는 `local`이다. 로그에도 크게 남긴다. 파일을 고친 뒤 데몬을 다시 켜면 풀린다.
 - `configNotes`: 모르는 `brain.provider`(→ `local`), 1분보다 작거나 숫자가 아닌 분 간격(`briefingIntervalMin`·`ingestIntervalMin`·`slackIngestIntervalMin`·`progressCheckMin`, `progressCheckMin`만 0 = 끔), 0이 아니면서 0.25시간보다 작은 `todayReminder.everyHours`, 숫자가 아닌 `port`(→ 47823), `repoRoots`의 상대 경로·`/` 같은 값. 위쪽 상한은 없다.
@@ -77,6 +84,7 @@ type Bubble = {
 - `brain{provider,model,keys{gemini,openai,anthropic: boolean}}`
 - `user{name?}`, `repoRoots[]`, `configPath`
 - `onboarded`(설치 마법사를 마쳤나), `readSessions`(이 맥의 Claude Code·Codex 작업 기록을 읽나)
+- `character`(고른 캐릭터 id), `characters[{id,name}]`(고를 수 있는 캐릭터)
 
 `PUT` 본문(전부 선택, 모르는 키는 400):
 
@@ -91,7 +99,8 @@ type Bubble = {
   "repoRoots": ["/Users/me/code"],                        // 절대 경로만
   "readSessions": true,                                   // 작업 기록 읽기 켜고 끄기
   "onboarded": true,                                      // 설치 마법사를 마침(마법사가 보낸다)
-  "calendarAlert": { "minutesBefore": [15, 5] }           // 일정 몇 분 전(양의 정수, 개수·크기 상한 없음). [] = 알림 끔, 기본 [10]
+  "calendarAlert": { "minutesBefore": [15, 5] },          // 일정 몇 분 전(양의 정수, 개수·크기 상한 없음). [] = 알림 끔, 기본 [10]
+  "character": "hachi"                                    // shisa·hachi·rakko·momonga. 모르는 값은 400
 }
 ```
 
@@ -101,6 +110,7 @@ type Bubble = {
 - 뇌가 바뀌면 SSE `status`를 보낸다.
 - `onboarded`가 `false`인 동안(새 설치)은 브리핑·Slack 할 일·할 일 자동 완료·진행 확인·지식그래프·프로필 학습을 돌리지 않고 작업 기록·git 도 읽지 않는다. `true`가 되면 그때 첫 정리를 한 번 한다. 처음 `true`를 적을 때 빈 칸(`readSessions`·`repoRoots`·`brain.provider`)은 지금 쓰는 값으로 같이 적는다.
 - `calendarAlert`가 바뀌면 알림 시각을 바로 다시 잡는다. 일정마다 알린 분을 `meeting_alerts`에 남기고(키 `id@start#분`), 이미 알린 분보다 작은 분만 남은 알림으로 본다. 그래서 설정을 바꿔도 이미 울린 알림은 다시 울리지 않는다.
+- `character`가 바뀌면 다음 말풍선과 답부터 그 캐릭터 말투가 된다. 모델에 넣는 시스템 프롬프트의 첫 문장과 말투 줄, 고정 문구의 기본값, AI 없이 하는 정해진 말이 모두 바뀐다. 사용자가 「문구」에서 고친 줄은 캐릭터와 상관없이 그대로 쓴다. 앱은 SSE `state`로 그림·영상·앱 이름(「하치와레 비서」)을 바꾼다.
 - 일정 알림 말풍선은 문구 `meeting_alert`(`{mins}` `{title}` `{time}` `{where}`)다. `{mins}`는 실제로 남은 분이다(늦게 켜졌으면 설정보다 작다). `{mins}`가 없는 예전 고친 문구도 그대로 쓴다.
 - 커넥터(`connectors`)는 여기서 바꾸지 않는다. 파일을 고친 뒤 데몬을 다시 켜야 한다.
 

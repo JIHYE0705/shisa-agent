@@ -4,8 +4,9 @@
 // 이미 추출한 청크를 다시 돌리지 않는다. 바뀐 건 마지막 청크(와 새 청크)뿐.
 import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import type { Store } from "../store.ts";
+import { IS_WIN, winNorm } from "../plat.ts";
 import { permalinkOf } from "../ingest/slack.ts";
 
 export const CHUNK_TARGET = 7000;
@@ -226,14 +227,14 @@ export async function scanSessions(
   store: Store, dirs: { claude: string; codex: string }, opts: { skipCwdPrefixes?: string[]; yieldEvery?: number } = {},
 ): Promise<ScanResult> {
   ensureChunkTables(store);
-  const skip = (cwd?: string) => !!cwd && (opts.skipCwdPrefixes ?? []).some((p) => p && cwd.startsWith(p));
+  const skip = (cwd?: string) => !!cwd && (opts.skipCwdPrefixes ?? []).some((p) => p && (IS_WIN ? winNorm(cwd).startsWith(winNorm(p)) : cwd.startsWith(p))); // Windows: 대소문자·구분자 무시
   const r: ScanResult = { files: 0, changed: 0, skipped: 0, chunks: 0, newOrChanged: 0 };
   // 서브에이전트가 부모 cwd를 모를 수 있어 부모 cwd를 기억해 둔다
   const parentCwd = new Map<string, string | undefined>();
   const subagents: string[] = [];
   for (const [tool, dir] of [["claude", dirs.claude], ["codex", dirs.codex]] as const) {
     for await (const path of walkJsonl(dir)) {
-      if (path.includes("/subagents/")) { subagents.push(path); continue; }
+      if (path.includes("/subagents/") || path.includes(`${sep}subagents${sep}`)) { subagents.push(path); continue; }
       r.files++;
       const res = await scanFile(store, path, tool, undefined, skip, parentCwd);
       if (res === "skip") r.skipped++;

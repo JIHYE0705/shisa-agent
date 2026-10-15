@@ -81,7 +81,8 @@ test("모르는 brain.provider: 죽지 않고 local + configNotes", () => {
   assert.match(statusOf(cfg, { env: {} }).configNotes!.join(" "), /gpt9/);
 });
 
-test("HOME_DIR 은 0700(이미 있으면 권한을 고친다)", () => {
+const NO_MODES = process.platform === "win32" && "Windows 엔 POSIX 권한 비트가 없다(chmod 는 읽기 전용 표시만)";
+test("HOME_DIR 은 0700(이미 있으면 권한을 고친다)", { skip: NO_MODES }, () => {
   const dir = join(mkdtempSync(join(tmpdir(), "cy-home-")), "home");
   mkdirSync(dir, { mode: 0o755 });
   chmodSync(dir, 0o755);
@@ -92,7 +93,7 @@ test("HOME_DIR 은 0700(이미 있으면 권한을 고친다)", () => {
   assert.equal(statSync(fresh).mode & 0o777, 0o700);
 });
 
-test("cy.db 는 0600", async () => {
+test("cy.db 는 0600", { skip: NO_MODES }, async () => {
   const { Store } = await import("./store.ts");
   const p = join(mkdtempSync(join(tmpdir(), "cy-db-")), "cy.db");
   writeFileSync(p, "");

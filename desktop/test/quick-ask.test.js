@@ -7,9 +7,9 @@ import { brainView, connectCard, chatLock } from '../src/brain-state.js';
 
 const noAi = brainView({ status: { brain: { provider: 'local', label: '로컬', ready: true, local: true }, chat: false, coder: {}, connectors: [] } });
 
-test('칩 목록: 질문 네 개 + 마지막 AI 연결하기', () => {
-  assert.deepEqual(QUICK_CHIPS.map((c) => c.label), ['오늘 할 일 얼마나 했어요?', '지금 할 일 뭐 있어요?', '다음 일정은요?', '응원해 줘', 'AI 연결하기']);
-  assert.deepEqual(ASK_IDS, ['today', 'next_todo', 'next_event', 'cheer']);
+test('칩 목록: 질문 다섯 개(응원·춤 포함) + 마지막 AI 연결하기', () => {
+  assert.deepEqual(QUICK_CHIPS.map((c) => c.label), ['오늘 할 일 얼마나 했어요?', '지금 할 일 뭐 있어요?', '다음 일정은요?', '응원해 줘', '춤춰 줘', 'AI 연결하기']);
+  assert.deepEqual(ASK_IDS, ['today', 'next_todo', 'next_event', 'cheer', 'dance']);
   assert.ok(isAskId('cheer'));
   assert.ok(!isAskId('connect'));
   for (const c of QUICK_CHIPS) assert.ok(!c.label.includes('\u2014'));
@@ -20,10 +20,12 @@ test('quickBubble: 칩 말풍선이 normalizeBubble 을 거쳐도 칩이 남는�
   const raw = quickBubble(noAi);
   assert.equal(raw.id, QUICK_ID);
   const b = normalizeBubble(raw);
-  assert.deepEqual(b.quick, ['today', 'next_todo', 'next_event', 'cheer', 'connect']);
+  assert.deepEqual(b.quick, ['today', 'next_todo', 'next_event', 'cheer', 'dance', 'connect']);
+  // AI가 있으면(입력창 ＋) 「AI 연결하기」는 빼고 같은 칩
+  assert.deepEqual(quickBubble({ ready: true }).quick, ['today', 'next_todo', 'next_event', 'cheer', 'dance']);
   assert.ok(b.ttlMs > 0);
   assert.deepEqual(clickTarget(b).type === 'open', false); // 말풍선 자체는 어디로도 안 연다(칩만)
-  assert.match(quickBubble({ provider: 'claude-code', known: true }).text, /Claude Code 로그인 전/);
+  assert.match(quickBubble({ ready: false, provider: 'claude-code', known: true }).text, /Claude Code 로그인 전/);
   assert.ok(!quickBubble(noAi).text.includes('\u2014'));
 });
 

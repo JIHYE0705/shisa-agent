@@ -24,7 +24,7 @@ test('trashModel: 서버 목록을 다듬고(원래 우선순위 칩·n일 전),
     { id: '', title: 'x' }, null, { id: 'c' },
   ], 2, [], NOW);
   assert.equal(m.count, 2);
-  assert.deepEqual(m.items.map((t) => [t.id, t.priorityLabel, t.ago]), [['a', 'P1', '오늘'], ['b', '백로그', '3일 전']]);
+  assert.deepEqual(m.items.map((t) => [t.id, t.priorityLabel, t.ago]), [['a', '오늘 꼭', '오늘'], ['b', '언젠가', '3일 전']]);
   assert.equal(trashModel(null, undefined, [], NOW).count, 0);
   assert.equal(trashModel([{ id: 'a', title: 'A' }], 0, [], NOW).count, 1); // count가 목록보다 작으면 목록 기준
   assert.equal(trashModel([{ id: 'a', title: 'A' }], 70, [], NOW).count, 70); // 50개 넘게 있으면 전체 수

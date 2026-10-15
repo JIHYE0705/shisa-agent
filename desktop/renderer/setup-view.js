@@ -1,6 +1,8 @@
 // 설치: 한 화면에 할 일 한 줄씩. 토큰은 이 화면 메모리에만 있고 저장하지 않는다.
+import { who, whoId } from './who.js';
+import { characterAssets } from '../src/character.js';
 import { AGENTS, FEATURES, agentSteps, buildWalk, featureTitle } from '../src/setup-flow.js';
-import { SISA_SAY, providerById, connectSteps, slotCheck, BRAIN_CHOICES, EXTRAS, SESSIONS_CONSENT, hubItem } from '../src/ai-onboard.js';
+import { sayFor, providerById, connectSteps, slotCheck, BRAIN_CHOICES, EXTRAS, SESSIONS_CONSENT, hubItem } from '../src/ai-onboard.js';
 import { setupSummary, okFolder } from '../src/setup-plan.js';
 import { HUB_CAP, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
 
@@ -145,12 +147,17 @@ function slotStatus(step) {
 }
 
 // 시사 캐릭터 + 말풍선. 패널 사이드바와 같은 그림을 쓴다(CSP: cy-asset: 만).
-const SISA_SRCS = ['cy-asset://app/character/eyes_open@2x.png', 'cy-asset://app/character.png', '../assets/character.png', '../assets/character.svg'];
+// 고른 캐릭터(who.js — 패널이 데몬 state 로 맞춘다)
+function sisaSrcs() {
+  const a = characterAssets(whoId());
+  return [a.retina ? a.open.replace(/\.png$/, '@2x.png') : a.open, ...a.stills.slice(1)];
+}
 
 function sisaHead(say) {
   if (!say) return null;
   let at = 0;
-  const img = h('img.sisa-img', { alt: '시사', draggable: 'false', width: '64', height: '64' });
+  const SISA_SRCS = sisaSrcs();
+  const img = h('img.sisa-img', { alt: who(), draggable: 'false', width: '64', height: '64' });
   img.addEventListener('error', () => { if (at < SISA_SRCS.length - 1) img.src = SISA_SRCS[++at]; });
   img.src = SISA_SRCS[0];
   const lines = String(say).split('\n').map((l) => l.trim()).filter(Boolean);
@@ -296,7 +303,7 @@ function nameView({ name, onName, onSkipSetup }) {
   focusSlot = null;
   queueMicrotask(() => input.focus());
   return screen({
-    say: SISA_SAY.name,
+    say: sayFor(whoId()).name,
     title: '반가워요!',
     identity: '부를 이름을 적어 주세요. 브리핑이나 대화에서 이 이름으로 불러요.',
     extra: h('div.setup-fields', null, h('label', null, h('span', { text: '이름' }), input)),
@@ -311,7 +318,7 @@ function nameView({ name, onName, onSkipSetup }) {
 // 2) 뇌 고르기(선택) — 찾은 Claude Code·Codex 는 "찾았어요 ✓", 키는 다음 화면에서 붙여 넣기, 「AI 없이 쓰기」는 로컬 뇌로 다음 단계
 function brainPickView({ detected = {}, connected = [], current = '', onPick, onSkip, onBack }) {
   return screen({
-    say: SISA_SAY.brain,
+    say: sayFor(whoId()).brain,
     title: '뇌(AI)를 연결할까요?',
     identity: 'AI는 선택이에요. 하나만 고르면 되고, AI 없이 시작해도 나중에 설정에서 언제든 연결하거나 바꿀 수 있어요.',
     extra: h('div.setup-picks', null, BRAIN_CHOICES.map((c) => {
@@ -367,7 +374,7 @@ function extrasView({ done = {}, repos = [], coder = true, readSessions = false,
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) add(); });
   const repo = hubItem('repos');
   return screen({
-    say: SISA_SAY.extras,
+    say: sayFor(whoId()).extras,
     title: '더 연결할까요?',
     identity: '하나를 누르면 그 안내로 들어가고, 끝나면 이 목록으로 돌아와요.',
     extra: h('div', null,
@@ -392,7 +399,7 @@ function extrasView({ done = {}, repos = [], coder = true, readSessions = false,
 function doneView({ brain, done, repos, name, readSessions, onTour, onClose, onBack }) {
   const rows = setupSummary({ brain, done, repos, name, readSessions });
   return screen({
-    say: SISA_SAY.done,
+    say: sayFor(whoId()).done,
     title: name ? `${name} 님, 준비됐어요` : '준비됐어요',
     identity: '안 한 건 언제든 설정(⚙)이나 이 「설치」 탭에서 다시 할 수 있어요.',
     extra: h('ul.setup-summary', null, rows.map((r) => h(`li${r.ok ? '.ok' : ''}`, null,
@@ -475,7 +482,7 @@ export function renderSetup(root, state) {
       return;
     }
     root.replaceChildren(aiKeyView({
-      provider, say: SISA_SAY.brain, keyStatus, onOpen, onCopy, onCheck: onCheckKey, onNext: onKeyNext, onBack,
+      provider, say: sayFor(whoId()).brain, keyStatus, onOpen, onCopy, onCheck: onCheckKey, onNext: onKeyNext, onBack,
     }));
     return;
   }

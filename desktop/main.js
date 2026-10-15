@@ -31,16 +31,21 @@ import { createCapsProbe, hasCoder, sameCaps, coderHint } from './src/caps.js';
 import { checkLlm, listModels } from './src/llm-check.js';
 import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, withoutProvider, activeProvider, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
 import { personaFor } from './src/persona.js';
+import { okCharacter, characterName, appName } from './src/character.js';
 import { normStatus, brainView, sameView } from './src/brain-state.js';
 import { isAskId } from './src/quick-ask.js';
 import { isFocusCmd, DAY_RE } from './src/focus.js';
 import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
 import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
-import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, loginItemPlan, loginItemHint, defaultLoginPref, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
+import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, loginItemPlan, loginItemHint, defaultLoginPref, daemonStatusKind, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
 import { createDaemonHost } from './src/daemon-host.js';
 import { RELEASES_API, checkDue, latestRelease, shouldNotify, updateBubble } from './src/update-check.js';
 import { denied } from './src/denied.js';
+import { squirrelPlan, loginItemTarget, appUserModelId } from './src/squirrel.js';
+
+// 윈도우 Squirrel 설치기가 --squirrel-* 로 띄운 실행이면 바로 가기만 고치고 끝낸다(맨 아래 시작 부분에서 갈린다)
+const SQUIRREL = squirrelPlan({ platform: process.platform, argv: process.argv, execPath: process.execPath });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CY_AGENT_PORT) || 47823;
@@ -65,7 +70,14 @@ attachConsole(logRing, console, process);
 // 앱 이름은 "cy"(메뉴·정보 창). userData 는 이름이 바뀌어도 원래 자리(cy-agent-desktop[-포트])에 고정.
 // 앱 번들 이름(시사)·productName 이 바뀌어도 같은 자리를 쓰게 package.json name 으로 고정
 const userData = path.join(app.getPath('appData'), 'cy-agent-desktop');
-app.setName('시사 비서');
+// 고른 캐릭터(데몬 config.json character)에 따라 「하치와레 비서」처럼. 켤 땐 파일에서, 그 뒤엔 데몬 state 로 바꾼다(onCharacter)
+function configCharacter() {
+  try { return JSON.parse(fs.readFileSync(path.join(process.env.CY_AGENT_HOME ?? path.join(os.homedir(), '.cy-agent'), 'config.json'), 'utf8'))?.character; } catch { return null; }
+}
+let charId = okCharacter(configCharacter());
+const who = () => characterName(charId);
+const appTitle = () => appName(charId);
+app.setName(appTitle());
 app.setPath('userData', PORT !== 47823 ? `${userData}-${PORT}` : userData);
 
 const AI_IDS = new Set(KEY_PROVIDERS);
@@ -170,7 +182,7 @@ async function disconnectBrain(p) {
   }
   if (!applied) {
     const wrote = editDaemonConfig((cfg) => withBrainBody(cfg, disconnectBrainBody(p, cfg.brain?.provider ?? 'claude-code', appActive)));
-    if (wrote === null) return { ok: false, error: '시사 설정 파일에 쓰지 못했어요.', ...sisaPublic(next) };
+    if (wrote === null) return { ok: false, error: `${who()} 설정 파일에 쓰지 못했어요.`, ...sisaPublic(next) };
   }
   if (connected) refreshStatus();
   else pushBrain();
@@ -196,7 +208,7 @@ async function disconnectConnector(cap) {
       if (c && typeof c === 'object' && c.mode === 'mcp' && typeof c.server === 'string') server = c.server;
       return withConnectorOff(cfg, cap);
     });
-    if (wrote === null) return { ok: false, error: '시사 설정 파일에 쓰지 못했어요.' };
+    if (wrote === null) return { ok: false, error: `${who()} 설정 파일에 쓰지 못했어요.` };
     res = { ok: true, cap, ...(server ? { server } : {}), offline: true };
   }
   const prev = normalizeSisa(readSisa());
@@ -208,7 +220,7 @@ async function disconnectConnector(cap) {
 }
 
 function sisaPublic(data) {
-  return publicView(data, personaFor(publicView(data).provider));
+  return publicView(data, personaFor(publicView(data).provider, charId));
 }
 
 // 고른 AI 를 시사 데몬 설정(brain·models.general)에도 적는다 — 대화·브리핑은 전부 데몬이 답한다.
@@ -337,7 +349,7 @@ async function refreshStatus() {
 // ---- 사용법 둘러보기(tour.js): 캐릭터 말풍선으로 하나씩. 설치를 마치면 한 번, 메뉴·설정 「사용법 다시 보기」로 언제든 ----
 let tour = null; // { steps, at }
 function startTour() {
-  tour = { steps: tourSteps(brainNow()), at: -1 };
+  tour = { steps: tourSteps(brainNow(), charId), at: -1 };
   nextTour();
 }
 function nextTour() {
@@ -508,7 +520,7 @@ function createPanel() {
     // 맥: 패널이 키 창이 아닐 때(캐릭터 호버 입력·다른 앱을 쓰다 온 직후) 첫 클릭이 창 활성화에만 쓰이고
     // 탭·버튼엔 안 닿는다 — 사이드바 탭을 눌러도 안 바뀌는 것처럼 보임. 첫 클릭도 바로 받는다.
     acceptFirstMouse: true,
-    title: '시사 비서',
+    title: appTitle(),
     // 맥은 사이드바에 반투명 블러, 그 외엔 불투명 배경
     ...(mac ? { vibrancy: 'sidebar', visualEffectState: 'active', backgroundColor: '#00000000' } : {}),
     webPreferences: {
@@ -603,6 +615,7 @@ function createSession() {
     show: false,
     title: '작업 세션',
     acceptFirstMouse: true,
+    autoHideMenuBar: true, // 윈도우: 메뉴 막대는 Alt 로만(맥은 상관없음)
     webPreferences: {
       preload: path.join(__dirname, 'preload-session.cjs'),
       contextIsolation: true,
@@ -722,7 +735,10 @@ function onSSE({ event, data }) {
   } catch {
     return;
   }
-  if (event === 'state') lastState = payload;
+  if (event === 'state') {
+    lastState = payload;
+    if (typeof payload?.character === 'string') onCharacter(payload.character);
+  }
   if (event === 'bubble' || event === 'state' || event === 'clear') send(event, payload);
   else if (event === 'run') sendSession('run', payload);
   else if (event === 'runs') {
@@ -791,6 +807,20 @@ async function uploadAttachment(name, mime, bytes) {
 
 // "Claude Code에서 열기": 기록된 cwd 아래 세션 기록이 없을 때 ~/.claude/projects/*/<sid>.jsonl(파일 이름 정확히)을 찾아
 // 그 기록에 적힌 실제 cwd. 일반 파일·폴더만(심볼릭 링크 안 따라감), 앞 256KB 만 읽는다. 없으면 null
+// 윈도우: Windows Terminal(앱 실행 별칭 — 재분석 지점이라 lstat 로 본다). 없으면 null
+function windowsTerminal() {
+  const base = process.env.LOCALAPPDATA;
+  if (!base) return null;
+  const p = path.join(base, 'Microsoft', 'WindowsApps', 'wt.exe');
+  try { fs.lstatSync(p); return p; } catch { return null; }
+}
+// 새 콘솔의 환경: 앱 환경 + 데몬과 같은 PATH 보충(설치 직후라 ~/.local/bin 이 아직 PATH 에 없을 수 있다)
+function consoleEnv() {
+  const full = daemonEnv(process.env, { home: os.homedir(), platform: process.platform });
+  const key = Object.keys(full).find((k) => k.toUpperCase() === 'PATH');
+  return key ? { ...process.env, [key]: full[key] } : { ...process.env };
+}
+
 function findSessionCwd(claudeDir, sid) {
   if (!okSessionId(sid)) return null;
   const root = path.join(claudeDir, 'projects');
@@ -815,7 +845,7 @@ function findSessionCwd(claudeDir, sid) {
 async function triggerBriefing() {
   const r = await post('/briefing');
   if (!r.ok) {
-    send('bubble', { id: `local-briefing-${Date.now()}`, text: '시사에 연결되지 않아서 브리핑을 못 했어요.', kind: 'error', ttlMs: 6000 });
+    send('bubble', { id: `local-briefing-${Date.now()}`, text: `${who()}에 연결되지 않아서 브리핑을 못 했어요.`, kind: 'error', ttlMs: 6000 });
   }
 }
 
@@ -837,7 +867,7 @@ function menuTemplate() {
         rebuildTrayMenu();
       },
     },
-    { label: connected ? '시사 켜짐' : '시사 꺼짐', enabled: false },
+    { label: connected ? `${who()} 켜짐` : `${who()} 꺼짐`, enabled: false },
     { type: 'separator' },
     { label: '종료', click: () => app.quit() },
   ];
@@ -847,12 +877,27 @@ function rebuildTrayMenu() {
   if (tray) tray.setContextMenu(Menu.buildFromTemplate(menuTemplate()));
 }
 
-function createTray() {
+// 맥: 검정 템플릿(메뉴 막대 색을 따른다). 윈도우: 작업 표시줄 알림 영역엔 템플릿이 없어 캐릭터 그림을 16·32px 로
+function trayImage() {
+  if (process.platform === 'win32') {
+    const src = nativeImage.createFromPath(path.join(__dirname, 'assets', 'character.png'));
+    if (!src.isEmpty()) {
+      const img = nativeImage.createEmpty();
+      for (const s of [1, 2]) img.addRepresentation({ scaleFactor: s, width: 16 * s, height: 16 * s, buffer: src.resize({ width: 16 * s, height: 16 * s, quality: 'best' }).toPNG() });
+      return img;
+    }
+  }
   const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'trayTemplate.png'));
   img.setTemplateImage(true);
-  tray = new Tray(img);
-  tray.setToolTip('시사 비서');
+  return img;
+}
+
+function createTray() {
+  tray = new Tray(trayImage());
+  tray.setToolTip(appTitle());
   rebuildTrayMenu();
+  // 윈도우: 왼쪽 클릭은 패널(관례), 오른쪽 클릭은 메뉴(setContextMenu 가 알아서)
+  if (process.platform === 'win32') tray.on('click', () => showPanel(null));
 }
 
 // ---- 앱(Dock·Cmd+Tab·메뉴 막대) ----
@@ -870,13 +915,13 @@ function createAppMenu() {
     ...(mac ? [{
       label: app.name,
       submenu: [
-        { role: 'about', label: '시사 비서 정보' },
+        { role: 'about', label: `${appTitle()} 정보` },
         { type: 'separator' },
-        { role: 'hide', label: '시사 비서 가리기' },
+        { role: 'hide', label: `${appTitle()} 가리기` },
         { role: 'hideOthers', label: '기타 가리기' },
         { role: 'unhide', label: '모두 보기' },
         { type: 'separator' },
-        { role: 'quit', label: '시사 비서 종료' },
+        { role: 'quit', label: `${appTitle()} 종료` },
       ],
     }] : []),
     { role: 'editMenu', label: '편집' }, // 입력창 ⌘C/⌘V/⌘Z/⌘A
@@ -913,18 +958,39 @@ function onAppActivated() {
   showPanel(null);
 }
 
+function setDockMenu() {
+  if (process.platform !== 'darwin') return;
+  app.dock?.setMenu(Menu.buildFromTemplate([
+    { label: '패널 열기', click: () => showPanel(null) },
+    { type: 'separator' },
+    { label: `${who()} 끄기`, click: () => app.quit() },
+  ]));
+}
+
+// 설정 창에서 캐릭터를 바꿈(데몬 state.character) → 앱 이름·메뉴·트레이·창 제목·패널(아이콘·정해진 말)
+function onCharacter(id) {
+  const next = okCharacter(id);
+  if (next === charId) return;
+  charId = next;
+  app.setName(appTitle());
+  if (tray) tray.setToolTip(appTitle());
+  rebuildTrayMenu();
+  createAppMenu();
+  setDockMenu();
+  if (panel && !panel.isDestroyed()) panel.setTitle(appTitle());
+  sendPanel('character', { id: charId });
+  sendSession('character', { id: charId });
+  sendPanel('sisa', sisaPublic(normalizeSisa(readSisa()))); // 말투 글 기본값도 그 캐릭터 것
+}
+
 function setupAppActivation() {
   if (process.platform === 'darwin') {
-    app.setName('시사 비서');
+    app.setName(appTitle());
     const icon = path.join(__dirname, 'assets', 'icon.png');
     // 번들(cy.app)은 icns 를 쓰고, 개발 실행은 Dock 아이콘을 바꿔 준다
     if (!app.isPackaged && fs.existsSync(icon)) app.dock?.setIcon(nativeImage.createFromPath(icon));
     app.dock?.show();
-    app.dock?.setMenu(Menu.buildFromTemplate([
-      { label: '패널 열기', click: () => showPanel(null) },
-      { type: 'separator' },
-      { label: '시사 끄기', click: () => app.quit() },
-    ]));
+    setDockMenu();
   }
   quietActivation(2000); // 시작 직후(로그인 자동 실행) 패널을 띄우지 않음
   app.on('did-become-active', () => setTimeout(onAppActivated, 50));
@@ -997,6 +1063,7 @@ function createDebugWindow() {
     title: '도움 보내기',
     alwaysOnTop: true,
     acceptFirstMouse: true,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload-debug.cjs'),
       contextIsolation: true,
@@ -1085,7 +1152,9 @@ function setupIPC() {
       // 안전장치: 드래그 끝 신호를 놓쳐도 20초 지나면 스스로 끝낸다(창이 커서를 계속 따라다니거나 클릭이 안 먹는 상태 방지)
       if (Date.now() - drag.started > 20e3) return endDrag();
       const p = screen.getCursorScreenPoint();
-      win.setPosition(p.x - drag.offX, p.y - drag.offY);
+      // 윈도우: 배율 다른 모니터로 넘어갈 때 setPosition 은 크기 고정 투명 창의 크기를 바꿀 수 있다 → 크기까지 박아 setBounds
+      if (process.platform === 'win32') win.setBounds({ x: p.x - drag.offX, y: p.y - drag.offY, ...SIZE });
+      else win.setPosition(p.x - drag.offX, p.y - drag.offY);
     }, 16);
   });
 
@@ -1101,7 +1170,7 @@ function setupIPC() {
       { label: '지금 브리핑', click: triggerBriefing },
       { label: '사용법 다시 보기', click: startTour },
       { type: 'separator' },
-      { label: '시사 끄기', click: () => app.quit() },
+      { label: `${who()} 끄기`, click: () => app.quit() },
     ]).popup({ window: win });
   });
 
@@ -1181,7 +1250,7 @@ function setupIPC() {
     let codeSaved = null;
     if ('code' in args) {
       codeSaved = writeCodeModel(args.code);
-      if (!codeSaved) return { ok: false, error: '시사 설정 파일에 쓰지 못했습니다.' };
+      if (!codeSaved) return { ok: false, error: `${who()} 설정 파일에 쓰지 못했습니다.` };
     }
     writeSisa(next);
     const brainSaved = 'chat' in args ? await writeBrain(next) : false;
@@ -1217,7 +1286,8 @@ function setupIPC() {
   });
   // AI 없이 고르는 질문 칩(quick-ask.js) → 데몬이 정해진 말로 답한다
   ipcMain.handle('local-ask', async (e, id) => {
-    if (e.sender !== win?.webContents || !isAskId(id)) { console.warn('[local-ask] 거절:', e.sender === win?.webContents ? `모르는 id ${id}` : '캐릭터 창이 아님'); return denied(); }
+    const okSender = e.sender === win?.webContents || e.sender === panel?.webContents; // 캐릭터 칩·패널 정해진 답(응원·춤)
+    if (!okSender || !isAskId(id)) { console.warn('[local-ask] 거절:', okSender ? `모르는 id ${id}` : '캐릭터·패널 창이 아님'); return denied(); }
     const r = await post('/local/ask', { id });
     if (!r.ok) console.warn('[local-ask] 실패:', id, r.status ?? '', r.error ?? r.data?.error ?? ''); // 칩 답이 「못 가져왔어요」 일 때 까닭
     return r;
@@ -1256,6 +1326,7 @@ function setupIPC() {
     return r.canceled ? null : (r.filePaths[0] ?? null);
   });
 
+  ipcMain.handle('get-character', (e) => (fromOurs(e) ? charId : null));
   ipcMain.handle('click-target', (e) => (fromOurs(e) ? clickTarget(lastState, activeRuns) : null));
 
   // ---- 작업 세션 ----
@@ -1316,7 +1387,7 @@ function setupIPC() {
   ipcMain.handle('session-claude', async (e, id) => {
     if (!fromOurs(e) || !okRunId(id)) return denied();
     const r = await request('GET', `/runs/${id}?since=999999999`); // 기록은 필요 없다
-    if (!r.ok || !r.data?.run) return { ok: false, error: r.status === 404 ? '이 세션을 찾을 수 없어요.' : '시사에 연결되지 않았어요.' };
+    if (!r.ok || !r.data?.run) return { ok: false, error: r.status === 404 ? '이 세션을 찾을 수 없어요.' : `${who()}에 연결되지 않았어요.` };
     const home = os.homedir();
     const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
     const plan = planResume(r.data.run, {
@@ -1325,12 +1396,29 @@ function setupIPC() {
       worktreesDir: path.join(process.env.CY_AGENT_HOME ?? path.join(home, '.cy-agent'), 'worktrees'),
       exists: (p) => fs.existsSync(p),
       findSession: (sid) => findSessionCwd(claudeDir, sid),
+      platform: process.platform,
+      wt: process.platform === 'win32' ? windowsTerminal() : null,
     });
     if (!plan.ok) return plan;
     try {
       if (plan.mkdir) fs.mkdirSync(plan.cwd, { recursive: true }); // 지워진 워크트리 — claude 가 cwd 로 프로젝트를 찾게 빈 폴더만
     } catch {
       return { ok: false, error: '작업 폴더를 다시 만들지 못했어요.' };
+    }
+    // 윈도우: Windows Terminal → 안 되면 cmd 새 창(셸 없이 execFile, cmd 줄은 resume.js 가 짠 그대로)
+    if (plan.launches) {
+      return new Promise((resolve) => {
+        const tryAt = (i) => {
+          const l = plan.launches[i];
+          if (!l) { resolve({ ok: false, error: '터미널을 열지 못했어요.' }); return; }
+          execFile(l.file, l.args, { timeout: 15000, env: consoleEnv(), ...(l.verbatim ? { windowsVerbatimArguments: true } : {}) }, (err) => {
+            if (err) { tryAt(i + 1); return; }
+            post(`/runs/${id}/sync`, { watch: true }).catch(() => {});
+            resolve({ ok: true });
+          });
+        };
+        tryAt(0);
+      });
     }
     return new Promise((resolve) => {
       execFile('osascript', plan.args, { timeout: 15000 }, (err) => {
@@ -1630,12 +1718,17 @@ function registerAssetProtocol() {
 // 이미 그 포트에 데몬이 있거나(터미널로 띄움) launchd 가 맡고 있으면(ops/install.sh) 띄우지 않는다. 로그: ~/.cy-agent/logs/(daemon.log · com.cy-agent.daemon.log)
 let daemonHost = null;
 let daemonStopping = false;
-const launchdPlist = () => fs.existsSync(path.join(os.homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_DAEMON}.plist`));
+// 윈도우엔 launchd 가 없다(터미널 설치도 없음)
+const launchdPlist = () => process.platform !== 'win32' && fs.existsSync(path.join(os.homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_DAEMON}.plist`));
 
+// 그 포트의 주인이 시사 데몬인가 → true · 'stopping'(꺼지는 중) · false(아무도 없음·다른 프로그램·오류 응답)
+// 2xx JSON 이고 daemon: "shisa"(또는 그 칸 전의 데몬 모양 brain.provider)여야 한다(bundle.js daemonStatusKind)
 async function daemonAlive() {
   try {
-    await fetch(`${BASE}/status`, { signal: AbortSignal.timeout(1500), headers: { Accept: 'application/json' } });
-    return true; // 무슨 답이든 오면 누가 그 포트에 있다
+    const r = await fetch(`${BASE}/status`, { signal: AbortSignal.timeout(1500), headers: { Accept: 'application/json' } });
+    const ok = r.ok && /json/i.test(r.headers.get('content-type') ?? '');
+    const kind = daemonStatusKind(ok, ok ? await r.json().catch(() => null) : null);
+    return kind === 'stopping' ? 'stopping' : kind === 'daemon';
   } catch {
     return false;
   }
@@ -1649,8 +1742,10 @@ function spawnDaemon(entry, dir) {
   try {
     return spawn(process.execPath, [entry], {
       cwd: dir,
-      env: daemonEnv(process.env, { port: PORT, home: os.homedir() }),
-      stdio: ['ignore', fd, fd],
+      env: daemonEnv(process.env, { port: PORT, home: os.homedir(), platform: process.platform }),
+      // 윈도우: IPC 채널을 열어 끌 때 "shutdown" 을 보낸다(앱이 갑자기 죽으면 연결이 끊겨 데몬도 스스로 끈다)
+      stdio: process.platform === 'win32' ? ['ignore', fd, fd, 'ipc'] : ['ignore', fd, fd],
+      windowsHide: true, // 윈도우: 데몬용 검은 콘솔 창을 띄우지 않는다
     });
   } finally {
     fs.closeSync(fd);
@@ -1683,12 +1778,14 @@ async function startDaemonHost() {
 
 // ---- 로그인할 때 자동 실행(app.setLoginItemSettings) — dmg 로 깐 앱만. 터미널 설치·개발·시험 실행은 건드리지 않는다 ----
 const loginPlan = () => loginItemPlan({ platform: process.platform, packaged: app.isPackaged, launchd: launchdPlist(), env: process.env, pref: state.openAtLogin });
+// 윈도우 설치본은 Update.exe --processStart <exe> 로 등록(업데이트로 app-<ver> 폴더가 바뀌어도 남게). 맥은 {}
+const loginTarget = () => loginItemTarget({ platform: process.platform, packaged: app.isPackaged, execPath: process.execPath, exists: (p) => fs.existsSync(p) });
 
 function applyLoginItem() {
   const p = loginPlan();
   if (!p.manage || typeof p.openAtLogin !== 'boolean') return;
   try {
-    if (app.getLoginItemSettings().openAtLogin !== p.openAtLogin) app.setLoginItemSettings({ openAtLogin: p.openAtLogin });
+    if (app.getLoginItemSettings(loginTarget()).openAtLogin !== p.openAtLogin) app.setLoginItemSettings({ openAtLogin: p.openAtLogin, ...loginTarget() });
   } catch (e) {
     console.error('[login-item]', e?.message ?? e);
   }
@@ -1713,6 +1810,8 @@ async function loginDefaultFromDaemon() {
 
 // ---- 새 버전 알림(src/update-check.js): 하루 한 번 GitHub Releases 최신판을 본다 ----
 const isCheckout = () => !app.isPackaged || launchdPlist(); // 터미널 설치(레포 체크아웃)는 ./ops/update.sh 로 받는다
+// 윈도우 휴대용 zip: Squirrel 설치본이면 Shisa.exe 한 칸 위(%LOCALAPPDATA%\Shisa)에 Update.exe 가 있다
+const isPortableWin = () => process.platform === 'win32' && app.isPackaged && !fs.existsSync(path.join(path.dirname(process.execPath), '..', 'Update.exe'));
 
 async function checkForUpdate() {
   const now = Date.now();
@@ -1722,11 +1821,13 @@ async function checkForUpdate() {
   try {
     const r = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'shisa-agent-desktop' }, signal: AbortSignal.timeout(15000) });
     if (!r.ok) return; // 아직 릴리스가 없으면 404
-    const rel = latestRelease(await r.json());
+    const target = { platform: process.platform, arch: process.arch, portable: isPortableWin(), checkout: isCheckout() };
+    // 이 PC 용 파일(Setup.exe·zip·dmg)이 아직 안 올라왔으면 null: 알림 기록을 안 남기니 다음 확인 때 다시 본다
+    const rel = latestRelease(await r.json(), target);
     if (!rel || !shouldNotify({ latest: rel.version, current: app.getVersion(), notified: state.updateNotified })) return;
     state.updateNotified = rel.version;
     saveState();
-    send('bubble', updateBubble({ version: rel.version, url: rel.url, checkout: isCheckout() }));
+    send('bubble', updateBubble({ version: rel.version, url: rel.url, assetUrl: rel.asset?.url, ...target }));
   } catch (e) {
     if (DEBUG) console.error('[update]', e?.message ?? e);
   }
@@ -1738,7 +1839,7 @@ const appPrefs = {
     const p = loginPlan();
     let on = false;
     if (p.manage) {
-      try { on = app.getLoginItemSettings().openAtLogin === true; } catch { on = state.openAtLogin === true; }
+      try { on = app.getLoginItemSettings(loginTarget()).openAtLogin === true; } catch { on = state.openAtLogin === true; }
     }
     return { ok: true, version: app.getVersion(), openAtLogin: { available: p.manage, on, hint: loginItemHint(p.reason) }, updateCheck: state.updateCheck !== false };
   },
@@ -1760,8 +1861,45 @@ const appPrefs = {
   },
 };
 
+// ---- 윈도우 Squirrel 설치 이벤트(src/squirrel.js): Update.exe 로 바로 가기 만들기·지우기만 하고 끝. 창·데몬은 안 띄운다 ----
+function handleSquirrel(plan) {
+  let quit = false;
+  const done = () => { if (quit) return; quit = true; app.quit(); };
+  if (plan.removeLoginItem) {
+    try { app.setLoginItemSettings({ openAtLogin: false, ...loginTarget() }); } catch (e) { console.error('[squirrel]', e?.message ?? e); }
+  }
+  if (!plan.run) { done(); return; }
+  try {
+    const child = spawn(plan.run[0], plan.run[1], { detached: true, stdio: 'ignore', windowsHide: true });
+    child.on('error', done);
+    child.on('close', done);
+    setTimeout(done, 10_000); // Update.exe 가 안 끝나도 Squirrel 이 너무 오래 기다리지 않게
+  } catch {
+    done();
+  }
+}
+
+// 윈도우 로그오프·종료: 오래 기다려 주지 않으니 집중 그만하기는 짧게(0.8초), 그다음 바로 데몬 끄기
+function onSessionEnd() {
+  quitting = true;
+  const stopDaemon = () => {
+    if (!daemonHost?.pid || daemonStopping) return;
+    daemonStopping = true;
+    Promise.resolve(daemonHost.stop()).catch(() => {});
+  };
+  if (lastFocus?.active && connected && !focusStopped) {
+    focusStopped = true;
+    Promise.resolve(post('/focus/stop', {}, 800)).catch(() => {}).finally(stopDaemon);
+  } else stopDaemon();
+}
+
 // ---- 시작 ----
-if (!app.requestSingleInstanceLock()) {
+// 윈도우: Squirrel 이 만든 바로 가기의 앱 ID(com.squirrel.<id>.<exe>)와 맞춰야 알림·작업 표시줄이 같은 앱으로 묶인다.
+// Squirrel 실행보다 먼저 — 로그인 항목(Run 값) 이름도 같은 ID 라 제거 때 엉뚱한 값을 지우지 않게
+if (process.platform === 'win32' && app.isPackaged) app.setAppUserModelId(appUserModelId(process.execPath));
+if (SQUIRREL) {
+  handleSquirrel(SQUIRREL);
+} else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.whenReady().then(() => {
@@ -1774,6 +1912,8 @@ if (!app.requestSingleInstanceLock()) {
     setupAppActivation();
     registerDebugShortcut();
     createWindow();
+    // 윈도우 로그오프·종료는 before-quit 을 안 거친다(창의 session-end 만 온다) → 집중 기록·데몬 끄기를 여기서 짧게
+    if (process.platform === 'win32') win?.on('session-end', onSessionEnd);
     createTray();
     startDaemonHost().catch((e) => console.error('[daemon]', e?.message ?? e));
     connectLoop();

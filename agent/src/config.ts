@@ -6,6 +6,7 @@ import { resolveConnectors, type Connectors } from "./connectors.ts";
 import { homedir, userInfo } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { phraseLines } from "./phrases.ts";
+import { IS_WIN, isAbsPath, isFsRoot } from "./plat.ts";
 import { autoMergeList } from "./auto-merge.ts";
 import { todayReminderOf, type TodayReminder } from "./daily-plan.ts";
 import { isNewStyle, onboardedOf, readSessionsOf } from "./onboarding.ts";
@@ -41,6 +42,8 @@ export type Config = {
   todayReminder?: TodayReminder;
   // 일정 알림(설정 창 「일정 알림」): 일정 몇 분 전에 알릴지. 없으면 10분 전 한 번, minutesBefore: [] 이면 끔(calendar-alert.ts)
   calendarAlert?: CalendarAlertConfig;
+  // 캐릭터(characters.ts id). 없거나 모르는 값이면 시사
+  character?: string;
   // 지식그래프 2단계(엔티티·관계 추출) 모델. 1단계(업무 판정)는 늘 경량. 기본은 경량(대량 작업이라 비용 우선)
   kgModel: string;
   // 대화 에이전트의 로컬 도구(Bash·Edit/Write·파일 읽기)를 승인 카드 없이 허용(permissions.ts 2-1). 하드 차단은 그대로. 기본 켜짐
@@ -220,7 +223,8 @@ export function repoRootsOf(raw: unknown, notes: string[]): string[] | undefined
   const out: string[] = [];
   for (const x of list) {
     const p = typeof x === "string" ? x.trim() : "";
-    if (!p || !isAbsolute(p) || resolve(p) === "/") { notes.push(`repoRoots 에서 쓸 수 없는 값(${typeof x === "string" ? x.slice(0, 80) : typeof x})을 뺐어요. 「/」로 시작하는 폴더 경로만, 디스크 맨 위(/)는 안 돼요`); continue; }
+    // Windows: 드라이브 절대 경로(C:\…)만, 드라이브 맨 위(C:\)·UNC 는 안 됨
+    if (!p || !isAbsolute(p) || resolve(p) === "/" || (IS_WIN && (!isAbsPath(p) || isFsRoot(p)))) { notes.push(`repoRoots 에서 쓸 수 없는 값(${typeof x === "string" ? x.slice(0, 80) : typeof x})을 뺐어요. 「/」로 시작하는 폴더 경로만, 디스크 맨 위(/)는 안 돼요`); continue; }
     const r = resolve(p);
     if (!out.includes(r)) out.push(r);
   }
@@ -285,6 +289,7 @@ export function loadConfig(env = process.env, file: FileConfig = readFileConfig(
     autoMerge: autoMergeList(f.autoMerge),
     todayReminder: todayReminderOf(f.todayReminder, notes),
     calendarAlert: calendarAlertOf(f.calendarAlert),
+    ...(typeof f.character === "string" && f.character ? { character: f.character } : {}),
     kgModel: env.CY_AGENT_KG_MODEL ?? (f.kgModel as string) ?? (env.CY_AGENT_MODEL_LIGHT ?? (f.models as any)?.light ?? "claude-haiku-5-5"),
     localAutoAllow: env.CY_AGENT_LOCAL_ASK === "1" ? false : f.localAutoAllow !== false,
     repoRoots: repoRootsOf(f.repoRoots, notes) ?? (isNewStyle(f) ? [] : [join(homedir(), "code")]),

@@ -1,5 +1,6 @@
 // 설치는 세 단계다. 코딩 에이전트 → 연결할 MCP 목록 → 고른 것만 한 번에 하나씩.
 // 가이드 안에서 그만두면 그 기능은 넘기고 다음 MCP로 간다.
+import { WIN, modKey, terminalRow, claudeInstall } from './os-hint.js';
 
 export const AGENTS = [
   {
@@ -57,9 +58,9 @@ export const FLOW = {
       id: 'coding-install',
       feature: 'coding',
       title: 'Claude Code를 설치하세요',
-      say: '돋보기에서 터미널을 열고, 아래를 붙여 넣은 뒤 엔터를 칩니다.',
+      say: WIN ? '시작 메뉴에서 PowerShell 을 열고, 아래를 붙여 넣은 뒤 엔터를 칩니다.' : '돋보기에서 터미널을 열고, 아래를 붙여 넣은 뒤 엔터를 칩니다.',
       codeLabel: '터미널에 붙여 넣기',
-      code: 'curl -fsSL https://claude.ai/install.sh | bash',
+      code: claudeInstall(),
     },
     {
       id: 'coding-login',
@@ -331,7 +332,8 @@ export function isFeature(id) {
   return FEATURE_IDS.has(id);
 }
 
-export function agentSteps(agent) {
+// win: 윈도우 문구(PowerShell·Ctrl). 기본은 렌더러 userAgent
+export function agentSteps(agent, win = WIN) {
   if (agent === 'codex') {
     return [
       {
@@ -340,8 +342,8 @@ export function agentSteps(agent) {
         title: 'Codex를 설치하세요',
         identity: '터미널에 명령 한 줄을 붙입니다. 몇 분 걸릴 수 있습니다.',
         rows: [
-          { keys: ['⌘', '스페이스'], text: '이 키를 누르고 **터미널** 이라고 친 뒤 **↩** 를 누릅니다.' },
-          { keys: ['⌘', 'V'], text: '아래 명령을 붙이고 **↩** 를 누릅니다.' },
+          terminalRow(win),
+          { keys: [modKey(win), 'V'], text: '아래 명령을 붙이고 **↩** 를 누릅니다.' },
           '글이 멈추고 입력 줄이 다시 나오면 끝난 것입니다.',
         ],
         details: ['npm 이 없다고 나오면 Node.js 를 먼저 설치해야 합니다. nodejs.org 에서 받을 수 있습니다.'],
@@ -355,8 +357,8 @@ export function agentSteps(agent) {
         title: '터미널에서 Codex에 로그인하세요',
         identity: '**ChatGPT 유료 계정**이 필요합니다. 로그인이 끝나면 이 화면에 저절로 **완료**가 뜹니다.',
         rows: [
-          { keys: ['⌘', '스페이스'], text: '이 키를 누르고 **터미널** 이라고 친 뒤 **↩** 를 누릅니다.' },
-          { keys: ['⌘', 'V'], text: '아래 **codex login** 을 붙이고 **↩** 를 누릅니다.' },
+          terminalRow(win),
+          { keys: [modKey(win), 'V'], text: '아래 **codex login** 을 붙이고 **↩** 를 누릅니다.' },
           '브라우저가 열리면 **ChatGPT 계정**으로 로그인합니다.',
           '이 화면에 **완료**가 뜨면 **다음**을 누릅니다.',
         ],
@@ -374,12 +376,12 @@ export function agentSteps(agent) {
         title: 'Claude Code를 설치하세요',
         identity: '터미널에 명령 한 줄을 붙입니다. 몇 분 걸릴 수 있습니다.',
         rows: [
-          { keys: ['⌘', '스페이스'], text: '이 키를 누르고 **터미널** 이라고 친 뒤 **↩** 를 누릅니다.' },
-          { keys: ['⌘', 'V'], text: '아래 명령을 붙이고 **↩** 를 누릅니다.' },
+          terminalRow(win),
+          { keys: [modKey(win), 'V'], text: '아래 명령을 붙이고 **↩** 를 누릅니다.' },
           '글이 멈추고 입력 줄이 다시 나오면 끝난 것입니다.',
         ],
         codeLabel: '터미널에 붙여 넣기',
-        code: 'curl -fsSL https://claude.ai/install.sh | bash',
+        code: claudeInstall(win),
       },
       {
         id: 'claude-login',
@@ -388,8 +390,8 @@ export function agentSteps(agent) {
         title: '터미널에서 Claude Code에 로그인하세요',
         identity: '**유료 Claude 계정**이 필요합니다. 로그인이 끝나면 이 화면에 저절로 **완료**가 뜹니다.',
         rows: [
-          { keys: ['⌘', '스페이스'], text: '이 키를 누르고 **터미널** 이라고 친 뒤 **↩** 를 누릅니다.' },
-          { keys: ['⌘', 'V'], text: '아래 **claude auth login** 을 붙이고 **↩** 를 누릅니다.' },
+          terminalRow(win),
+          { keys: [modKey(win), 'V'], text: '아래 **claude auth login** 을 붙이고 **↩** 를 누릅니다.' },
           '브라우저가 열리면 **Claude 계정**으로 로그인합니다.',
           '이 화면에 **완료**가 뜨면 **다음**을 누릅니다.',
         ],

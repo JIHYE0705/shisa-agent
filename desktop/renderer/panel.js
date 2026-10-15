@@ -28,6 +28,8 @@ import { cleanModels } from '../src/session.js';
 import { normalizeActions, upsertAction, placeActions, cardView, decideResult, aroundAnswer, foldedPermission, foldApprovals } from '../src/actions.js';
 import { normalizePermissionRules, ruleUsage, withoutPending } from '../src/permissions.js';
 import { normAgents, agentStrip, agentCard, canStopAgent, placeAgents, agentsSig, normSessions, sessionCard, placeSessions, sessionsSig, sessionsPlaceSig } from '../src/agents.js';
+import { characterAssets, okCharacter, appName } from '../src/character.js';
+import { who, whoId, setWho, onWho } from './who.js';
 import { normWorktrees, worktreeCard, openTarget, placeWorktrees, worktreesSig, worktreesPlaceSig } from '../src/worktrees.js';
 
 const cy = window.cy;
@@ -36,11 +38,25 @@ const $ = (id) => document.getElementById(id);
 if (new URLSearchParams(location.search).get('vibrancy') === '1') document.body.classList.add('vibrant');
 
 const brand = $('brand-img');
-// 사이드바 아이콘: 내 캐릭터(눈 뜬 기본 표정) → 번들 png → svg
-const BRAND_SRCS = ['cy-asset://app/character/eyes_open@2x.png', 'cy-asset://app/character.png', '../assets/character.png', '../assets/character.svg'];
+// 사이드바 아이콘: 고른 캐릭터(눈 뜬 기본 표정) → 번들 png → svg. 캐릭터는 데몬 state(메인이 'character' 로 알린다)
+let character = 'shisa';
+let BRAND_SRCS = [];
 let brandAt = 0;
+function setBrand(id) {
+  character = okCharacter(id);
+  setWho(character);
+  $('brand-name').textContent = appName(character);
+  const conn = $('conn'); // 켜짐·꺼짐 글(연결 상태는 클래스로 — connected 변수는 아래에서 선언된다)
+  if (conn) { conn.textContent = `${who()} ${conn.classList.contains('off') ? '꺼짐' : '켜짐'}`; conn.title = conn.textContent; }
+  const a = characterAssets(character);
+  BRAND_SRCS = [a.retina ? a.open.replace(/\.png$/, '@2x.png') : a.open, ...a.stills.slice(1)];
+  brandAt = 0;
+  brand.src = BRAND_SRCS[0];
+}
 brand.addEventListener('error', () => { if (brandAt < BRAND_SRCS.length - 1) brand.src = BRAND_SRCS[++brandAt]; });
-brand.src = BRAND_SRCS[0];
+setBrand('shisa');
+cy.getCharacter?.().then((id) => { if (typeof id === 'string' && id !== character) setBrand(id); }).catch(() => {});
+cy.onCharacter?.((p) => { if (typeof p?.id === 'string' && p.id !== character) setBrand(p.id); });
 
 // ---- 마크다운: marked(원시 HTML 막음) → DOMPurify ----
 const toHtml = createMarkdown(Marked);
@@ -111,6 +127,7 @@ let setupChoices = {};
 let setupLink = '';
 let keyStatus = '';
 let afterConnect = ''; // 'claudecode'·'codexcli': 그 도구 연결을 마치면 시사의 AI로 쓴다
+let cannedOpen = false; // 채팅: AI가 있을 때 ＋ 로 연 정해진 답 버튼 줄(renderChatLock)
 let sisa = { provider: '', hasKey: false, persona: '', canned: {}, done: {}, connected: [], chatModels: {}, codeModel: 'default' };
 // 예전 화면 위치(ai-offer·agent·pick·walk)는 불러오지 않는다
 try {
@@ -271,7 +288,7 @@ async function load() {
     raw = r.data;
     error = null;
   } else {
-    error = r?.error && !r?.status ? '시사에 연결되지 않았어요.' : `대시보드를 못 가져왔어요 (HTTP ${r?.status ?? '?'})`;
+    error = r?.error && !r?.status ? `${who()}에 연결되지 않았어요.` : `대시보드를 못 가져왔어요 (HTTP ${r?.status ?? '?'})`;
   }
   renderAll();
   if (again) { again = false; load(); }
@@ -326,7 +343,7 @@ function renderOverview() {
       stat(stats.openTodos, '열린 할 일', stats.p1Todos ? `P1 ${stats.p1Todos}개` : 'P1 없음', stats.p1Todos > 0),
       stat(stats.activeProjects, '진행 중 프로젝트', active.slice(0, 3).join(', ') || null),
       stat(stats.pendingProposals, '대기 중 제안', null)),
-    connected ? null : h('div.card.empty', { text: '시사가 꺼져 있어요. 켜지면 여기 채워져요.' }),
+    connected ? null : h('div.card.empty', { text: `${who()}가 꺼져 있어요. 켜지면 여기 채워져요.` }),
     h('h2', null, h('span', { text: '오늘 할 일 ' }),
       h('span.chip.click', { text: today?.items?.length ? `남은 ${(today.items.filter((it) => !it.done).length)}개` : '아직 없음', role: 'button', onclick: () => goto('today') })),
     h('h2', null, h('span', { text: '최근 브리핑 ' }),
@@ -438,7 +455,7 @@ function renderConnectors(list) {
       c.ready || c.mode === 'off' ? null : h('div.conn-hint.muted.small', null,
         h('span', { text: !c.detail || c.detail === '연결 안 됨' ? '연결 안 됨' : `연결 안 됨. ${c.detail}` }))))),
     connNote ? h('p.small.conn-note', { role: 'status', text: connNote }) : null,
-    h('p.muted.small.conn-foot', { text: '연결 해제는 시사 설정에서만 지워요. Claude Code에 등록한 MCP 서버(claude mcp add)는 그대로 남아요.' }),
+    h('p.muted.small.conn-foot', { text: `연결 해제는 ${who()} 설정에서만 지워요. Claude Code에 등록한 MCP 서버(claude mcp add)는 그대로 남아요.` }),
   ];
 }
 
@@ -510,6 +527,9 @@ function keyFail(error) {
   return '**확인하지 못했습니다.** 키를 다시 복사해서 붙이고 **확인**을 누르세요.';
 }
 
+// 캐릭터를 바꾸면 설치 화면(그림·말)도 다시
+onWho(() => { if (section === 'setup') renderSetupView(false); });
+
 function renderSetupView(resetScroll) {
   if (section !== 'setup') {
     clearInterval(loginTimer);
@@ -517,7 +537,7 @@ function renderSetupView(resetScroll) {
     return;
   }
   clampSetupCursor();
-  const key = `${setupPhase}|${setupName}|${setupRepos.join(',')}|${setupReadSessions}|${JSON.stringify(detected)}|${JSON.stringify(brain)}|${(sisa.connected || []).join(',')}|${setupAgent}|${setupLink}|${setupCursor}|${keyStatus}|${JSON.stringify(sisa.done)}|${setupPicked.join(',')}|${JSON.stringify(setupChoices)}|${agentLoginState.loggedIn}|${agentLoginState.installed}`;
+  const key = `${whoId()}|${setupPhase}|${setupName}|${setupRepos.join(',')}|${setupReadSessions}|${JSON.stringify(detected)}|${JSON.stringify(brain)}|${(sisa.connected || []).join(',')}|${setupAgent}|${setupLink}|${setupCursor}|${keyStatus}|${JSON.stringify(sisa.done)}|${setupPicked.join(',')}|${JSON.stringify(setupChoices)}|${agentLoginState.loggedIn}|${agentLoginState.installed}`;
   if (!resetScroll && key === setupKey && $('sec-setup').childElementCount) {
     watchAgentLogin();
     return;
@@ -914,7 +934,7 @@ let addDraft = '';
 let todayPriority = 2; // 오늘 할 일 탭의 추가 칸
 let todayDraft = '';
 
-const why = (r) => (typeof r?.data?.error === 'string' ? r.data.error : r?.status ? `HTTP ${r.status}` : '시사 연결 확인');
+const why = (r) => (typeof r?.data?.error === 'string' ? r.data.error : r?.status ? `HTTP ${r.status}` : `${who()} 연결 확인`);
 
 // 서버 호출 + 낙관적 반영. 성공하면 commit 으로 raw 에 반영, 실패하면 겹침만 빼서 원래대로
 // op 하나 또는 여러 개. failText 가 null 이면 목록에 오류를 띄우지 않는다
@@ -1341,7 +1361,7 @@ function rulesBar() {
     title: '할 일 규칙',
     onclick: () => { rulesOpen = !rulesOpen; renderTodos(); },
   });
-  const bar = h('div.todo-tools', null, chip, vm.stats.backlogTodos ? h('span.muted.small', { text: `백로그 ${vm.stats.backlogTodos}개` }) : null, focusView.bar('todos'));
+  const bar = h('div.todo-tools', null, chip, vm.stats.backlogTodos ? h('span.muted.small', { text: `언젠가 ${vm.stats.backlogTodos}개` }) : null, focusView.bar('todos'));
   if (!rulesOpen) return bar;
   const list = rules.length
     ? rules.map((r) => h(`div.rule-row${r.enabled ? '' : '.off'}`, { dataset: { id: r.id } },
@@ -1422,7 +1442,7 @@ function todoRow(t) {
   const flashing = flash?.id === t.id && Date.now() < flash.until;
   const row = h(`div.todo.row${t.pending ? '.pending' : ''}${open ? '.open' : ''}${confirming ? '.confirming' : ''}${flashing ? '.flash' : ''}`, {
     dataset: { id: t.id }, tabindex: '0', role: 'button', 'aria-expanded': String(open),
-    'aria-label': `${t.title} — Enter 설명, Shift+Enter 제목·설명 고치기, Alt+↑↓ 순서, Alt+1·2·3 우선순위, Alt+4 백로그, Delete 휴지통`,
+    'aria-label': `${t.title} — Enter 설명, Shift+Enter 제목·설명 고치기, Alt+↑↓ 순서, Alt+1~4 우선순위(오늘 꼭·이번 주·천천히·언젠가), Delete 휴지통`,
     title: '눌러서 설명 · 두 번 눌러 제목·설명 고치기 · 꾹 눌러 끌어서 순서·우선순위',
     onclick: (e) => {
       if (suppressClick) { suppressClick = false; return; }
@@ -2634,10 +2654,11 @@ function renderChatLock() {
   }
   const lock = chatLock(brain, connectCardHidden);
   compose.hidden = lock.locked;
-  box.hidden = !lock.locked;
-  if (!lock.locked) return;
-  const card = connectCard(brain);
+  box.hidden = !lock.locked && !cannedOpen;
   const canned = h('div.canned-row', null, CANNED.map((c) => h('button.ghost', { type: 'button', text: c.label, onclick: () => sayCanned(c) })));
+  $('chat-canned-btn')?.classList.toggle('on', cannedOpen);
+  if (!lock.locked) { if (cannedOpen) box.replaceChildren(canned); return; } // AI가 있어도 ＋ 로 정해진 답 버튼
+  const card = connectCard(brain);
   if (lock.reopen) {
     box.replaceChildren(canned, h('button.link.connect-reopen', { type: 'button', text: card.reopen, onclick: () => setConnectCardHidden(false) }));
     return;
@@ -2680,10 +2701,12 @@ cy.onBrain?.(applyBrain);
 
 // AI 없이 고른 말: 내 말은 바로 「보냄」, 시사는 1~2초 입력 중(점 세 개)을 보이고 답한다
 let cannedTyping = null; // 답을 기다리는 타이머(입력 중 표시)
+$('chat-canned-btn')?.addEventListener('click', () => { cannedOpen = !cannedOpen; renderChatLock(); });
 function sayCanned(c) {
   if (cannedTyping) return; // 앞 답이 오기 전엔 하나씩
+  if (c.id === 'cheer' || c.id === 'dance') cy.localAsk?.(c.id).catch(() => {}); // 캐릭터도 응원·춤 영상
   const openItems = rawTodos();
-  const text = cannedReply(c.id, { open: openItems.length, done: vm.recentDone.length, next: openItems[0]?.title || '', hour: new Date().getHours() }, { override: sisa.canned });
+  const text = cannedReply(c.id, { open: openItems.length, done: vm.recentDone.length, next: openItems[0]?.title || '', hour: new Date().getHours() }, { override: sisa.canned, character });
   messages = appendLocal(messages, { role: 'user', text: c.label, at: new Date().toISOString(), canned: true });
   cannedTyping = setTimeout(() => {
     cannedTyping = null;
@@ -2806,7 +2829,7 @@ async function sendChat() {
     const gone = r?.status === 404;
     if (atts.length) tray.restore(atts); // 첨부는 칩으로 돌려놓는다(다시 보내기)
     const why = r?.status === 400 && typeof r.data?.error === 'string' ? `못 보냈어요: ${r.data.error}` : null; // 첨부 한도·못 찾음 등
-    messages = appendLocal(messages, { role: 'assistant', text: gone ? '이 대화를 못 찾았어요. 다른 곳에서 지웠을 수 있어요.' : why ?? '시사에 연결되지 않아서 못 보냈어요.', at: new Date().toISOString(), error: true });
+    messages = appendLocal(messages, { role: 'assistant', text: gone ? '이 대화를 못 찾았어요. 다른 곳에서 지웠을 수 있어요.' : why ?? `${who()}에 연결되지 않아서 못 보냈어요.`, at: new Date().toISOString(), error: true });
     if (gone) loadThreadsSoon();
     renderChat();
   }
@@ -2990,8 +3013,8 @@ cy.onConnection(({ connected: c }) => {
   const was = connected;
   connected = !!c;
   const el = $('conn');
-  el.textContent = connected ? '시사 켜짐' : '시사 꺼짐';
-  el.title = connected ? '시사 켜짐' : '시사 꺼짐';
+  el.textContent = connected ? `${who()} 켜짐` : `${who()} 꺼짐`;
+  el.title = el.textContent;
   el.classList.toggle('off', !connected);
   if (connected && !was && section === 'setup') loadSetupSettings(); // 앱이 데몬을 막 띄웠으면 마법사 칸을 채운다
   if (connected && !was) { load(); focusView.load(); loadThreads(); loadPermissions(); loadChatModels(); loadAgents(); loadQueue(); }

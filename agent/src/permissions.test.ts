@@ -18,8 +18,13 @@ import { REQUEST_SCHEMA, toolOptions, INTERACTIVE_SYSTEM, SYSTEM, permWaitSteps 
 import { ASK_SYSTEM } from "./todo-ask.ts";
 import { CHAT_SYSTEM } from "./chat.ts";
 import {
-  DENIED_STEP, HARD_DENY, PermissionBroker, PermissionRules, bashPrefix, buildPreview, hardDeny, isAutoAllowed, ruleFor, ruleMatches, waitStep, type PermCtx, type PermWait,
+  CHECK_MAX, DENIED_STEP, HARD_DENY, PermissionBroker, PermissionRules, bashNeedsCard, bashPrefix, buildPreview, cySafePlace, globMatch, hardDeny, isAutoAllowed, ruleFor, ruleMatches, waitStep, type GitState, type PermCtx, type PermWait,
 } from "./permissions.ts";
+import { realpathSync } from "node:fs";
+import { isCodeReadCall, isSecretPath } from "./code-read.ts";
+import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 
 const NOW = new Date("2026-10-12T01:00:00.000Z");
 const EV = "AAMkAGI2TG93AAA=";
@@ -472,8 +477,10 @@ test("카드 자리: 호출자 origin 이 먼저, 없으면 run 의 origin(대�
 });
 
 test("읽기만 하는 셸 명령은 카드 없이: 클론 뒤 둘러보기는 바로, 쓰기·비밀·하드 차단은 아님", async () => {
-  const look = "cd /Users/me/code/notes-app && git log --oneline | head -3 && ls && head -30 README.md 2>/dev/null";
+  // Windows(Git Bash): /Users/… 는 Git 설치 폴더 안쪽이라 어딘지 모름 → 드라이브 모양 /c/Users/… 로
+  const look = `cd ${process.platform === "win32" ? "/c" : ""}/Users/me/code/notes-app && git log --oneline | head -3 && ls && head -30 README.md 2>/dev/null`;
   assert.ok(isAutoAllowed("Bash", { command: look }, ctx));
+  if (process.platform === "win32") assert.ok(!isAutoAllowed("Bash", { command: "cd /Users/me/code/notes-app && ls" }, ctx));
   for (const c of ["git status", "ls -la", "cat README.md | head", "git branch -a"]) assert.ok(isAutoAllowed("Bash", { command: c }, ctx), c);
   for (const c of ["git clone https://github.com/x/notes", "ls > x", "rm -rf x", "find . -delete", "git branch -D x", "cat ~/.ssh/id_rsa", "cat .env", "echo $(rm x)"])
     assert.ok(!isAutoAllowed("Bash", { command: c }, ctx), c);
@@ -623,4 +630,151 @@ test("우회 막기: .env·~/.cy-agent 를 언급하거나 치환으로 만들 �
     assert.equal(r.broker.quick("Bash", { command: c }, local).decision, "ask", c);
   for (const c of ["npm test", "cat .env.example", "cd ~/.cy-agent/worktrees/x && npm test", `cd ${join(root, "cy", "worktrees", "a")} && git status`, "echo $HOME"])
     assert.equal(r.broker.quick("Bash", { command: c }, local).decision, "allow", c);
+});
+
+// ── 보안 검토(Windows 포트) 회귀 ──
+const WIN_ONLY = process.platform !== "win32" && "Windows 전용(UNC·8.3 짧은 이름·Git Bash 경로)";
+
+test("git 쓰기 거름: 따옴표·역슬래시·경로/git.exe·-c alias 로 비켜 가지 못한다(모든 OS), cy/ 브랜치의 보통 커밋·푸시는 그대로", () => {
+  const WT = join(root, "cy", "worktrees", "app-cy-x");
+  const st: GitState = { top: WT, branch: "cy/x", defaultBranch: "main", upstream: "origin/cy/x" };
+  const g: PermCtx = { ...ctx, cwd: WT, gitProbe: (d) => (resolve(d) === resolve(WT) ? st : undefined) };
+  const ok = (command: string) => hardDeny("Bash", { command }, g).allow;
+  for (const c of ["git push origin cy/x", "git push", "'git' push origin cy/x", "git commit -m 'x && y'", "git -c user.name=a commit -m x", "git log HEAD~1", "git config user.name a"]) assert.ok(ok(c), c);
+  for (const c of [
+    "git push origin main", "\"C:/Program Files/Git/cmd/git.exe\" push origin main", "/usr/bin/git push origin main", "'git' push origin HEAD:main", "\"git\" push origin main",
+    "g\\it push origin main", "gi''t push origin main", "GIT push origin main", "git.exe push origin main", "git -c alias.p=push p origin main", "git -calias.p=push p origin main",
+    "git --config-env=alias.p=X p origin main", "git config alias.p push", "git config --global alias.p 'push origin main'", "G=git; $G push origin main",
+    "git $'\\x70ush' origin main", "git \\\npush origin main", "cd $X && git push", "cd -P x && git push",
+  ]) assert.ok(!ok(c), c);
+});
+
+test("Windows: UNC·장치 경로(\\\\localhost\\c$\\…)로 파일 도구의 비밀 경로 차단을 비켜 가지 못한다 · \\\\?\\C:\\ 는 C:\\ 로", { skip: WIN_ONLY }, () => {
+  const unc = (p: string) => `\\\\localhost\\${p[0].toLowerCase()}$\\${p.slice(3)}`;
+  const cfgFile = join(ctx.cyHome!, "config.json"), settings = join(HOME, ".claude", "settings.json");
+  assert.ok(deny("Read", { file_path: unc(cfgFile) }));
+  assert.ok(deny("Read", { file_path: unc(cfgFile).replace(/\\/g, "/") }));
+  assert.ok(deny("Edit", { file_path: unc(settings), old_string: "a", new_string: "b" }));
+  assert.ok(deny("Write", { file_path: unc(join(repo, "a.ts")), content: "x" })); // 어디든 UNC 는 막는다
+  assert.ok(deny("Read", { file_path: `\\\\?\\UNC\\localhost\\c$\\${cfgFile.slice(3)}` }));
+  assert.ok(deny("Read", { file_path: `\\\\.\\${cfgFile}` }));
+  assert.ok(deny("Read", { file_path: `\\??\\${cfgFile}` }));
+  assert.ok(deny("Read", { file_path: `\\\\?\\${cfgFile}` })); // 긴 경로 접두사는 C:\ 로 풀어서 비밀 판정
+  assert.ok(!deny("Read", { file_path: `\\\\?\\${join(repo, "README.md")}` }));
+  assert.ok(deny("Grep", { pattern: "x", path: unc(HOME) }));
+  assert.ok(deny("Glob", { pattern: "*", path: `//localhost/c$/${HOME.slice(3)}` }));
+  assert.ok(deny("Glob", { pattern: `//localhost/c$/${HOME.slice(3).replace(/\\/g, "/")}/*/settings.json` }));
+  assert.ok(isSecretPath(unc(join(repo, "README.md"))));
+  assert.equal(isCodeReadCall("Read", { file_path: unc(join(repo, "README.md")) }, { roots: ctx.roots, cwd: repo }).allow, false);
+  assert.equal(isAutoAllowed("Read", { file_path: unc(join(repo, "README.md")) }, ctx), false);
+});
+
+test("Windows: 셸 낱말을 실제 경로로 풀어 8.3 짧은 이름(CY-AGE~1 · CONFIG~1.JSO)·cd 로 옮긴 위치·UNC 로 비켜 가지 못한다", { skip: WIN_ONLY }, (t) => {
+  const cy = join(HOME, ".cy-agent"), cl = join(HOME, ".claude");
+  mkdirSync(cy, { recursive: true }); mkdirSync(cl, { recursive: true });
+  writeFileSync(join(cy, "config.json"), "{}"); writeFileSync(join(cl, ".credentials.json"), "{}");
+  const short = (p: string) => String(spawnSync("cmd.exe", ["/d", "/s", "/c", `"for %I in ("${p}") do @echo %~sI"`], { windowsVerbatimArguments: true, encoding: "utf8" }).stdout).trim();
+  const sCy = basename(short(cy)), sCfg = basename(short(join(cy, "config.json"))), sCl = basename(short(cl));
+  const card = (command: string) => !hardDeny("Bash", { command }, ctx).allow || bashNeedsCard(command, ctx);
+  // UNC: 적어도 승인 카드(로컬 자동 허용 안 됨)
+  for (const c of ["cat //localhost/c$/Users/u/.claude/.credentials.json", "cat //localhost/c$/Users/u/AppData/x.txt", "cp '\\\\localhost\\c$\\x\\y' /tmp/z"]) assert.ok(card(c), c);
+  // 위치를 모르는 짧은 이름 · glob 섞인 짧은 이름 → 카드
+  for (const c of ["cd $X && cat ABCDEF~1/config.json", `cat ~/${sCy === ".cy-agent" ? "CY-AGE~1" : sCy}/conf*`]) assert.ok(card(c), c);
+  // 보통 명령은 그대로
+  for (const c of ["git log HEAD~1", "npm test", "ls -la"]) assert.ok(!card(c), c);
+  if (sCy.toLowerCase() === ".cy-agent" || !/~\d/.test(sCy + sCfg + sCl)) { t.skip("이 볼륨엔 8.3 짧은 이름이 없음"); return; }
+  for (const c of [`cat ~/${sCy}/config.json`, `cp ~/.cy-agent/${sCfg} /tmp/x`, `cat ~/${sCl}/.credentials.json`, `cd ~/${sCy} && cat config.json`, `cd ~ && cat ${sCl}/.credentials.json`, `echo x > ~/${sCl}/settings.json`, `cd ~ && cat .claude.json`])
+    assert.ok(!hardDeny("Bash", { command: c }, ctx).allow, c);
+});
+
+test("Windows: Git Bash 안쪽 경로(/tmp · /usr · /)는 어딘지 모름 → git 쓰기 판정은 안전한 쪽(막음)", { skip: WIN_ONLY }, () => {
+  const st: GitState = { top: resolve("/tmp"), branch: "cy/x", defaultBranch: "main" };
+  const g: PermCtx = { ...ctx, gitProbe: (d) => (resolve(d) === resolve("/tmp") || resolve(d) === resolve("/") ? st : undefined) };
+  for (const c of ["cd /tmp && git push origin cy/x", "git -C /tmp push origin cy/x", "cd / && git commit -m x"]) assert.ok(!hardDeny("Bash", { command: c }, g).allow, c);
+});
+
+// ── 안정성 검토 회귀(잘못 막던 것 · 멈춤 · 던짐) ──
+const cyCtx = (): PermCtx => {
+  const WT = join(root, "cy", "worktrees", "app-cy-s");
+  const st: GitState = { top: WT, branch: "cy/s", defaultBranch: "main", upstream: "origin/cy/s" };
+  return { ...ctx, cwd: WT, gitProbe: (d) => (resolve(d) === resolve(WT) ? st : undefined) };
+};
+const mainCtx: PermCtx = { ...ctx, gitProbe: () => ({ top: repo, branch: "main", defaultBranch: "main" }) };
+
+test("잘못 막던 것: Grep 정규식의 // · \\\\ 는 UNC 가 아님, 커밋 메시지·파일 이름 속 powershell/wsl/source/eval/xargs, merge-base, alias 읽기, 값 없는 --exec-path", () => {
+  for (const pattern of ["// TODO", "//+\\s*TODO", "\\\\n"]) assert.ok(!deny("Grep", { pattern, path: repo }), pattern);
+  const g = cyCtx();
+  const ok = (command: string) => hardDeny("Bash", { command }, g).allow;
+  for (const c of [
+    'git commit -m "feat(windows): support PowerShell"', "git add docs/wsl.md && git commit -m docs", 'git commit -m "fix: source map paths"',
+    "git add src/source.ts && git commit -m x", 'git commit -m "use eval-free xargs-less code"', "git diff $(git merge-base HEAD origin/main)",
+    "git config alias.st", "git config --get alias.st", "git config --get-regexp alias", "git config get alias.st", "git --exec-path",
+    "git commit -m \"$(cat <<'EOF'\nfix: use xargs and source maps\n\nsh -c is not run here\nEOF\n)\"",
+  ]) assert.ok(ok(c), c);
+  // 같은 곳이라도 감싸 부르기·alias 넣기는 그대로 막힌다
+  for (const c of [
+    "timeout 5 sh -c 'git push origin main'", "bash <<'EOF'\ngit push origin main\nEOF", "echo main | xargs git push origin", "eval 'git push origin main'",
+    "git commit -m \"$(eval 'git push origin main')\" -a", "source ./x.sh && git push", "git config alias.p push", "git config --global alias.p 'push origin main'",
+    "git config alias.p '!git push origin main'", "git config set alias.p push", "git --exec-path=/x push", "git --exec-path /x push", "git --config-env=alias.p=X p",
+  ]) assert.ok(!ok(c), c);
+});
+
+test("우회 막기: git -ccore.editor=true commit 도 git 쓰기로 본다 · {..} 펼침으로 .env 를 만드는 glob", () => {
+  for (const c of ["git -ccore.editor=true commit -m x", "git -c core.editor=true commit -m x", "git -ccore.hooksPath=/x push origin main", "git --no-pager -C . commit -m x"])
+    assert.ok(!hardDeny("Bash", { command: c }, mainCtx).allow, c);
+  for (const c of ["cat .{e..f}nv", "cat .{e*,x}", "cat .{x,{e,y}}nv"]) assert.ok(bash(c), c);
+  assert.ok(globMatch(".[!x]n?", ".env") && globMatch("*.{ts,js}", "a.TS") && !globMatch(".env.ex*", ".env"));
+  assert.throws(() => globMatch("{a,b}".repeat(10), "a"));
+});
+
+test("Windows: git 리비전(HEAD~1)·버전(@~4.17)은 8.3 짧은 이름이 아님 — 위치를 몰라도 카드 없이, 경로 모양의 짧은 이름은 그대로 카드", { skip: WIN_ONLY }, () => {
+  const card = (command: string) => !hardDeny("Bash", { command }, ctx).allow || bashNeedsCard(command, ctx);
+  for (const c of ['cd "$(git rev-parse --show-toplevel)" && git diff HEAD~1', "cd /tmp && git diff HEAD~1", "cd /tmp && git log main~3..HEAD^~2 @~1", "npm i lodash@~4.17", "cd $X && npm i lodash@~4.17"])
+    assert.ok(!card(c), c);
+  for (const c of ["cd $X && cat ABCDEF~1/config.json", "cd /tmp && cat ABCDEF~1", "cd /tmp && git diff --no-index ABCDEF~1 x", "cd /tmp && git show HEAD~1:ABCDEF~1/x"]) assert.ok(card(c), c);
+});
+
+test("Windows: git 이 준 8.3 짧은 이름 경로(C:/Users/ABCDEF~1/.cy-agent/worktrees/x)도 cy-agent 워크트리로 본다", { skip: WIN_ONLY }, (t) => {
+  const wt = join(root, "cy", "worktrees", "short-x");
+  mkdirSync(wt, { recursive: true });
+  const short = String(spawnSync("cmd.exe", ["/d", "/s", "/c", `"for %I in ("${wt}") do @echo %~sI"`], { windowsVerbatimArguments: true, encoding: "utf8" }).stdout).trim();
+  const long = realpathSync.native(wt);
+  if (short.toLowerCase() === long.toLowerCase()) { t.skip("이 볼륨엔 8.3 짧은 이름이 없음"); return; }
+  for (const [top, cyHome] of [[short, dirname(dirname(long))], [long, dirname(dirname(short))]]) {
+    assert.ok(cySafePlace({ top: top.replace(/\\/g, "/"), branch: "feat/x" }, { ...ctx, cyHome }), `${top} · ${cyHome}`);
+  }
+  assert.ok(!cySafePlace({ top: join(root, "ax", "app").replace(/\\/g, "/"), branch: "feat/x" }, ctx));
+});
+
+test("멈춤·던짐 없음: 긴 옵션 줄·ls 반복·cd 반복(10 KB)은 1초 안 · 감당 못 하는 glob 은 던지지 않고 카드 · 64 KB 넘는 명령은 카드", () => {
+  const r = rig();
+  const local = { ...ctx, localAuto: true };
+  const n = 10 * 1024;
+  const fill = (u: string) => u.repeat(Math.ceil(n / u.length));
+  for (const c of ["git" + fill(" --oneline") + " x", "git " + fill("-a ") + "x", fill("ls\n"), fill("cd src && ") + "ls", fill("git -a git "), fill("del "), fill("<<EOF\n"), "git " + fill("$("), fill("cd a/ && ")]) {
+    const t0 = performance.now();
+    r.broker.quick("Bash", { command: c }, local);
+    const ms = performance.now() - t0;
+    // 고치기 전엔 1.9초~수 분 — 1초면 그 회귀는 잡고, 느린 PC·전체 시험 부하의 흔들림(200~400ms)은 넘긴다
+    assert.ok(ms < 1000, `${JSON.stringify(c.slice(0, 20))} ${ms.toFixed(0)}ms`);
+  }
+  for (const [tool, input] of [["Bash", { command: "ls " + "{a,b}".repeat(20000) }], ["Glob", { pattern: "{a,b}".repeat(20000) }], ["Grep", { pattern: "x", glob: "*".repeat(5000) }]] as const) {
+    assert.doesNotThrow(() => r.broker.quick(tool, input, local));
+    assert.equal(r.broker.quick(tool, input, local).decision, "ask", tool);
+  }
+  assert.equal(r.broker.quick("Bash", { command: "echo " + "a".repeat(CHECK_MAX) }, local).decision, "ask");
+  assert.equal(r.broker.quick("Bash", { command: "npm test" }, local).decision, "allow");
+});
+
+test("Windows: 실제 경로 조회는 한 판정 안에서 다시 쓰고, 풀어 보는 낱말 수에 상한(넘으면 카드) · 아주 긴 경로는 모름(막음)", { skip: WIN_ONLY }, () => {
+  const r = rig();
+  const local = { ...ctx, localAuto: true };
+  const t0 = performance.now();
+  assert.equal(r.broker.quick("Bash", { command: "cd src && ".repeat(1000) + "ls" }, local).decision, "ask"); // 상한 넘음 → 카드
+  assert.ok(performance.now() - t0 < 500);
+  assert.equal(r.broker.quick("Bash", { command: Array.from({ length: 300 }, (_, i) => `src/f${i}.ts`).join(" ").replace(/^/, "cat ") }, local).decision, "allow");
+  const deep = repo + "\\a".repeat(20000);
+  const t1 = performance.now();
+  assert.ok(deny("Read", { file_path: deep }));
+  assert.ok(performance.now() - t1 < 500);
 });

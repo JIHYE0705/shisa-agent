@@ -1,4 +1,5 @@
 // 작업 세션 창 — 왼쪽 run 목록, 오른쪽 Claude Code 같은 기록 + 입력창. 네트워크는 전부 메인을 거친다.
+import { who, setWho } from './who.js';
 import DOMPurify from './vendor/purify.js';
 import { Marked } from './vendor/marked.js';
 import { createMarkdown } from '../src/markdown.js';
@@ -448,7 +449,7 @@ async function askBtw(r, q, ids = []) {
   const res = await cy.btw(r.id, q, model, ids).catch(() => null);
   delete item.loading;
   if (res?.ok && typeof res.data?.answer === 'string') item.a = res.data.answer;
-  else item.error = res?.data?.error ? `답을 못 받았어요: ${res.data.error}` : '시사에 연결되지 않아서 못 물어봤어요.';
+  else item.error = res?.data?.error ? `답을 못 받았어요: ${res.data.error}` : `${who()}에 연결되지 않아서 못 물어봤어요.`;
   saveBtw();
   if (selected === r.id) renderLog();
 }
@@ -650,7 +651,7 @@ async function send() {
       if (clientId) await refetch(); // 데몬 기록(대기 중)으로 — SSE 가 먼저 왔으면 그대로
       if (m.mode === 'continue' && okRunId(res.data?.runId)) { await loadRuns(); await select(res.data.runId); } // 연결된 새 작업으로
       else if (m.mode !== 'inject') await refetch();
-    } else $('compose-err').textContent = res?.status === 409 && clientId ? '작업이 마무리 중이거나 끝나서 못 보냈어요 — 글은 입력창에 돌려놨어요.' : res?.data?.error ? `못 보냈어요: ${res.data.error}` : '시사에 연결되지 않아서 못 보냈어요.';
+    } else $('compose-err').textContent = res?.status === 409 && clientId ? '작업이 마무리 중이거나 끝나서 못 보냈어요 — 글은 입력창에 돌려놨어요.' : res?.data?.error ? `못 보냈어요: ${res.data.error}` : `${who()}에 연결되지 않아서 못 보냈어요.`;
   } finally {
     sending = false;
     renderHead();
@@ -758,7 +759,7 @@ $('btn-new').addEventListener('click', async () => {
   const r = await cy.listRepos();
   const repos = Array.isArray(r?.data?.repos) ? r.data.repos : [];
   const last = store.get('lastRepo', '');
-  sel.replaceChildren(...(repos.length ? repos.map((x) => h('option', { value: x.path, text: `${x.name} — ${x.path}`, selected: x.path === last ? true : null })) : [h('option', { value: '', text: r?.ok ? '허용된 레포가 없어요(repoRoots)' : '시사에 연결되지 않았어요' })]));
+  sel.replaceChildren(...(repos.length ? repos.map((x) => h('option', { value: x.path, text: `${x.name} — ${x.path}`, selected: x.path === last ? true : null })) : [h('option', { value: '', text: r?.ok ? '허용된 레포가 없어요(repoRoots)' : `${who()}에 연결되지 않았어요` })]));
   $('nt-text').focus();
 });
 $('nt-cancel').addEventListener('click', () => showNewTask(false));
@@ -769,7 +770,7 @@ $('nt-submit').addEventListener('click', async () => {
   $('nt-err').textContent = '';
   try {
     const r = await cy.newTask(t.repo, t.text);
-    if (!r?.ok || !r.data?.proposal) { $('nt-err').textContent = r?.data?.error ? `못 만들었어요: ${r.data.error}` : '시사에 연결되지 않았어요.'; return; }
+    if (!r?.ok || !r.data?.proposal) { $('nt-err').textContent = r?.data?.error ? `못 만들었어요: ${r.data.error}` : `${who()}에 연결되지 않았어요.`; return; }
     store.set('lastRepo', t.repo);
     $('nt-text').value = '';
     proposalCard(r.data.proposal);
@@ -783,7 +784,7 @@ $('im-submit').addEventListener('click', async () => {
   $('im-err').textContent = '';
   try {
     const r = await cy.importSession(sid);
-    if (!r?.ok || !r.data?.runId) { $('im-err').textContent = r?.data?.error ? `못 불러왔어요: ${r.data.error}` : '시사에 연결되지 않았어요.'; return; }
+    if (!r?.ok || !r.data?.runId) { $('im-err').textContent = r?.data?.error ? `못 불러왔어요: ${r.data.error}` : `${who()}에 연결되지 않았어요.`; return; }
     $('im-sid').value = '';
     showNewTask(false);
     await loadRuns();
@@ -891,3 +892,7 @@ cy.onConnection(({ connected }) => {
 setInterval(() => { if (current()?.status === 'running') renderHead(); }, 1000); // 경과 시간
 loadRuns();
 loadModels();
+
+// 창 글 속 캐릭터 이름(「하치와레에 연결되지 않았어요」)
+cy.getCharacter?.().then((id) => setWho(id)).catch(() => {});
+cy.onCharacter?.((p) => setWho(p?.id));

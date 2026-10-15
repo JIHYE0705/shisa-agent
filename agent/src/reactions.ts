@@ -7,7 +7,8 @@ import { execFile } from "node:child_process";
 import type { Bubble, BubbleImage } from "./bus.ts";
 import type { Config } from "./config.ts";
 import { localDate as kstDate, localMinutes as kstMinutes } from "./calendar.ts"; // 이 맥의 시간대 기준(이름은 예전 그대로)
-import { voice, TONE } from "./voice.ts";
+import { voice, tone } from "./voice.ts";
+import { PRIO_LABEL } from "./local-mode.ts";
 import { phrase, phraseVoice, customPhrase } from "./phrases.ts";
 import { mergeDetail, mergeQuestion, type MergeInfo } from "./merge-request.ts";
 
@@ -70,11 +71,11 @@ export function todoListMd(items: TodoLike[], via: string, max = 6): string {
   const shown = items.slice(0, max);
   const more = items.length > max ? `\n\n…외 ${items.length - max}개` : "";
   if (shown.length >= 4) {
-    const rows = shown.map((t) => `| ${t.priority ? `**P${t.priority}**` : "—"} | ${cell(clip(t.title, 34))} | ${cell(t.source ?? via)} |`);
+    const rows = shown.map((t) => `| ${t.priority ? `**${PRIO_LABEL[t.priority] ?? t.priority}**` : "—"} | ${cell(clip(t.title, 34))} | ${cell(t.source ?? via)} |`);
     return ["| | 할 일 | 출처 |", "|---|---|---|", ...rows].join("\n") + more;
   }
   return shown.map((t) => {
-    const head = `- ${t.priority ? `**[P${t.priority}]** ` : ""}${cell(clip(t.title, 40))} · ${cell(t.source ?? via)}`;
+    const head = `- ${t.priority ? `**[${PRIO_LABEL[t.priority] ?? t.priority}]** ` : ""}${cell(clip(t.title, 40))} · ${cell(t.source ?? via)}`;
     const why = t.description?.trim() ? `\n  ${cell(clip(t.description.trim(), 60))}` : "";
     return head + why;
   }).join("\n") + more;
@@ -480,7 +481,7 @@ export function mergeAskPrompt(rec: MergeRec, info: string, question: string): s
 
 const MERGE_ASK_SCHEMA = {
   type: "object", additionalProperties: false, required: ["reply"],
-  properties: { reply: { type: "string", description: "존댓말 1–3줄(150자 안팎). 위 정보로만 답하고 모르면 모른다고." } },
+  properties: { reply: { type: "string", description: "정해진 캐릭터 말투로 1–3줄(150자 안팎). 위 정보로만 답하고 모르면 모른다고." } },
 } as const;
 
 export function realMergeAsk(cfg: Config) {
@@ -489,7 +490,7 @@ export function realMergeAsk(cfg: Config) {
     const info = await prInfo(rec.prUrl);
     const r = await ask<{ reply: string }>(cfg, mergeAskPrompt(rec, info, question), MERGE_ASK_SCHEMA, undefined, {
       tools: false,
-      system: `너는 사용자의 데스크톱 비서 캐릭터다. ${TONE} 지금은 PR 머지 전에 사용자가 묻는 말에 한 번 답한다(머지 판단에 쓰이는 진지한 답이니 말끝 늘이기·감정 표시는 쓰지 않는다). 주어진 PR 정보로만 답하고 지어내지 않는다.`,
+      system: `너는 사용자의 데스크톱 비서 캐릭터다. ${tone()} 지금은 PR 머지 전에 사용자가 묻는 말에 한 번 답한다(머지 판단에 쓰이는 진지한 답이니 말끝 늘이기·감정 표시는 쓰지 않는다). 주어진 PR 정보로만 답하고 지어내지 않는다.`,
     });
     return typeof r?.reply === "string" ? r.reply : "";
   };

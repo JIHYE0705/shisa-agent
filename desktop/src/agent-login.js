@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execBin } from './win-exec.js';
 
 export function parseClaudeAuth(stdout) {
   const text = String(stdout ?? '');
@@ -26,16 +27,42 @@ export function codexAuthLoggedIn(raw) {
   }
 }
 
-export function findBin(name, { home = os.homedir(), pathEnv = process.env.PATH || '', exists = fs.existsSync, readdir = fs.readdirSync } = {}) {
+export function findBin(name, { home = os.homedir(), pathEnv = process.env.PATH || '', exists = fs.existsSync, readdir = fs.readdirSync, platform = process.platform, env = process.env } = {}) {
+  if (platform === 'win32') return findWinBin(name, { home, pathEnv, exists, env });
+  const p = path.posix;
   const dirs = [];
   try {
-    const root = path.join(home, '.nvm', 'versions', 'node');
-    for (const n of readdir(root)) dirs.push(path.join(root, n, 'bin'));
+    const root = p.join(home, '.nvm', 'versions', 'node');
+    for (const n of readdir(root)) dirs.push(p.join(root, n, 'bin'));
   } catch { /* nvm 없음 */ }
-  dirs.push(path.join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', ...String(pathEnv).split(':').filter(Boolean));
+  dirs.push(p.join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', ...String(pathEnv).split(':').filter(Boolean));
   for (const d of dirs) {
-    const p = path.join(d, name);
-    if (exists(p)) return p;
+    const f = p.join(d, name);
+    if (exists(f)) return f;
+  }
+  return null;
+}
+
+// 윈도우: ~/.local/bin(Claude Code 설치 스크립트) · %APPDATA%\npm(npm 전역) · PATH(;) 순서로, PATHEXT 의 .exe/.cmd/.bat/.com 을 붙여 본다.
+// 확장자 없는 같은 이름(npm 이 같이 까는 sh 스크립트)은 못 띄우니 안 고른다
+const RUNNABLE = ['.com', '.exe', '.bat', '.cmd'];
+export function winExts(pathext) {
+  const list = String(pathext || '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.trim().toLowerCase()).filter((e) => RUNNABLE.includes(e));
+  return list.length ? [...new Set(list)] : ['.exe', '.cmd'];
+}
+function findWinBin(name, { home, pathEnv, exists, env }) {
+  const w = path.win32;
+  const envOf = (k) => env?.[Object.keys(env ?? {}).find((x) => x.toUpperCase() === k)];
+  const dirs = [w.join(home, '.local', 'bin')];
+  if (envOf('APPDATA')) dirs.push(w.join(envOf('APPDATA'), 'npm'));
+  dirs.push(...String(pathEnv).split(';').map((d) => d.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean));
+  const has = RUNNABLE.includes(w.extname(name).toLowerCase());
+  const names = has ? [name] : winExts(envOf('PATHEXT')).map((e) => name + e);
+  for (const d of dirs) {
+    for (const n of names) {
+      const f = w.join(d, n);
+      if (exists(f)) return f;
+    }
   }
   return null;
 }
@@ -50,7 +77,7 @@ export function readCodexLoggedIn(home = os.homedir(), readFile = fs.readFileSyn
 
 function runStatus(bin, args, read) {
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout: 8000, maxBuffer: 64 * 1024 }, (err, stdout) => {
+    execBin(execFile, bin, args, { timeout: 8000, maxBuffer: 64 * 1024 }, (err, stdout) => {
       resolve(read(err, stdout));
     });
   });

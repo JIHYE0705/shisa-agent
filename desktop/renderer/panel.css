@@ -61,7 +61,7 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--fg);
-  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", "Malgun Gothic", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 body.vibrant { background: transparent; }
@@ -205,7 +205,7 @@ h2 { margin: 22px 0 10px; font-size: 13px; font-weight: 650; color: var(--muted)
 .chip.warn { background: color-mix(in srgb, var(--p2) 18%, transparent); color: var(--p2); }
 .chip.err { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
 .chip.click { cursor: pointer; }
-.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; }
 
 /* 개요: 큰 숫자 */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
@@ -338,7 +338,7 @@ kbd {
   border-bottom-width: 2px;
   border-radius: 6px;
   background: var(--surface);
-  font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
   white-space: nowrap;
 }
 .setup-fields { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
@@ -349,7 +349,7 @@ kbd {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
-  font: 13px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  font: 13px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 .setup-fields small { color: var(--muted); font-weight: 450; line-height: 1.45; }
 .setup-needline { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
@@ -557,7 +557,7 @@ button.plan-pick.on .plan-n { background: var(--accent); color: #fff; }
   white-space: pre-wrap;
   overflow-wrap: break-word;
   word-break: break-all;
-  font: 12.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+  font: 12.5px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   user-select: text;
 }
 /* 버튼 줄: 카드 맨 아래 고정(내용이 짧아도 맨 아래, 길면 위 내용만 스크롤) — 이전 왼쪽, 나중에·다음 오른쪽 */
@@ -587,7 +587,7 @@ button.setup-copy { padding: 2px 8px; font-size: 11.5px; }
 .md ul, .md ol { margin: 6px 0; padding-left: 20px; }
 .md li { margin: 2px 0; }
 .md a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.md code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em; padding: 1px 4px; border-radius: 4px; background: var(--code); }
+.md code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.92em; padding: 1px 4px; border-radius: 4px; background: var(--code); }
 .md pre { padding: 10px 12px; border-radius: 8px; background: var(--code); overflow: auto; }
 .md pre code { padding: 0; background: none; }
 .md blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
@@ -901,14 +901,14 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .agent-card .ag-status { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
 .agent-card.t-ok .ag-status { color: var(--ok); }
 .agent-card.t-bad .ag-status { color: var(--err); }
-.agent-card .ag-last { flex-basis: 100%; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-card .ag-last { flex-basis: 100%; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-card .via-cli { padding: 0 6px; border-radius: 8px; background: var(--code); color: var(--muted); font-size: 10px; }
 .agent-card .when { font-size: 10.5px; color: var(--faint); }
 /* 백그라운드 에이전트(채팅이 넘긴 것): 카드 + 옆 [멈추기]. 대기 중이면 더 흐리게 */
 .agent-wrap { align-self: flex-start; max-width: 92%; display: flex; align-items: flex-start; gap: 6px; }
 .agent-wrap .agent-card { max-width: 100%; flex: 0 1 auto; min-width: 0; }
 .agent-wrap .ag-stop { flex: none; font-size: 11px; padding: 2px 8px; margin-top: 4px; }
-.agent-card .ag-wt { font-family: var(--mono, ui-monospace, monospace); word-break: break-all; }
+.agent-card .ag-wt { font-family: var(--mono, ui-monospace, Consolas, monospace); word-break: break-all; }
 .agent-card .ag-note { flex-basis: 100%; color: var(--faint); font-size: 11px; }
 /* 작업 세션 카드(채팅이 넘긴 긴 코드 작업 — Orca 작업 공간 카드처럼): 머리 = 상태 점 + 레포(아래 흐리게 브랜치), 안쪽 줄 = 스피너 ✳ 제목 - 마지막 줄 · 경과 */
 /* 대화 속 워크트리 카드: 한 답이 판 워크트리들 — 돌면 초록 테두리, 줄마다 토큰(실시간)·완료/실패 */
@@ -920,7 +920,7 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .wt-card .wt-row:hover:not(:disabled), .wt-card .wt-row:focus-visible { background: var(--hover, rgba(127, 127, 127, 0.12)); }
 .wt-card .wt-row:disabled { cursor: default; }
 .wt-card .wt-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wt-card .wt-branch { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-family: ui-monospace, monospace; font-size: 11px; }
+.wt-card .wt-branch { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
 .wt-card .wt-tokens { flex: none; color: var(--faint); font-variant-numeric: tabular-nums; }
 .wt-card .wt-state { flex: none; font-weight: 600; }
 .wt-card .wt-state.t-ok { color: #2ea043; }
@@ -1218,7 +1218,7 @@ body.has-undo #sec-todos, body.has-undo #sec-today { padding-bottom: 64px; }
 .action-card .ac-fields { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 12px; }
 .action-card .ac-fields dt { color: var(--muted); }
 .action-card .ac-fields dd { margin: 0; overflow-wrap: anywhere; }
-.action-card .ac-body { margin: 0; max-height: 180px; overflow: auto; padding: 6px 8px; border-radius: 6px; background: var(--del-bg, rgba(0,0,0,0.05)); background: color-mix(in srgb, var(--line) 35%, transparent); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.action-card .ac-body { margin: 0; max-height: 180px; overflow: auto; padding: 6px 8px; border-radius: 6px; background: var(--del-bg, rgba(0,0,0,0.05)); background: color-mix(in srgb, var(--line) 35%, transparent); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .action-card .ac-body.text { font-family: inherit; }
 .action-card .ac-acts button.danger { color: var(--del-fg); }
 
@@ -1229,7 +1229,7 @@ body.has-undo #sec-todos, body.has-undo #sec-today { padding-bottom: 64px; }
 .action-card.merge.s-cancelled, .action-card.merge.s-expired { border-left-color: var(--line); opacity: 0.85; }
 .action-card.merge .ac-sub { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--muted); }
 .action-card.merge .ac-sub > span { overflow-wrap: anywhere; min-width: 0; }
-.action-card.merge .merge-rows dd.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.action-card.merge .merge-rows dd.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
 .action-card.merge .merge-rows dd.t-ok { color: var(--add-fg); }
 .action-card.merge .merge-rows dd.t-error { color: var(--del-fg); font-weight: 600; }
 .action-card.merge .merge-rows dd.t-warn { color: var(--warn-fg, #a35a00); }
@@ -1244,7 +1244,7 @@ body.has-undo #sec-todos, body.has-undo #sec-today { padding-bottom: 64px; }
 /* 개요 > 권한: 항상 허용한 도구 규칙 */
 .perm-list { display: flex; flex-direction: column; gap: 6px; }
 .perm-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.perm-row .perm-label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.perm-row .perm-label { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .perm-row .spacer { flex: 1; }
 .perm-sec h2 .small { font-weight: 400; }
 
@@ -1387,3 +1387,5 @@ button.focus-tab.on { background: var(--surface); color: var(--fg); box-shadow: 
 .focus-legend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 12px; }
 .fl-sw { width: 11px; height: 11px; border-radius: 3px; }
 @media (prefers-reduced-motion: reduce) { .focus-dot { animation: none; } .fw-bar { transition: none; } }
+/* ＋ 정해진 답 버튼 줄을 열었을 때 */
+#chat-canned-btn.on { color: var(--accent, #2f80ed); }

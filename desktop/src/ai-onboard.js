@@ -1,4 +1,8 @@
 // 시사에게 줄 AI, 설치 플랜(PLANS), 연결 안내(캘린더·슬랙·지라·GitHub). 슬랙 쿠키 복사는 넣지 않는다.
+import { WIN, modKey, terminalRow } from './os-hint.js';
+import { SETUP_SAY } from './character-say.js';
+
+const MOD = modKey();
 
 export { SISA_BASE as DEFAULT_PERSONA } from './persona.js';
 
@@ -16,7 +20,7 @@ export const AI_PROVIDERS = [
       '**Create API key** (API 키 만들기)를 누릅니다.',
       '프로젝트를 고르라고 하면 **Create API key in new project** 를 누릅니다.',
       '키가 생기면 그 줄의 **복사**를 누릅니다. **AQ.** 또는 **AIza**로 시작합니다.',
-      { keys: ['⌘', 'V'], text: '아래 칸에 붙이고 **확인**을 누릅니다.' },
+      { keys: [MOD, 'V'], text: '아래 칸에 붙이고 **확인**을 누릅니다.' },
     ],
     stuck: [
       '결제 카드를 넣으라는 화면이 나오면 멈추세요. 새 프로젝트로 다시 만들면 보통 나오지 않습니다.',
@@ -37,7 +41,7 @@ export const AI_PROVIDERS = [
       '왼쪽 **Billing** 에서 크레딧을 삽니다. 가장 적은 금액이면 됩니다.',
       '**Create Key** 를 누르고 이름을 아무거나 적습니다.',
       '**sk-ant-** 로 시작하는 키는 **한 번만** 보입니다. 바로 **Copy** 를 누릅니다.',
-      { keys: ['⌘', 'V'], text: '아래 칸에 붙이고 **확인**을 누릅니다.' },
+      { keys: [MOD, 'V'], text: '아래 칸에 붙이고 **확인**을 누릅니다.' },
     ],
     stuck: ['키를 못 복사하고 창을 닫았다면, 새 키를 다시 만드세요.'],
   },
@@ -54,7 +58,7 @@ export const AI_PROVIDERS = [
       '**Billing** 에서 크레딧을 삽니다. 최소 5달러입니다.',
       '**Create new secret key** 를 누르고 이름을 아무거나 적습니다.',
       '**sk-** 로 시작하는 키는 **한 번만** 보입니다. 바로 **Copy** 를 누릅니다.',
-      { keys: ['⌘', 'V'], text: '아래 칸에 붙이고 **확인**을 누릅니다.' },
+      { keys: [MOD, 'V'], text: '아래 칸에 붙이고 **확인**을 누릅니다.' },
     ],
     stuck: ['크레딧이 반영되기까지 몇 분 걸릴 수 있습니다. 확인이 실패하면 조금 있다가 다시 누르세요.'],
   },
@@ -170,6 +174,12 @@ export const SISA_SAY = {
   aiPickCli: '이 맥에 설치된 **Claude Code**나 **Codex** 중\n**하나**를 골라 주세요.\n키는 필요 없어요.',
 };
 
+// 고른 캐릭터의 설치 화면 말(character-say.js). 없는 키는 시사 말
+export function sayFor(character) {
+  const own = Object.hasOwn(SETUP_SAY, character ?? '') ? SETUP_SAY[character] : null;
+  return own ? { ...SISA_SAY, ...own } : SISA_SAY;
+}
+
 export function hubItem(id) {
   return HUB.find((h) => h.id === id) ?? null;
 }
@@ -206,8 +216,8 @@ export function connectSteps(id, agent) {
   return [];
 }
 
-const TERMINAL = { keys: ['⌘', '스페이스'], text: '이 키를 누르고 **터미널** 이라고 친 뒤 **↩** 를 누릅니다.' };
-const PASTE_ENTER = (what) => ({ keys: ['⌘', 'V'], text: `${what}을 붙이고 **↩** 를 누릅니다.` });
+const TERMINAL = terminalRow();
+const PASTE_ENTER = (what) => ({ keys: [MOD, 'V'], text: `${what}을 붙이고 **↩** 를 누릅니다.` });
 
 const GCAL = [
   {
@@ -312,7 +322,7 @@ function jiraSteps(agent) {
       title: 'Jira에 로그인하세요',
       identity: '로그인은 한 번만 하면 됩니다.',
       rows: [
-        { keys: ['⌘', 'V'], text: '아래 **claude** 를 터미널에 붙이고 **↩** 를 누릅니다.' },
+        { keys: [MOD, 'V'], text: '아래 **claude** 를 터미널에 붙이고 **↩** 를 누릅니다.' },
         'claude 안에서 **/mcp** 를 치고 **↩** 를 누릅니다.',
         '목록에서 **atlassian** 을 고르고 **↩** 를 누른 뒤, **Authenticate** (로그인)를 고릅니다.',
         '브라우저가 열리면 **Atlassian 계정**으로 로그인하고, 내 사이트를 **허용**합니다.',
@@ -377,7 +387,7 @@ function slackSteps(agent) {
       identity: '방법이 둘 있습니다. **하나만** 하면 됩니다. 시사 연결 카드까지 켜려면 **방법 1** 입니다.',
       rows: [
         TERMINAL,
-        { keys: ['⌘', 'V'], text: '**방법 1**: 아래 첫 번째 명령을 터미널에 붙이고 **↩** 를 누릅니다.' },
+        { keys: [MOD, 'V'], text: '**방법 1**: 아래 첫 번째 명령을 터미널에 붙이고 **↩** 를 누릅니다.' },
         '**방법 2**: 터미널에 **claude** 를 쳐서 들어간 뒤, 아래 두 번째 글을 치고 **↩** 를 누릅니다. 설치가 끝나면 **/exit** 로 나왔다가 **claude** 를 다시 켭니다.',
       ],
       details: [
@@ -395,7 +405,7 @@ function slackSteps(agent) {
       title: '슬랙에 로그인하세요',
       identity: '로그인은 한 번만 하면 됩니다.',
       rows: [
-        { keys: ['⌘', 'V'], text: '아래 **claude** 를 터미널에 붙이고 **↩** 를 누릅니다.' },
+        { keys: [MOD, 'V'], text: '아래 **claude** 를 터미널에 붙이고 **↩** 를 누릅니다.' },
         'claude 안에서 **/mcp** 를 치고 **↩** 를 누릅니다.',
         '목록에서 **slack** 을 고르고 **↩** 를 누른 뒤, **Authenticate** (로그인)를 고릅니다. 방법 2로 깔았다면 이름이 **plugin:slack:slack** 입니다.',
         '브라우저가 열리면 **슬랙 워크스페이스**를 고르고 **허용**을 누릅니다.',
@@ -449,16 +459,16 @@ function githubSteps(agent) {
       identity: '시사가 고친 코드를 GitHub에 올릴 때 이 프로그램을 씁니다.',
       rows: [
         PASTE_ENTER('터미널에 아래 명령'),
-        '글자 한 줄로 **gh 의 위치**가 나오면 이미 설치된 것입니다. 바로 **다음**을 누릅니다.',
+        WIN ? '**이미 설치되어 있다**는 글이 나오면 바로 **다음**을 누릅니다.' : '글자 한 줄로 **gh 의 위치**가 나오면 이미 설치된 것입니다. 바로 **다음**을 누릅니다.',
         '설치가 시작되면 끝날 때까지 기다립니다. 입력 줄이 다시 나오면 끝난 것입니다.',
       ],
       details: [
-        '**command not found: brew** 가 나오면 Homebrew(맥용 프로그램 설치 도구)가 없는 것입니다. 크롬에서 아래 **설치 페이지**를 열어 **macOS** 설치 파일을 받고, 열어서 설치하세요.',
+        WIN ? '**winget** 을 찾을 수 없다고 나오면 크롬에서 아래 **설치 페이지**를 열어 **Windows** 설치 파일(.msi)을 받고, 열어서 설치하세요.' : '**command not found: brew** 가 나오면 Homebrew(맥용 프로그램 설치 도구)가 없는 것입니다. 크롬에서 아래 **설치 페이지**를 열어 **macOS** 설치 파일을 받고, 열어서 설치하세요.',
         '설치 페이지는 GitHub 공식 주소입니다. 설치한 뒤에는 터미널을 한 번 닫고 다시 여세요.',
       ],
       codeLabel: '터미널에 붙여 넣기',
-      code: 'command -v gh || brew install gh',
-      configLabel: 'Homebrew가 없을 때 · 크롬 주소창에 붙여 넣기',
+      code: WIN ? 'winget install --id GitHub.cli -e' : 'command -v gh || brew install gh',
+      configLabel: WIN ? 'winget 이 없을 때 · 크롬 주소창에 붙여 넣기' : 'Homebrew가 없을 때 · 크롬 주소창에 붙여 넣기',
       config: 'https://cli.github.com',
     },
     {
@@ -471,8 +481,8 @@ function githubSteps(agent) {
         '**HTTPS** 를 고릅니다.',
         '**Authenticate Git with your GitHub credentials?** 가 나오면 **Y** 를 치고 **↩** 를 누릅니다.',
         '**Login with a web browser** 를 고릅니다.',
-        { keys: ['⌘', 'C'], text: '화면에 **8자리 코드**가 나옵니다. 이 키로 복사하고 **↩** 를 누르면 브라우저가 열립니다.' },
-        { keys: ['⌘', 'V'], text: '브라우저의 칸에 코드를 붙이고, GitHub 계정으로 로그인한 뒤 **Authorize** (허용)를 누릅니다.' },
+        { keys: [MOD, 'C'], text: '화면에 **8자리 코드**가 나옵니다. 이 키로 복사하고 **↩** 를 누르면 브라우저가 열립니다.' },
+        { keys: [MOD, 'V'], text: '브라우저의 칸에 코드를 붙이고, GitHub 계정으로 로그인한 뒤 **Authorize** (허용)를 누릅니다.' },
       ],
       details: [
         '브라우저가 안 열리면 터미널에 나온 주소를 복사해 크롬에 붙이세요.',

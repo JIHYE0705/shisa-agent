@@ -9,7 +9,7 @@ const SEED = "t";
 const plain = (s: string) => s.replace(/\s*\([^)]*시사\)$|\s*\(스이시~사\)$/u, "").replace("~요", "요");
 
 test("고르는 질문 id 목록·확인", () => {
-  assert.deepEqual([...QUICK_ASKS], ["today", "next_todo", "next_event", "cheer"]);
+  assert.deepEqual([...QUICK_ASKS], ["today", "next_todo", "next_event", "cheer", "dance"]);
   assert.ok(isQuickAsk("cheer"));
   assert.ok(!isQuickAsk("connect"));
   assert.ok(!isQuickAsk(3));
@@ -45,7 +45,7 @@ test("지금 할 일: 우선순위 순 위 세 개, 백로그는 빼고, 없으�
     { title: "언젠가", priority: 4 }, { title: "두 번째 급한 것", priority: 1 },
   ] }, SEED);
   assert.match(plain(a.text), /'급한 버그'부터 해 보면 좋겠/);
-  assert.equal(a.detail, "- P1 급한 버그\n- P1 두 번째 급한 것\n- P2 주간 정리\n- 그 밖에 1개");
+  assert.equal(a.detail, "- 오늘 꼭 급한 버그\n- 오늘 꼭 두 번째 급한 것\n- 이번 주 주간 정리\n- 그 밖에 1개");
   assert.deepEqual(a.open, { section: "todos" });
   const empty = quickAnswer("next_todo", { now, open: [{ title: "언젠가", priority: 4 }] }, SEED);
   assert.equal(plain(empty.text), "지금 보이는 할 일이 없어요. 쉬어 가는 날도 필요해요.");

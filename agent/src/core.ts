@@ -38,6 +38,7 @@ import { inAutoMerge, normSlug, readyBlock, settlePr } from "./auto-merge.ts";
 import { execFileSync } from "node:child_process";
 import type { ActionVia } from "./actions.ts";
 import { insideRoots } from "./code-read.ts";
+import { isAbsPath } from "./plat.ts";
 import { BackgroundAgents, type BgPorts } from "./bg-agents.ts";
 import { addAgentWorktree, agentBranch, finishAgentWorktree, isolationSource, worktreeNote, worktreeRecords } from "./agent-worktrees.ts";
 import { runBackgroundAgent } from "./chat.ts";
@@ -193,7 +194,7 @@ export class Agent {
       dashboard: () => this.dashboard(),
       mood: (busy) => this.bus.setMood(busy ? "thinking" : "idle"),
       dance: (ms, say) => {
-        this.bus.activity.startDance(ms);
+        this.bus.activity.startDance(ms, "dance"); // 「춤」이 든 말 → 춤 영상(일정 알림 영상 아님)
         if (say) this.bus.bubble({ id: "dance", text: say, kind: "info", ttlMs: ms }); // 춤 한마디(설정 창 문구 dance)
       },
       threads: (ev) => this.bus.threads(ev),
@@ -500,7 +501,7 @@ export class Agent {
       if ((this.cfg.brain?.provider ?? "claude-code") !== "claude-code") ready = new Set([...(ready ?? CAPABILITIES)].filter((cap) => conns[cap].mode !== "mcp"));
       // 진행 보고: 금방 끝나면 조용히, 오래 걸리면 "슬랙 보는 중…" 같은 이정표만(도구 호출마다 아님).
       // 이정표는 그 출처의 데이터 호출이 성공해서 돌아왔을 때만(도구 목록 검색·실패한 호출·연결 안 된 출처는 아무것도 안 띄움)
-      const prog = this.reactions?.progress("briefing", "브리핑 준비하는 중이에요…", { quietMs: 10e3 });
+      const prog = this.reactions?.progress("briefing", phrase("briefing_prog"), { quietMs: 10e3 });
       const seen = new Set<string>();
       const onResult = (step: string, ok: boolean) => {
         const m = briefingMilestone(step, ok, conns, ready);
@@ -749,7 +750,7 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
     if (!this.reactions) return { error: `${label} 머지 승인을 띄울 수 없어요(캐릭터 반응이 꺼져 있어요)` };
     const ref = parsePrRef(ask.pr, ask.repo);
     if (!ref) return { error: `어느 PR 인지 알아보지 못했어요(${label}) — 링크나 owner/repo#번호로 말해 주세요` };
-    const local = !ref.url && !ref.repo && ask.repo?.startsWith("/") ? ask.repo : undefined;
+    const local = !ref.url && !ref.repo && ask.repo && isAbsPath(ask.repo) ? ask.repo : undefined;
     if (!ref.url && !ref.repo && !(local && insideRoots(local, this.cfg.repoRoots)))
       return { error: `${label} 이(가) 어느 레포의 PR 인지 몰라요 — 링크나 owner/repo#번호로 말해 주세요` };
     let st;
@@ -817,7 +818,7 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
     for (const o of ops.slice(0, 5)) {
       const raw = String(o.repo ?? "").trim();
       let slug = normSlug(raw);
-      if (!slug && raw.startsWith("/") && insideRoots(raw, this.cfg.repoRoots)) {
+      if (!slug && isAbsPath(raw) && insideRoots(raw, this.cfg.repoRoots)) {
         try { slug = normSlug(execFileSync("git", ["-C", raw, "remote", "get-url", "origin"], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] })); } catch {}
       }
       if (!slug) { out.push(`⚠️ 자동 머지 레포를 ${o.op === "add" ? "넣지" : "빼지"} 못했어요 — 어느 레포인지 몰라요(${raw.slice(0, 80) || "빈 값"}). owner/name 으로 말해 주세요`); continue; }
@@ -1125,7 +1126,7 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
     const p = (await this.dashboard()).projects.find((x) => x.path === path);
     const node = this.store.node(`project:${path}`);
     if (!p && !node) return false;
-    this.store.hideProject(path, p?.name ?? node?.label ?? path.split("/").filter(Boolean).at(-1) ?? path);
+    this.store.hideProject(path, p?.name ?? node?.label ?? path.split(/[\\/]/).filter(Boolean).at(-1) ?? path);
     this.changed();
     return true;
   }

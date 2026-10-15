@@ -3,11 +3,12 @@ import { isSafeLink } from './bubbles.js';
 import { reorderLocal } from './todo-rows.js';
 
 
+// 화면에 보이는 우선순위 이름(데이터는 1~4 그대로 — 모델 프롬프트는 P1~P4 로 쓴다)
 export const PRIORITIES = [
-  { value: 1, label: 'P1' },
-  { value: 2, label: 'P2' },
-  { value: 3, label: 'P3' },
-  { value: 4, label: '백로그' }, // 언젠가 · 백로그(기한 없고 안 중요)
+  { value: 1, label: '오늘 꼭' },
+  { value: 2, label: '이번 주' },
+  { value: 3, label: '천천히' },
+  { value: 4, label: '언젠가' }, // 기한 없고 안 중요(예전 「백로그」)
 ];
 
 const str = (v) => (typeof v === 'string' ? v : '');

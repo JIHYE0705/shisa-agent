@@ -36,7 +36,7 @@ html, body {
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
-  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", "Malgun Gothic", sans-serif;
   color: var(--bubble-fg);
 }
 
@@ -148,7 +148,7 @@ html, body {
 .bubble .md li { margin: 2px 0; }
 .bubble .md li::marker { color: var(--bubble-muted); }
 .bubble .md strong { font-weight: 650; color: var(--bubble-fg); }
-.bubble .md code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0 3px; border-radius: 4px; background: color-mix(in srgb, var(--bubble-fg) 8%, transparent); }
+.bubble .md code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 0 3px; border-radius: 4px; background: color-mix(in srgb, var(--bubble-fg) 8%, transparent); }
 .bubble .md mark { background: rgba(255, 214, 10, 0.38); color: inherit; padding: 0 2px; border-radius: 3px; }
 .bubble .md table { border-collapse: collapse; margin: 3px 0; font-size: 12px; }
 .bubble .md th, .bubble .md td { padding: 3px 7px 3px 0; text-align: left; border-bottom: 1px solid var(--bubble-border); vertical-align: top; }
@@ -342,6 +342,8 @@ html, body {
 #ask .att-thumb { width: 22px; height: 22px; }
 #ask .att-pick { height: 26px; min-width: 26px; padding: 0 2px 0 6px; border: 0; background: transparent; font-size: 14px; cursor: pointer; opacity: 0.75; }
 #ask .att-pick:hover { opacity: 1; }
+/* 칩을 눌러 캐릭터가 행동·정해진 말 하는 동안 입력창을 잠깐 숨긴다(renderer.js pauseAsk) */
+#ask.paused { display: none; } /* 자리째 빼서 말풍선이 캐릭터 바로 위로 내려온다 — 그동안 포커스가 빠져도 닫지 않는다(renderer.js askPauseTimer) */
 #char-wrap.att-drop, #ask.att-drop { outline-offset: 2px; }
 #caption {
   display: flex;
@@ -411,6 +413,8 @@ html, body {
 .char-video { visibility: hidden; }
 .char-video.on { visibility: visible; }
 #char-wrap.video-on #char, #char-wrap.video-on #char-closed { visibility: hidden; }
+/* 배경이 있는 장면 영상(랏코·모몽가): 둥근 네모 카드로 */
+.char-video.scene { border-radius: 24px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22); }
 
 .mood-idle #char-body { animation: bob 3.2s ease-in-out infinite; }
 .mood-working #char-body { animation: bob-fast 0.9s ease-in-out infinite; }

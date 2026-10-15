@@ -4,7 +4,7 @@ import { loadConfig } from "./config.ts";
 import { DEFAULT_TODAY_REMINDER } from "./daily-plan.ts";
 import { localAsk } from "./local-mode.ts";
 import { Store } from "./store.ts";
-import { Bus } from "./bus.ts";
+import { Bus, EXIT_PORT_TAKEN } from "./bus.ts";
 import { runs } from "./runs.ts";
 import { modelChoices } from "./models.ts";
 import { Agent } from "./core.ts";
@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { WAIT_SETUP, markFreshInstall, modelWorkAllowed, sessionsAllowed } from "./onboarding.ts";
 import { execFile } from "node:child_process";
+import { openSpec } from "./plat.ts";
 import { CalendarSync, alertDetail } from "./calendar-sync.ts";
 import { withRun, asRoutine } from "./runs.ts";
 import { KgBackfill } from "./kg/backfill.ts";
@@ -56,6 +57,18 @@ try {
 process.on("unhandledRejection", (e: any) => console.warn("[cy-agent] 처리 안 된 오류:", e?.data?.error ?? e?.message ?? e));
 
 const cfg = loadConfig();
+// 포트부터 잡는다: cy.db 를 열고 끊긴 턴을 닫기(closeDanglingTurns) 전에. 이미 데몬이 떠 있으면 그 데몬의 턴을 건드리지 않고 여기서 끝낸다.
+// 처리기는 아래 bus.listen 이 붙인다(그 사이엔 await 이 없어 요청이 기다릴 일은 거의 없다)
+const bus = new Bus();
+try {
+  await bus.bind(cfg.port);
+} catch (e: any) {
+  if (e?.code === "EADDRINUSE") {
+    console.error(`[cy-agent] 포트 ${cfg.port} 를 이미 다른 데몬이나 프로그램이 쓰고 있어 이 데몬은 끝낼게요 (종료 코드 ${EXIT_PORT_TAKEN})`);
+    process.exit(EXIT_PORT_TAKEN);
+  }
+  throw e;
+}
 if (!modelWorkAllowed(cfg)) console.log("[onboarding] 설치 마법사를 마치기 전: 브리핑·정리 작업은 쉬어요");
 console.log(`[onboarding] 작업 기록(Claude Code·Codex) 읽기: ${sessionsAllowed(cfg) ? "켬" : "끔"} · 레포 폴더 ${cfg.repoRoots.length}개`);
 // 커넥터(connectors.ts): 기능별 데이터 원천. 연결 안 된 기능은 조용히 빠진다
@@ -70,7 +83,6 @@ console.log(`[brain] ${cfg.brain.provider}`);
 if (cfg.github?.enabled === undefined) probeGh({ bin: cfg.github?.bin }).then((ok) => console.log(`[cy-agent] GitHub(gh) 읽기 도구 ${ok ? "켬" : "끔 — gh auth status 실패"}`));
 const store = new Store(cfg.dbPath);
 runs.attach(store.db); // 작업 세션 기록(세션 창)을 cy.db 에
-const bus = new Bus();
 bus.activity.bindRuns(runs); // 돌고 있는 run(대화 제외) → 캐릭터 "공부 중"
 // 집중하기(포커스 타이머): 기록은 cy.db, 바뀌면 SSE focus · 그만하면 「N분 집중했어요」 말풍선. AI 없이도 돈다
 const focus = new Focus(store);
@@ -126,7 +138,8 @@ function reloadConnectors(): { changed: boolean; restarting: boolean } {
   const changed = connectorsChanged(cfg.connectors, resolveConnectors());
   const restarting = changed && process.env.CY_AGENT_SUPERVISED === "1";
   if (changed) console.log(`[connectors] config.json 의 연결이 바뀜, ${restarting ? "다시 시작해요" : "데몬을 다시 켜야 다 반영돼요"}`);
-  if (restarting) setTimeout(() => process.kill(process.pid, "SIGTERM"), 500);
+  // Windows 에서 제게 SIGTERM 을 보내면 핸들러 없이 바로 끝나므로 핸들러를 직접 부른다
+  if (restarting) setTimeout(() => (process.platform === "win32" ? void shutdown() : process.kill(process.pid, "SIGTERM")), 500);
   return { changed, restarting };
 }
 const settings = new Settings(cfg, { onChange: (keys) => {
@@ -134,6 +147,7 @@ const settings = new Settings(cfg, { onChange: (keys) => {
   if (keys.includes("onboarded") && modelWorkAllowed(cfg)) setTimeout(() => onboardedNow(), 0); // 마법사를 막 마침 → 첫 정리
   else if (keys.includes("readSessions") && sessionsAllowed(cfg)) setTimeout(() => ingest(), 0);
   if (keys.includes("calendarAlert")) calendar.check(); // 알림 시각을 바로 다시 잡는다
+  if (keys.includes("character")) bus.characterChanged(); // 앱 그림·영상을 바로 바꾼다
 } });
 let kgStatus: (() => { phase: string; reason?: string; step?: string }) | undefined;
 const connections = new Connections(cfg, { lastRun: lastRunOf((o) => runs.listRuns(o)), kg: () => kgStatus?.() });
@@ -196,7 +210,7 @@ await bus.listen(cfg.port, {
   attachments: {
     stage: (name, mime, bytes) => agent.stageAttachment(name, mime, bytes),
     file: (threadId, file) => agent.attachmentPath(threadId, file),
-    open: (p) => { execFile("/usr/bin/open", [p], () => {}); }, // 기본 앱으로(경로는 bus 가 첨부 폴더 안인지 확인한 것)
+    open: (p) => { const o = openSpec(p); execFile(o.file, o.args, { windowsVerbatimArguments: o.verbatim, windowsHide: true }, () => {}); }, // 기본 앱으로(경로는 bus 가 첨부 폴더 안인지 확인한 것)
     claimRun: (runId, ids) => (runs.getRun(runId, Number.MAX_SAFE_INTEGER) ? agent.claimRunAttachments(runId, ids) : { error: "no such run" }),
   },
   profileFacts: () => agent.memories(),
@@ -234,11 +248,16 @@ await bus.listen(cfg.port, {
   },
   settings: { get: () => settings.view(), put: (body) => settings.put(body) },
   // AI 없이 고르는 질문(캐릭터 더블클릭 칩): 오늘 할 일·열린 할 일·캘린더만 보고 정해진 말로
-  localAsk: (id) => localAsk(id, {
-    today: () => agent.dailyPlan().state().items,
-    open: () => store.openTodos(),
-    calendar: () => ({ enabled: calendar.enabled, meetings: calendar.enabled ? calendar.upcoming() : [] }),
-  }),
+  // 응원해 줘·춤춰 줘: 답과 함께 그 캐릭터의 응원·춤 영상(앱이 캐릭터마다 고른다)
+  localAsk: (id) => {
+    const answer = localAsk(id, {
+      today: () => agent.dailyPlan().state().items,
+      open: () => store.openTodos(),
+      calendar: () => ({ enabled: calendar.enabled, meetings: calendar.enabled ? calendar.upcoming() : [] }),
+    });
+    if (answer?.id === "cheer" || answer?.id === "dance") bus.activity.startDance(8000, answer.id);
+    return answer;
+  },
   guidelines: agent.guidelinesApi(),
   focus: focusApi(focus),
   connections: { ids: CHECK_IDS, list: () => connections.list(), recheck: async (id) => { const r = await connections.recheck(id as CheckId | undefined); bus.statusChanged(status()); return r; } },
@@ -327,9 +346,9 @@ const slackTick = asRoutine(safe("slack-ingest", async () => {
   if (!modelWorkAllowed(cfg)) return; // 설치 마법사를 마치기 전
   if (!slackIngester.transport) return; // slack 연결 안 됨(off·mcp) — 브리핑·채팅이 MCP로 실시간 조회
   // 진행 보고: 20초 안에 끝나는 평소 사이클은 조용히, 오래 걸리면 시작·결과만
-  const prog = reactions.progress("slack-ingest", "슬랙 훑어보는 중이에요…", { quietMs: 20e3 });
+  const prog = reactions.progress("slack-ingest", phrase("slack_prog"), { quietMs: 20e3 });
   const c = await slackIngester.run().catch((e) => { prog.fail("슬랙 훑다가 막혔어요"); throw e; });
-  prog.done(c.messages ? `슬랙 다 봤어요 — 메시지 ${c.messages}개` : undefined);
+  prog.done(c.messages ? phrase("slack_done", { n: c.messages }) : undefined);
   console.log("[slack-ingest]", JSON.stringify(c)); // 건수·비용만
   await safe("todo-auto", () => runAfterSlackIngest(agent, cfg, store))(); // 끝난 할 일 자동 완료(모델은 15분에 한 번)
   await safe("slack-todos", () => agent.slackTodosNow())(); // 새 DM·멘션은 바로 할 일로(정기 브리핑을 기다리지 않는다)
@@ -340,18 +359,18 @@ const slackTick = asRoutine(safe("slack-ingest", async () => {
 let refreshing: Promise<void> | undefined;
 const refreshAll = () => (refreshing ??= (async () => {
   if (!modelWorkAllowed(cfg)) { bus.bubble({ id: "refresh", text: WAIT_SETUP, kind: "info", ttlMs: 10e3 }); return; }
-  bus.bubble({ id: "refresh", text: "슬랙·메일 새로 읽는 중이에요…", kind: "info", ttlMs: 60e3 });
+  bus.bubble({ id: "refresh", text: phrase("refresh_prog"), kind: "info", ttlMs: 60e3 });
   const before = new Set(store.openTodos().map((t) => t.id));
   await slackTick();
   await agent.runBriefing();
-  if (!store.openTodos().some((t) => !before.has(t.id))) bus.bubble({ id: "refresh", text: "새로 들어온 할 일은 없어요", kind: "info", ttlMs: 6e3 });
+  if (!store.openTodos().some((t) => !before.has(t.id))) bus.bubble({ id: "refresh", text: phrase("refresh_none"), kind: "info", ttlMs: 6e3 });
 })().finally(() => { refreshing = undefined; }));
 
 // 프로필 학습: 동시에 두 번 돌지 않게. 새 근거가 없으면 모델을 부르지 않는다
 let learning: Promise<unknown> | undefined;
 const learn = (rounds = 1) => asRoutine(safe("profile", async () => {
   if (learning || !modelWorkAllowed(cfg)) return;
-  const prog = reactions.progress("profile", "새로 알게 된 것 정리하는 중이에요…", { quietMs: 15e3 });
+  const prog = reactions.progress("profile", phrase("profile_prog"), { quietMs: 15e3 });
   learning = (async () => {
     let added = 0;
     for (let i = 0; i < rounds; i++) {
@@ -359,7 +378,7 @@ const learn = (rounds = 1) => asRoutine(safe("profile", async () => {
       added += Number(r.added) || 0;
       if (!r.evidence) break;
     }
-    prog.done(added ? `새로 알게 된 게 ${added}개 있어요` : undefined);
+    prog.done(added ? phrase("profile_done", { n: added }) : undefined);
   })().catch((e) => { prog.done(); throw e; }).finally(() => { learning = undefined; });
   await learning;
 }));
@@ -449,10 +468,20 @@ function onboardedNow() {
   if (calendar.enabled) calendar.sync().catch(() => {});
 }
 
-for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, async () => {
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  bus.stopping = true; // GET /status stopping: true — 새로 뜬 앱이 이 데몬이 곧 사라질 걸 안다
   stopCalendar();
   try { focus.checkpoint(); } catch { /* 꺼지는 중 */ }
   await canvas.flush().catch(() => {});
   bus.close();
   process.exit(0);
-});
+}
+for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => void shutdown());
+// Windows 는 SIGTERM 을 보내면(child.kill) 핸들러 없이 바로 죽는다 — 앱이 IPC 로 띄웠으면 "shutdown" 메시지·연결 끊김으로 깔끔히 끈다
+if (process.platform === "win32" && process.send) {
+  process.on("message", (m) => { if (m === "shutdown" || (m as { type?: unknown } | null)?.type === "shutdown") void shutdown(); });
+  process.on("disconnect", () => void shutdown());
+}

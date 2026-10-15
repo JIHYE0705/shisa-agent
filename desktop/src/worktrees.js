@@ -4,6 +4,7 @@
 // 줄: 제목 · 브랜치 · 돌면 「12.3k 토큰…」(실시간으로 늘어남), 끝나면 초록 「완료」 · 빨강 「실패」 · 「멈춤」. 하나라도 돌면 카드 테두리 초록.
 // 누르면 작업 세션 창에서 그 run(에이전트면 그 Agent 줄).
 import { placeSessions } from './agents.js';
+import { isAbsPath } from './resume.js';
 
 const KINDS = new Set(['fix', 'agent', 'sub']);
 const STATUSES = new Set(['running', 'done', 'failed', 'stopped']);
@@ -22,7 +23,7 @@ export function normWorktrees(raw) {
       key: w.key.slice(0, 200), kind: w.kind, title: str(w.title) || '작업', status: STATUSES.has(w.status) ? w.status : 'stopped',
       tokens: Number.isFinite(w.tokens) && w.tokens > 0 ? Math.round(w.tokens) : 0, askedAt: w.askedAt,
       ...(str(w.branch) ? { branch: str(w.branch) } : {}),
-      ...(typeof w.path === 'string' && w.path.startsWith('/') ? { path: w.path } : {}),
+      ...(isAbsPath(w.path) ? { path: w.path } : {}), // /… · C:\…
       ...(typeof w.runId === 'string' && RUN_ID.test(w.runId) ? { runId: w.runId } : {}),
       ...(typeof w.toolUseId === 'string' && TOOL_USE_ID.test(w.toolUseId) ? { toolUseId: w.toolUseId } : {}),
     });

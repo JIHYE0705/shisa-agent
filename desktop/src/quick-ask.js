@@ -2,6 +2,8 @@
 // 답은 데몬 POST /local/ask { id } 가 오늘 할 일·할 일·캘린더만 보고 정해진 말로 준다(agent local-mode.ts quickAnswer).
 // 마지막 칩 「AI 연결하기」는 데몬에 묻지 않고 설치 마법사의 뇌 단계를 연다.
 
+import { localSay } from './character.js';
+
 export const QUICK_ID = 'local-quick'; // 칩 말풍선 id(하나만)
 export const QUICK_TTL = 30000;
 export const ANSWER_TTL = 12000;
@@ -11,6 +13,7 @@ export const QUICK_CHIPS = [
   { id: 'next_todo', label: '지금 할 일 뭐 있어요?' },
   { id: 'next_event', label: '다음 일정은요?' },
   { id: 'cheer', label: '응원해 줘' },
+  { id: 'dance', label: '춤춰 줘' },
   { id: 'connect', label: 'AI 연결하기', connect: true },
 ];
 const CHIP_IDS = QUICK_CHIPS.map((c) => c.id);
@@ -18,12 +21,14 @@ export const ASK_IDS = QUICK_CHIPS.filter((c) => !c.connect).map((c) => c.id); /
 export const isAskId = (v) => typeof v === 'string' && ASK_IDS.includes(v);
 
 // 칩 말풍선. view = brain-state.js brainView
-export function quickBubble(view) {
+// character: 고른 캐릭터 id(말투)
+// AI가 있어도 입력창 ＋ 로 같은 칩을 띄운다 — 그땐 「AI 연결하기」를 빼고 말도 quickAi
+export function quickBubble(view, character) {
+  const ai = view?.ready !== false;
   const login = view?.provider === 'claude-code' && view?.known;
-  const text = login
-    ? 'Claude Code 로그인 전이라도 이건 바로 알려 드려요. 무엇이 궁금하세요?'
-    : '무엇이 궁금하세요? AI 없이도 이건 바로 알려 드려요';
-  return { id: QUICK_ID, text, kind: 'info', ttlMs: QUICK_TTL, quick: CHIP_IDS.slice() };
+  const say = localSay(character);
+  const text = ai ? say.quickAi : login ? say.quickLogin : say.quick;
+  return { id: QUICK_ID, text, kind: 'info', ttlMs: QUICK_TTL, quick: ai ? CHIP_IDS.filter((id) => id !== 'connect') : CHIP_IDS.slice() };
 }
 
 // 말풍선 quick 정리: 아는 칩 id 만, 순서는 QUICK_CHIPS 대로. 없으면 null

@@ -5,15 +5,17 @@ import { isReadOnlyBash, splitReadOnly } from "./bash-readonly.ts";
 
 const ctx = { cwd: "/Users/u/code/app", home: "/Users/u" };
 const ro = (c: string) => isReadOnlyBash(c, ctx);
+// Windows(Git Bash): /Users/… 는 Git 설치 폴더 안쪽이라 어딘지 모름 — 드라이브 모양 /c/Users/… 로 쓴다
+const D = process.platform === "win32" ? "/c" : "";
 
 test("읽기 명령: cd·ls·cat·head·grep·find·git 읽기, 이어 붙이기(&& || ; |)와 2>/dev/null·2>&1", () => {
   for (const c of [
-    "cd /Users/me/code/notes-app && git log --oneline | head -3 && ls && head -30 README.md 2>/dev/null",
+    `cd ${D}/Users/me/code/notes-app && git log --oneline | head -3 && ls && head -30 README.md 2>/dev/null`,
     "ls", "ls -la", "ls *.ts", "pwd", "cat README.md", "head -n 5 src/a.ts", "tail -20 log.txt", "wc -l src/a.ts",
     "grep -rn 'foo$' src", "rg -n TODO src", "find . -name '*.ts' -type f", "tree -L 2", "file a.png", "stat a.ts", "du -sh .",
     "echo hi", "which node", "sort a.txt | uniq -c", "cut -d, -f1 a.csv", "jq .name package.json",
     "git status", "git status 2>&1 | tail -5", "git diff HEAD~1 -- src", "git show HEAD:README.md", "git log -5 --format=%h:%s",
-    "git -C /Users/u/code/app log -3", "git --no-pager log", "git rev-parse HEAD", "git ls-files", "git blame a.ts", "git describe --tags",
+    `git -C ${D}/Users/u/code/app log -3`, "git --no-pager log", "git rev-parse HEAD", "git ls-files", "git blame a.ts", "git describe --tags",
     "git branch", "git branch -a", "git branch -vv", "git branch --show-current", "git branch --list 'feat/*'",
     "git remote -v", "git remote", "git remote show origin", "git tag", "git tag -l 'v1*'", "git tag --list",
     "ls >/dev/null", "git log 2>/dev/null || echo none", "cd .. ; ls", "cat \"a b.txt\"", "ls .env.example",
@@ -44,6 +46,22 @@ test("cd 로 옮긴 위치까지 따라가서 비밀 경로를 본다 · isSecre
   assert.ok(!isReadOnlyBash("cat x", { ...ctx, isSecret: (p) => p.endsWith("/x") }));
   assert.ok(isReadOnlyBash("cd sub && cat x", { ...ctx, isSecret: (p) => p === "/Users/u/code/app/x" }));
   assert.ok(!isReadOnlyBash("cd sub && cat x", { ...ctx, isSecret: (p) => p === "/Users/u/code/app/sub/x" }));
+});
+
+test("Windows: Git Bash 안쪽 경로(/tmp · /usr · /)·//서버 는 어딘지 몰라 읽기 자동 허용 안 함", { skip: process.platform !== "win32" && "Windows 전용" }, () => {
+  for (const c of ["ls /tmp", "cat /etc/hosts", "cd /usr && ls", "cd / && ls", "ls //srv/share", "git -C /tmp log"]) assert.ok(!ro(c), c);
+  assert.ok(ro("ls /c/Users"));
+});
+
+test("Windows: 따옴표 안 역슬래시('a\\|b' · '%s\\n' · \"a\\nb\")는 읽기 그대로, 따옴표 밖 역슬래시·따옴표 안 비밀 경로는 아님", { skip: process.platform !== "win32" && "Windows 전용" }, () => {
+  for (const c of ["grep 'a\\|b' src", "grep -E \"x\\|y\" src", "printf '%s\\n' a b", "echo \"a\\nb\"", "grep -rn 'foo\\(bar\\)' src"]) assert.ok(ro(c), c);
+  for (const c of ["cat src\\a.ts", "cat .\\.env", "grep x a\\|b", "cat 'src\\.env'", "cat \"..\\.ssh\\id_rsa\"", "cat 'C:\\Users\\u\\.ssh\\id_rsa'", "cat \"x\\\"y\\.env\""]) assert.ok(!ro(c), c);
+});
+
+test("printf 는 읽기(출력만), -v(셸 변수에 쓰기)는 아님 · 큰따옴표 안 \\ 는 bash 처럼(\\\" \\\\ 만 이스케이프)", () => {
+  assert.ok(ro("printf '%s' x"));
+  assert.ok(!ro("printf -v X '%s' y"));
+  assert.deepEqual(splitReadOnly("echo \"a\\nb\" \"c\\\"d\" \"e\\\\f\"")?.[0].map((w) => w.text), ["echo", "a\\nb", "c\"d", "e\\f"]);
 });
 
 test("낱말 나누기: 따옴표·이스케이프 풀기, 리디렉션은 /dev/null·fd 만", () => {

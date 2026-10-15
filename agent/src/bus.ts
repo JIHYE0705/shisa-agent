@@ -6,6 +6,7 @@ import { parseNew, parseOps, parsePatch, type NewTodo, type TodoOp } from "./tod
 import type { TodoPatch } from "./store.ts";
 import { parseRulePatch } from "./todo-rules.ts";
 import { ActivityTracker } from "./activity.ts";
+import { characterId } from "./characters.ts";
 import { RUN_STATUSES, type RunRegistry, type RunStatus } from "./runs.ts";
 import { ACTION_STATUSES, type ActionStatus, type ConfirmOut } from "./actions.ts";
 import type { GuidelinesApi } from "./guidelines.ts";
@@ -170,6 +171,10 @@ export function hostOk(host: string | undefined, port: number | undefined): bool
   return h === `127.0.0.1:${port}` || h === `localhost:${port}`;
 }
 export const RECENT_TTL_MS = 3 * 60e3; // ttlMs 없는 말풍선을 다시 붙은 오버레이에 다시 보낼 시간
+// GET /status 의 daemon 값: 앱(desktop daemonAlive)이 이 포트의 주인이 시사 데몬인지 가른다(다른 프로그램이면 없다)
+export const DAEMON_ID = "shisa";
+// 포트를 이미 누가 쓰고 있어 데몬이 뜨지 못함(EX_TEMPFAIL). 앱(daemon-host)은 이걸 충돌로 세지 않고 그 포트를 다시 지켜본다
+export const EXIT_PORT_TAKEN = 75;
 
 export class Bus {
   private clients = new Set<ServerResponse>();
@@ -183,6 +188,9 @@ export class Bus {
   // 사용자 결정을 기다리는 버튼 말풍선(승인·확인 카드·머지): 결정·만료로 같은 id 가 바뀌거나 걷힐 때까지 다시 붙은 오버레이에도 보낸다
   private waiting = new Map<string, Bubble & { id: string }>();
   server?: Server;
+  // 꺼지는 중(shutdown 시작). GET /status 에 stopping: true 로 보여 새로 뜬 앱이 "곧 사라질 데몬"임을 안다
+  stopping = false;
+  private serve?: (h: BusHandlers) => void;
 
   bubble(b: Bubble): string {
     const full = { ...b, id: b.id ?? randomUUID() };
@@ -209,9 +217,13 @@ export class Bus {
     this.mood = mood;
     this.send("state", this.state());
   }
-  // SSE state: { mood, activity, runs, danceId? }
+  // SSE state: { mood, activity, runs, danceId?, character } — character 는 앱이 그림·영상을 고르는 캐릭터 id(characters.ts)
   state() {
-    return { mood: this.mood, ...this.activity.snapshot() };
+    return { mood: this.mood, ...this.activity.snapshot(), character: characterId() };
+  }
+  // 캐릭터를 바꿨다(설정 창) → 앱이 그림을 바로 바꾸게 state 를 다시 보낸다
+  characterChanged() {
+    this.send("state", this.state());
   }
   constructor() {
     this.activity.onChange = () => this.send("state", this.state());
@@ -268,11 +280,43 @@ export class Bus {
     });
   }
 
+  // 포트만 먼저 잡는다(main.ts: cy.db 를 열고 끊긴 턴을 닫기 전에 — 두 번째 데몬이 첫 데몬의 턴을 건드리지 않게).
+  // 처리기는 listen(port, h) 가 붙인다. 그 전에 온 요청은 붙을 때까지 기다린다.
+  // 포트를 누가 쓰고 있으면(EADDRINUSE 등) 거부한다 — 띄운 쪽이 EXIT_PORT_TAKEN 으로 끝낸다
+  bind(port: number): Promise<void> {
+    if (this.listening) return this.listening;
+    const ready = new Promise<BusHandlers>((r) => { this.serve = r; });
+    const server = createServer((req, res) => {
+      ready.then((h) => this.route(req, res, h)).catch((e) =>
+        e instanceof BadRequest ? json(res, 400, { error: e.message }) : json(res, 500, { error: String(e?.message ?? e) }));
+    });
+    this.server = server;
+    this.listening = new Promise<void>((ok, fail) => {
+      const onError = (e: Error) => {
+        server.off("listening", onListening);
+        if (this.server === server) this.server = undefined;
+        this.listening = undefined;
+        fail(e);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        // 뜬 뒤의 서버 오류는 데몬을 죽이지 않고 기록만
+        server.on("error", (e) => console.warn("[bus] 서버 오류:", e?.message ?? e));
+        ok();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(port, "127.0.0.1");
+    });
+    return this.listening;
+  }
+  private listening?: Promise<void>;
+
   listen(port: number, h: BusHandlers): Promise<void> {
     if (h.runs) this.bindRuns(h.runs);
-    this.server = createServer((req, res) => this.route(req, res, h).catch((e) =>
-      e instanceof BadRequest ? json(res, 400, { error: e.message }) : json(res, 500, { error: String(e?.message ?? e) })));
-    return new Promise((ok) => this.server!.listen(port, "127.0.0.1", ok));
+    const p = this.bind(port);
+    this.serve?.(h);
+    return p;
   }
   close() {
     this.unsubRuns?.();
@@ -370,7 +414,9 @@ export class Bus {
       }
     }
     if (req.method === "GET" && url.pathname === "/status") {
-      return h.status ? json(res, 200, h.status()) : json(res, 503, { error: "status unavailable" });
+      // daemon·pid: 이 포트의 주인이 시사 데몬인지(앱 daemonAlive) · stopping: 꺼지는 중이면 true
+      return h.status ? json(res, 200, { ...(h.status() as object), daemon: DAEMON_ID, pid: process.pid, ...(this.stopping ? { stopping: true } : {}) })
+        : json(res, 503, { error: "status unavailable" });
     }
     if (req.method === "GET" && url.pathname === "/permissions") {
       if (!h.permissions) return json(res, 503, { error: "permissions unavailable" });

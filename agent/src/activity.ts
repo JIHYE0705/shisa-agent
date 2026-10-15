@@ -9,7 +9,10 @@ import { randomUUID } from "node:crypto";
 
 export type Activity = "idle" | "studying" | "dancing";
 export type ActivityRun = { id: string; kind: string; title: string; startedAt: string };
-export type ActivitySnapshot = { activity: Activity; runs: ActivityRun[]; danceId?: string };
+// 춤 영상 종류: plan = 일정 알림 · dance = 「춤」(채팅·춤춰 줘 칩) · cheer = 응원해 줘 칩. 앱이 캐릭터마다 맞는 영상을 고른다
+export type DanceClip = "plan" | "dance" | "cheer";
+export const DANCE_CLIPS: readonly DanceClip[] = ["plan", "dance", "cheer"];
+export type ActivitySnapshot = { activity: Activity; runs: ActivityRun[]; danceId?: string; danceClip?: DanceClip };
 
 // runs.ts RunRegistry 의 필요한 부분만(구조적 타입 — 순환 의존 없이)
 export type RunSource = {
@@ -45,7 +48,7 @@ export class ActivityTracker {
   private source?: RunSource;
   private unsub?: () => void;
   private recheck?: Timer;
-  private dance?: { id: string; timer: Timer };
+  private dance?: { id: string; timer: Timer; clip: DanceClip };
   private last = "";
   private deps: ActivityDeps;
   onChange?: (s: ActivitySnapshot) => void;
@@ -87,10 +90,10 @@ export class ActivityTracker {
   }
 
   // 춤 ms 동안. 춤 중에 또 부르면 새 춤으로 늘린다. 끝나면 그 전 상태로
-  startDance(ms = 8000): string {
+  startDance(ms = 8000, clip: DanceClip = "plan"): string {
     if (this.dance) this.deps.clearTimer(this.dance.timer);
     const id = randomUUID();
-    this.dance = { id, timer: this.deps.setTimer(() => { if (this.dance?.id === id) { this.dance = undefined; this.refresh(true); } }, ms) };
+    this.dance = { id, clip, timer: this.deps.setTimer(() => { if (this.dance?.id === id) { this.dance = undefined; this.refresh(true); } }, ms) };
     this.refresh(true);
     return id;
   }
@@ -99,7 +102,7 @@ export class ActivityTracker {
     const active: ActivityRun[] = [...(this.source?.active().filter((r) => r.status === "running") ?? []).map(({ id, kind, title, startedAt }) => ({ id, kind, title, startedAt })), ...this.manual.values()];
     const { runs } = visibleRuns(active, this.deps.now().getTime());
     const s: ActivitySnapshot = { activity: deriveActivity(runs.length, !!this.dance), runs };
-    if (this.dance) s.danceId = this.dance.id;
+    if (this.dance) { s.danceId = this.dance.id; s.danceClip = this.dance.clip; }
     return s;
   }
 

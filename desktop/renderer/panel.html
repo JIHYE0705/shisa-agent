@@ -13,7 +13,7 @@
     <aside id="side">
       <div class="brand drag">
         <img id="brand-img" alt="" draggable="false">
-        <span>시사 비서</span>
+        <span id="brand-name">시사 비서</span>
       </div>
       <nav id="nav" role="tablist" aria-label="섹션"></nav>
       <div id="side-foot">
@@ -66,6 +66,7 @@
             <div id="chat-att-err" class="att-err" role="alert" hidden></div>
             <div id="chat-tray" class="att-tray" aria-label="붙인 파일" hidden></div>
             <div id="chat-compose">
+              <button id="chat-canned-btn" type="button" class="ghost att-pick" title="정해진 답 고르기 — 오늘 할 일·응원·춤(AI 없이 바로)" aria-label="정해진 답 고르기">＋</button>
               <button id="chat-attach" type="button" class="ghost att-pick" title="파일 붙이기 — 이미지·PDF·문서·아무 파일(끌어다 놓거나 ⌘V 로 붙여도 돼요)" aria-label="파일 붙이기">📎</button>
               <textarea id="chat-input" rows="1" placeholder="물어보세요 — 예: 오늘 할 일 뭐 있어? (Shift+Enter 줄바꿈)" aria-label="메시지"></textarea>
               <select id="chat-model" aria-label="모델" title="이번에 보낼 때 쓸 모델" hidden></select>

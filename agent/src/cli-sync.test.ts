@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { RunRegistry, logSdkMessage } from "./runs.ts";
 import { Store } from "./store.ts";
 import { Bus } from "./bus.ts";
@@ -14,7 +15,7 @@ import {
 } from "./cli-sync.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
-const FIX = new URL("./fixtures/cli-sync/", import.meta.url).pathname;
+const FIX = fileURLToPath(new URL("./fixtures/cli-sync/", import.meta.url)); // Windows: .pathname 은 /C:/… 라 못 쓴다
 const REPO = "/Users/tester/code/demo";
 const BRAIN = "/Users/tester/.cy-agent/brain";
 const lines = (f: string) => readFileSync(join(FIX, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
@@ -242,11 +243,13 @@ test("CliSync.importSession: 세션 id 로 채팅 run 하나(기록의 cwd·첫 
 test("run cwd: SDK init 의 cwd 로 고침 · askCwd 는 관련 레포(대화형·코드 보기), 아니면 brain", () => {
   const reg = new RunRegistry(new DatabaseSync(":memory:"));
   const run = reg.startRun({ kind: "chat", title: "x", cwd: BRAIN });
-  logSdkMessage(run, { type: "system", subtype: "init", session_id: SID, cwd: REPO, model: "m" });
-  assert.equal(reg.summary(run.id)!.cwd, REPO);
+  const repo = process.platform === "win32" ? "C:\\Users\\tester\\code\\demo" : REPO; // Windows SDK 는 C:\… 로 준다
+  logSdkMessage(run, { type: "system", subtype: "init", session_id: SID, cwd: repo, model: "m" });
+  assert.equal(reg.summary(run.id)!.cwd, repo);
   assert.equal(reg.summary(run.id)!.sdkSessionId, SID);
   logSdkMessage(run, { type: "system", subtype: "init", session_id: SID, cwd: "relative/x" });
-  assert.equal(reg.summary(run.id)!.cwd, REPO);
+  assert.equal(reg.summary(run.id)!.cwd, repo);
+  if (process.platform === "win32") { logSdkMessage(run, { type: "system", subtype: "init", session_id: SID, cwd: "\\\\evil\\share" }); assert.equal(reg.summary(run.id)!.cwd, repo); } // UNC 는 안 받음
   const cfg = { repoRoots: ["/Users/tester/code"] } as any;
   assert.equal(askCwd(cfg, { interactive: { origin: { via: "chat" } } as any, code: { roots: cfg.repoRoots, cwd: REPO } }), REPO);
   assert.equal(askCwd(cfg, { code: { roots: cfg.repoRoots, cwd: REPO } }), REPO);

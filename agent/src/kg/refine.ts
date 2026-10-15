@@ -10,6 +10,7 @@
 import type { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
+import { IS_WIN, LOCAL_PROJECT_SQL, isLocalProjectId, pathWithin } from "../plat.ts";
 import type { Config } from "../config.ts";
 import { looksLikeInstruction } from "../profile.ts";
 import { featureBrain, skipQuietly, type CodexDeps } from "../feature-brain.ts";
@@ -151,7 +152,7 @@ export function projectKeys(id: string, name: string, aliases: string[] = []): s
     }
   };
   const all = [name, ...aliases];
-  if (id.startsWith("project:/")) all.push(basename(id.slice(8)));
+  if (isLocalProjectId(id)) all.push(basename(id.slice(8)));
   if (id.startsWith("repo:")) all.push(id.slice(5));
   for (const raw of all) {
     const s = oneLine(String(raw ?? ""));
@@ -176,8 +177,8 @@ class UF {
 // 확실한 짝: repo:<이름> ↔ 같은 basename의 로컬 레포(project:/경로, 짧은 경로 우선). 모델 없이 합친다.
 export function sureMerges(store: Store): { keep: string; dup: string }[] {
   ensureRefineTables(store);
-  const paths = (store.db.prepare(`SELECT id FROM nodes WHERE kind = 'project' AND id LIKE 'project:/%'
-    UNION SELECT id FROM kg_entities WHERE kind = 'project' AND id LIKE 'project:/%' AND merged_into IS NULL`).all() as any[])
+  const paths = (store.db.prepare(`SELECT id FROM nodes WHERE kind = 'project' AND ${LOCAL_PROJECT_SQL}
+    UNION SELECT id FROM kg_entities WHERE kind = 'project' AND ${LOCAL_PROJECT_SQL} AND merged_into IS NULL`).all() as any[])
     .map((r) => r.id as string).sort((a, b) => a.length - b.length);
   const byBase = new Map<string, string>();
   for (const p of paths) { const k = normKey(basename(p.slice(8))); if (k && !byBase.has(k)) byBase.set(k, canonical(store, p)); }
@@ -235,10 +236,10 @@ export function buildClusters(store: Store, opts: { only?: Set<string>; skip?: S
   const keysOf = new Map<string, string[]>();
   for (const e of kgProj) {
     if (opts.skip?.has(e.id)) continue;
-    pm.set(e.id, { id: e.id, kind: e.kind, name: e.name, aliases: e.props.aliases ?? [], inKg: true, profile: e.id.startsWith("project:/"), evidence: e.evidence, description: e.props.description, lastSeen: e.last_seen });
+    pm.set(e.id, { id: e.id, kind: e.kind, name: e.name, aliases: e.props.aliases ?? [], inKg: true, profile: isLocalProjectId(e.id), evidence: e.evidence, description: e.props.description, lastSeen: e.last_seen });
     keysOf.set(e.id, projectKeys(e.id, e.name, e.props.aliases ?? []));
   }
-  for (const n of store.db.prepare("SELECT id, label FROM nodes WHERE kind = 'project' AND id LIKE 'project:/%'").all() as any[]) {
+  for (const n of store.db.prepare(`SELECT id, label FROM nodes WHERE kind = 'project' AND ${LOCAL_PROJECT_SQL}`).all() as any[]) {
     if (pm.has(n.id) || canonical(store, n.id) !== n.id) continue;
     pm.set(n.id, { id: n.id, kind: "project", name: n.label, aliases: [], inKg: false, profile: true, evidence: 0 });
     keysOf.set(n.id, projectKeys(n.id, n.label));
@@ -252,7 +253,7 @@ export function buildClusters(store: Store, opts: { only?: Set<string>; skip?: S
   const byKey2 = new Map<string, string[]>();
   for (const [id, ks] of keysOf) for (const k of new Set(ks)) (byKey2.get(k) ?? byKey2.set(k, []).get(k)!).push(id);
   for (const ids of byKey2.values()) if (ids.length <= MAX_CLUSTER) for (let i = 1; i < ids.length; i++) uf2.union(ids[0], ids[i]);
-  out.push(...groups(uf2, pm, "project", (ms) => ms.filter((m) => m.inKg).length >= 1 && ms.filter((m) => !m.id.startsWith("project:/")).length >= 1));
+  out.push(...groups(uf2, pm, "project", (ms) => ms.filter((m) => m.inKg).length >= 1 && ms.filter((m) => !isLocalProjectId(m.id)).length >= 1));
 
   return opts.only ? out.filter((c) => c.members.some((m) => opts.only!.has(m.id))) : out;
 }
@@ -285,7 +286,7 @@ export function mergeEntities(store: Store, keepId: string, dupIds: string[], o:
     for (const dup of dups) {
       const de = readEntity(store, dup);
       let ke = readEntity(store, keep);
-      const kind = ke?.kind ?? (keep.startsWith("project:/") ? "project" : de?.kind ?? "person");
+      const kind = ke?.kind ?? (isLocalProjectId(keep) ? "project" : de?.kind ?? "person");
       if (!ke) {
         // 살릴 쪽이 KG에 아직 없음(Slack 프로필·로컬 레포 노드) → 노드 이름으로 만든다
         const node = store.node(keep);
@@ -400,7 +401,7 @@ export const MERGE_SCHEMA = {
 
 function memberLine(store: Store, m: Member, ref: string): string {
   const tags = [m.profile ? (m.id.startsWith("person:") ? "[slack-profile]" : "[local-repo]") : "", m.inKg ? "" : "[KG 밖]"].filter(Boolean).join(" ");
-  const head = `- ${ref} ${tags} ${m.kind} "${fenceData(m.name)}"${m.id.startsWith("project:/") ? ` 경로basename=${basename(m.id.slice(8))}` : ""}` +
+  const head = `- ${ref} ${tags} ${m.kind} "${fenceData(m.name)}"${isLocalProjectId(m.id) ? ` 경로basename=${basename(m.id.slice(8))}` : ""}` +
     `${m.aliases.length ? ` 별칭: ${fenceData(m.aliases.slice(0, 8).join(", "))}` : ""} · 근거 ${m.evidence}${m.lastSeen ? ` · 최근 ${day(m.lastSeen)}` : ""}`;
   const lines = [head];
   if (m.description) lines.push(`  설명: ${fenceData(clip(m.description, 140))}`);
@@ -529,10 +530,10 @@ export function issueProjects(store: Store): Map<string, string> {
     GROUP BY issue, other ORDER BY issue, w DESC`).all() as any[]) {
     if (!map.has(r.issue)) map.set(r.issue, r.other);
   }
-  const paths = (store.db.prepare("SELECT id FROM nodes WHERE kind = 'project' AND id LIKE 'project:/%'").all() as any[]).map((r) => r.id as string);
+  const paths = (store.db.prepare(`SELECT id FROM nodes WHERE kind = 'project' AND ${LOCAL_PROJECT_SQL}`).all() as any[]).map((r) => r.id as string);
   const cwdProject = (cwd: string) => {
     let best = "";
-    for (const p of paths) { const path = p.slice(8); if ((cwd === path || cwd.startsWith(path + "/")) && p.length > best.length) best = p; }
+    for (const p of paths) { const path = p.slice(8); if ((cwd === path || cwd.startsWith(path + "/") || (IS_WIN && pathWithin(cwd, path))) && p.length > best.length) best = p; }
     return best ? canonical(store, best) : undefined;
   };
   for (const r of store.db.prepare(`SELECT i.id, r.dst FROM kg_entities i JOIN kg_rels r ON r.src = i.id AND r.rel = 'discussed_in'
@@ -668,7 +669,7 @@ function hiddenFilter(store: Store) {
   let hidden: { path: string; name: string }[] = [];
   try { hidden = store.hiddenProjects(); } catch { /* 표 없음 */ }
   const names = new Set(hidden.map((h) => normKey(h.name)));
-  return (e: { id: string; name: string }) => names.has(normKey(e.name)) || (e.id.startsWith("project:/") && store.isHiddenPath(e.id.slice(8), hidden));
+  return (e: { id: string; name: string }) => names.has(normKey(e.name)) || (isLocalProjectId(e.id) && store.isHiddenPath(e.id.slice(8), hidden));
 }
 
 export function activeProjects(store: Store, now: number, opts: { ids?: Set<string> } = {}): Ent[] {
@@ -705,7 +706,7 @@ export function summaryPrompt(store: Store, ctxs: SumCtx[]): string {
     const P = `P${k + 1}`;
     const sn = snippets(store, c.p.id, termsOf(c.p), 3, 160);
     out.push(`<project ref="${P}">`,
-      `이름: ${fenceData(c.p.name)} (${c.p.kind}${c.p.id.startsWith("project:/") ? `, 로컬 레포 ${basename(c.p.id.slice(8))}` : ""})`,
+      `이름: ${fenceData(c.p.name)} (${c.p.kind}${isLocalProjectId(c.p.id) ? `, 로컬 레포 ${basename(c.p.id.slice(8))}` : ""})`,
       ...(c.p.props.aliases?.length ? [`별칭: ${fenceData(c.p.props.aliases.slice(0, 6).join(", "))}`] : []),
       `설명: ${fenceData(clip(c.p.props.description ?? "", 200))}`,
       `근거 ${c.p.evidence}건 · 처음 ${day(c.p.first_seen)} · 최근 ${day(c.p.last_seen)}`,

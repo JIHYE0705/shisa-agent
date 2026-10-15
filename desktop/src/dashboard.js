@@ -1,6 +1,7 @@
 // 대시보드 패널 뷰모델 — 순수 로직. GET /dashboard 응답을 그리기 좋게 다듬는다.
 import { isSafeLink } from './bubbles.js';
 import { shapeRules } from './todo-rules.js';
+import { PRIORITIES } from './todos.js';
 
 export const SECTIONS = ['setup', 'overview', 'projects', 'todos', 'today', 'chat', 'models'];
 export const SECTION_LABELS = { setup: '설치', overview: '개요', projects: '프로젝트', todos: '할 일', today: '오늘 할 일', chat: '채팅', models: '모델' };
@@ -42,12 +43,9 @@ export function clockTime(iso) {
   return `${String(x.getHours()).padStart(2, '0')}:${String(x.getMinutes()).padStart(2, '0')}`;
 }
 
+// 우선순위 이름: todos.js PRIORITIES(오늘 꼭·이번 주·천천히·언젠가)
 export function priorityLabel(p) {
-  if (p === 1) return 'P1';
-  if (p === 2) return 'P2';
-  if (p === 3) return 'P3';
-  if (p === 4) return '백로그';
-  return '기타';
+  return PRIORITIES.find((x) => x.value === p)?.label ?? '기타';
 }
 
 const str = (v) => (typeof v === 'string' ? v : '');

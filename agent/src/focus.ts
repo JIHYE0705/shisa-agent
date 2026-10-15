@@ -6,6 +6,7 @@
 // AI(뇌) 연결과 무관한 로컬 기능이다.
 import { randomUUID } from "node:crypto";
 import type { Store } from "./store.ts";
+import { phrase } from "./phrases.ts";
 
 export const FOCUS_CMDS = ["start", "pause", "resume", "stop"] as const;
 export type FocusCmd = (typeof FOCUS_CMDS)[number];
@@ -268,7 +269,7 @@ export function focusDuration(sec: number): string {
   return h ? (m ? `${h}시간 ${m}분` : `${h}시간`) : `${m}분`;
 }
 export function focusDoneText(sec: number): string {
-  return `${focusDuration(sec)} 집중했어요. 수고했어요!`;
+  return phrase("focus_done", { duration: focusDuration(sec) });
 }
 
 // ---- HTTP (bus.ts 가 헤더 검사 뒤 부른다) ----
