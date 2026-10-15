@@ -20,8 +20,8 @@ export const VIDEOS = {
 export const CHARACTERS = {
   shisa: { name: '시사' },
   hachi: { name: '하치와레', blink: true, scenes: { cheer: true }, clips: { plan: 'plan', dance: 'plan', cheer: 'cheer' } },
-  rakko: { name: '랏코', blink: true, scenes: { study: true, plan: true, dance: true }, clips: { plan: 'plan', dance: 'dance', cheer: 'dance' } },
-  momonga: { name: '모몽가', blink: true, scenes: { study: true, plan: true, dance: true }, clips: { plan: 'plan', dance: 'dance', cheer: 'dance' } },
+  rakko: { name: '랏코', blink: true, scenes: { study: true, plan: true, dance: true }, clips: { plan: 'plan', dance: 'dance', cheer: 'plan' } },
+  momonga: { name: '모몽가', blink: true, scenes: { study: true, plan: true, dance: true }, clips: { plan: 'plan', dance: 'dance', cheer: 'plan' } },
 };
 export const DANCE_CLIPS = ['plan', 'dance', 'cheer'];
 export const CHARACTER_IDS = Object.keys(CHARACTERS);

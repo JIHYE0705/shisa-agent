@@ -188,3 +188,10 @@ test('춤 영상 종류: 일정 알림·춤·응원마다 캐릭터 파일, 없�
   s = activityReducer(s, { type: 'localDance', on: true, clip: 'dance' });
   assert.equal(danceClipOf(s), 'dance');
 });
+
+test('응원해 줘: 랏코·모몽가는 일정 알림 영상(plan), 하치와레는 응원 영상', () => {
+  assert.match(clipFor2('rakko', 'cheer'), /rakko\/plan\.webm$/);
+  assert.match(clipFor2('momonga', 'cheer'), /momonga\/plan\.webm$/);
+  assert.match(clipFor2('hachi', 'cheer'), /hachi\/cheer\.webm$/);
+});
+function clipFor2(id, k) { return characterAssets(id).clips[k].src; }
