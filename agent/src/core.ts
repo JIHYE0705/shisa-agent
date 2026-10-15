@@ -193,7 +193,7 @@ export class Agent {
       dashboard: () => this.dashboard(),
       mood: (busy) => this.bus.setMood(busy ? "thinking" : "idle"),
       dance: (ms, say) => {
-        this.bus.activity.startDance(ms);
+        this.bus.activity.startDance(ms, "dance"); // 「춤」이 든 말 → 춤 영상(일정 알림 영상 아님)
         if (say) this.bus.bubble({ id: "dance", text: say, kind: "info", ttlMs: ms }); // 춤 한마디(설정 창 문구 dance)
       },
       threads: (ev) => this.bus.threads(ev),

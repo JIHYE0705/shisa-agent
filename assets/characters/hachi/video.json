@@ -36,5 +36,24 @@
       -35,
       934
     ]
+  },
+  "cheer": {
+    "file": "cheer.webm",
+    "poster": "cheer.png",
+    "size": 512,
+    "fps": 10,
+    "frames": 43,
+    "duration": 4.3,
+    "scene": true,
+    "source": {
+      "file": "hachi-응원.gif",
+      "w": 316,
+      "h": 300
+    },
+    "square": [
+      8,
+      0,
+      300
+    ]
   }
 }

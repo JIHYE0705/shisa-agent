@@ -13,7 +13,8 @@ contextBridge.exposeInMainWorld('cy', {
   onSisa: on('sisa'), // 설정 창 등에서 AI·연결을 끊으면 새 저장 모양(publicView)
   onSection: on('section'),
   onChat: on('chat'),
-  onCharacter: on('character'), // 설정 창에서 캐릭터를 바꿈 → { id }
+  onCharacter: on('character'),
+  localAsk: (id) => ipcRenderer.invoke('local-ask', String(id)), // 정해진 답 응원·춤 → 캐릭터 영상(POST /local/ask) // 설정 창에서 캐릭터를 바꿈 → { id }
   getCharacter: () => ipcRenderer.invoke('get-character'), // 지금 캐릭터 id(데몬 state.character, 모르면 'shisa')
   getDashboard: () => ipcRenderer.invoke('get-dashboard'),
   briefingNow: () => ipcRenderer.invoke('briefing-now'),

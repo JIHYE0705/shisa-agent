@@ -258,6 +258,10 @@ export const CHARACTER_LINES = {
       "ai": [
         "**설치** 탭에서 AI를 붙이면 돼.\n무료로 시작하는 **Gemini**를 추천해!",
         "지금은 **정해진 말**만 할 수 있어.\n**설치** 탭에서 AI를 고르면 입력창이 열려!"
+      ],
+      "dance": [
+        "우와, 신난다! 💃\n같이 춤추자!",
+        "**춤 타임!**\n있지, 같이 흔들어 보자!"
       ]
     },
     "setup": {
@@ -275,6 +279,7 @@ export const CHARACTER_LINES = {
       "aiPickCli": "이 맥에 설치된 **Claude Code**나 **Codex** 중에\n**하나**를 골라 줘.\n키는 필요 없어."
     },
     "overlay": {
+      "quickAi": "정해진 답으로 바로 알려 줄게! 뭐가 궁금해?",
       "mergeDone": "머지했어 🎉",
       "mergeDeclined": "알았어, 머지는 안 할게. PR은 열어 둘게",
       "quick": "뭐가 궁금해? AI 없이도 이건 바로 알려 줄게!",
@@ -324,7 +329,7 @@ export const CHARACTER_LINES = {
     },
     "phrases": {
       "dance": [
-        "음!! 춤이라니."
+        "춤은 못 추지만, 멋있는 걸 보여 주지. (쓩)"
       ],
       "hello": [
         "그래, 왔군. 오늘도 열심히 달려볼까. 곧 브리핑하지."
@@ -552,6 +557,9 @@ export const CHARACTER_LINES = {
       "ai": [
         "**설치** 탭에서 AI를 붙여라.\n무료로 시작하는 **Gemini**가 좋다.",
         "지금은 **정해진 말**만 한다.\n**설치** 탭에서 AI를 고르면 입력창이 열린다."
+      ],
+      "dance": [
+        "춤은 못 추지만, **멋있는 걸** 보여 주지. (쓩)"
       ]
     },
     "setup": {
@@ -569,6 +577,7 @@ export const CHARACTER_LINES = {
       "aiPickCli": "이 맥에 설치된 **Claude Code**나 **Codex** 중\n**하나**를 골라라.\n키는 필요 없다."
     },
     "overlay": {
+      "quickAi": "정해진 답으로 바로 알려 주지. 무엇이 궁금하지?",
       "mergeDone": "머지했다.",
       "mergeDeclined": "그래, 머지는 안 하지. PR은 열어 두겠다.",
       "quick": "무엇이 궁금하지? AI 없이도 이건 바로 알려 주지.",
@@ -859,6 +868,10 @@ export const CHARACTER_LINES = {
       "ai": [
         "**설치** 탭에서 AI를 붙여.\n무료로 시작하는 **Gemini**가 낫지.",
         "지금은 **정해진 말**만 해.\n**설치** 탭에서 AI를 고르면 입력창이 열려."
+      ],
+      "dance": [
+        "아앙? 춤추라고? **(시~러 시러 시러)**\n…한 번만이다.",
+        "흥, **딱 한 번만** 보여 주지."
       ]
     },
     "setup": {
@@ -876,6 +889,7 @@ export const CHARACTER_LINES = {
       "aiPickCli": "이 맥에 깔린 **Claude Code**나 **Codex** 중에\n**하나**만 골라.\n키는 필요 없어."
     },
     "overlay": {
+      "quickAi": "정해진 답으로 알려 주지. 뭐가 궁금한데?",
       "mergeDone": "머지했다구",
       "mergeDeclined": "알았어, 머지는 안 해. PR은 열어 둘게",
       "quick": "뭐가 궁금한데? AI 없이도 이 정도는 알려 주지",

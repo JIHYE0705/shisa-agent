@@ -127,6 +127,7 @@ let setupChoices = {};
 let setupLink = '';
 let keyStatus = '';
 let afterConnect = ''; // 'claudecode'·'codexcli': 그 도구 연결을 마치면 시사의 AI로 쓴다
+let cannedOpen = false; // 채팅: AI가 있을 때 ＋ 로 연 정해진 답 버튼 줄(renderChatLock)
 let sisa = { provider: '', hasKey: false, persona: '', canned: {}, done: {}, connected: [], chatModels: {}, codeModel: 'default' };
 // 예전 화면 위치(ai-offer·agent·pick·walk)는 불러오지 않는다
 try {
@@ -2653,10 +2654,11 @@ function renderChatLock() {
   }
   const lock = chatLock(brain, connectCardHidden);
   compose.hidden = lock.locked;
-  box.hidden = !lock.locked;
-  if (!lock.locked) return;
-  const card = connectCard(brain);
+  box.hidden = !lock.locked && !cannedOpen;
   const canned = h('div.canned-row', null, CANNED.map((c) => h('button.ghost', { type: 'button', text: c.label, onclick: () => sayCanned(c) })));
+  $('chat-canned-btn')?.classList.toggle('on', cannedOpen);
+  if (!lock.locked) { if (cannedOpen) box.replaceChildren(canned); return; } // AI가 있어도 ＋ 로 정해진 답 버튼
+  const card = connectCard(brain);
   if (lock.reopen) {
     box.replaceChildren(canned, h('button.link.connect-reopen', { type: 'button', text: card.reopen, onclick: () => setConnectCardHidden(false) }));
     return;
@@ -2699,8 +2701,10 @@ cy.onBrain?.(applyBrain);
 
 // AI 없이 고른 말: 내 말은 바로 「보냄」, 시사는 1~2초 입력 중(점 세 개)을 보이고 답한다
 let cannedTyping = null; // 답을 기다리는 타이머(입력 중 표시)
+$('chat-canned-btn')?.addEventListener('click', () => { cannedOpen = !cannedOpen; renderChatLock(); });
 function sayCanned(c) {
   if (cannedTyping) return; // 앞 답이 오기 전엔 하나씩
+  if (c.id === 'cheer' || c.id === 'dance') cy.localAsk?.(c.id).catch(() => {}); // 캐릭터도 응원·춤 영상
   const openItems = rawTodos();
   const text = cannedReply(c.id, { open: openItems.length, done: vm.recentDone.length, next: openItems[0]?.title || '', hour: new Date().getHours() }, { override: sisa.canned, character });
   messages = appendLocal(messages, { role: 'user', text: c.label, at: new Date().toISOString(), canned: true });

@@ -1387,3 +1387,5 @@ button.focus-tab.on { background: var(--surface); color: var(--fg); box-shadow: 
 .focus-legend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 12px; }
 .fl-sw { width: 11px; height: 11px; border-radius: 3px; }
 @media (prefers-reduced-motion: reduce) { .focus-dot { animation: none; } .fw-bar { transition: none; } }
+/* ＋ 정해진 답 버튼 줄을 열었을 때 */
+#chat-canned-btn.on { color: var(--accent, #2f80ed); }

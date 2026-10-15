@@ -23,6 +23,10 @@ export const PICKABLE_FILES = PICKABLE.flatMap((id) => [
   [`characters/${id}/plan.webm`, 'video/webm'],
   [`characters/${id}/study.png`, 'image/png'],
   [`characters/${id}/plan.png`, 'image/png'],
+  [`characters/${id}/dance.webm`, 'video/webm'],
+  [`characters/${id}/dance.png`, 'image/png'],
+  [`characters/${id}/cheer.webm`, 'video/webm'],
+  [`characters/${id}/cheer.png`, 'image/png'],
 ]);
 export const ALLOWED = new Map([
   ['character.png', 'image/png'],

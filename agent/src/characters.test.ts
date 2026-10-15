@@ -165,3 +165,24 @@ test("SSE state 에 지금 캐릭터 id 가 실린다(앱이 그림·영상을 �
   setCharacter("momonga");
   assert.equal(bus.state().character, "momonga");
 });
+
+test("춤춰 줘·응원해 줘 칩: 캐릭터 말, 누를 때마다 줄을 고르고, 춤 영상 종류(dance·cheer)가 state 에 실린다", async () => {
+  const { localAsk, isQuickAsk } = await import("./local-mode.ts");
+  const { ActivityTracker } = await import("./activity.ts");
+  assert.ok(isQuickAsk("dance") && isQuickAsk("cheer"));
+  const src = { today: () => [], open: () => [], calendar: () => ({ enabled: false, meetings: [] }) };
+  setCharacter("rakko");
+  assert.equal(localAsk("dance", src)?.text, "춤은 못 추지만, 멋있는 걸 보여 주지. (쓩)");
+  const cheers = new Set(Array.from({ length: 40 }, () => localAsk("cheer", src)?.text));
+  assert.ok(cheers.size > 1, "응원은 누를 때마다 다른 줄");
+  for (const t of cheers) assert.ok(CHARACTERS.rakko.cheer!.some((l) => t!.includes(l)), String(t));
+  setCharacter("shisa");
+  assert.equal(localAsk("dance", src)?.text, "💃 춤춰요!");
+  // 춤 영상 종류: 기본 plan(일정 알림), 칩·채팅은 dance·cheer
+  const a = new ActivityTracker();
+  a.startDance(1000);
+  assert.equal(a.snapshot().danceClip, "plan");
+  a.startDance(1000, "cheer");
+  assert.equal(a.snapshot().danceClip, "cheer");
+  assert.equal(a.snapshot().activity, "dancing");
+});

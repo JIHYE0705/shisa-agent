@@ -3,6 +3,7 @@
 import { localDate, localHhmm } from "./calendar.ts";
 import { TONE, seedHash, voice, type Mood } from "./voice.ts";
 import { character, type LocalLineKey } from "./characters.ts";
+import { phrase } from "./phrases.ts";
 
 export type LocalTodo = { title: string; priority?: number };
 export type DayPart = "morning" | "lunch" | "afternoon" | "evening";
@@ -120,7 +121,7 @@ export function localThought(now: Date, open: LocalTodo[] = [], done: LocalTodo[
 }
 
 // ---- AI 없이 고르는 질문(캐릭터 더블클릭 → 칩). 모델 없이 오늘 할 일·할 일·캘린더만 보고 정해진 말로 답한다 ----
-export const QUICK_ASKS = ["today", "next_todo", "next_event", "cheer"] as const;
+export const QUICK_ASKS = ["today", "next_todo", "next_event", "cheer", "dance"] as const;
 export type QuickAskId = (typeof QUICK_ASKS)[number];
 export const isQuickAsk = (v: unknown): v is QuickAskId => typeof v === "string" && (QUICK_ASKS as readonly string[]).includes(v);
 
@@ -233,6 +234,7 @@ export function quickAnswer(id: QuickAskId, f: QuickFacts, seed = `quick:${seoul
   if (id === "today") return answerToday(f, s);
   if (id === "next_todo") return answerTodo(f, s);
   if (id === "next_event") return answerEvent(f, s);
+  if (id === "dance") return { id: "dance", kind: "done", text: phrase("dance", {}, (seedHash(s) % 1000) / 1000) }; // 춤 한마디(문구 dance) — 영상은 데몬이 튼다
   const lines = character().cheer ?? QUICK_LINES.cheer;
   return { id: "cheer", kind: "done", text: spoken(lines[seedHash(s) % lines.length], s, "happy") };
 }
@@ -246,5 +248,6 @@ export function localAsk(id: unknown, src: QuickSources): QuickAnswer | undefine
   if (id === "today") { facts.today = src.today(); facts.open = src.open(); }
   if (id === "next_todo") facts.open = src.open();
   if (id === "next_event") facts.calendar = src.calendar();
-  return quickAnswer(id, facts);
+  // 응원·춤은 누를 때마다 다른 줄(같은 시간대에도)
+  return quickAnswer(id, facts, id === "cheer" || id === "dance" ? `quick:${now.getTime()}:${Math.random()}` : undefined);
 }

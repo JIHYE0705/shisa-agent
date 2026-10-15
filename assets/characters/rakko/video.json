@@ -36,5 +36,24 @@
       0,
       240
     ]
+  },
+  "dance": {
+    "file": "dance.webm",
+    "poster": "dance.png",
+    "size": 512,
+    "fps": 10,
+    "frames": 23,
+    "duration": 2.3,
+    "scene": true,
+    "source": {
+      "file": "rakko-dance.gif",
+      "w": 426,
+      "h": 240
+    },
+    "square": [
+      136,
+      0,
+      240
+    ]
   }
 }

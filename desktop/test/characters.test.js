@@ -42,7 +42,7 @@ test('캐릭터 영상: 알파 캐릭터는 VP9 알파, 장면은 정사각형 5
     const meta = JSON.parse(fs.readFileSync(path.join(ASSETS, 'characters', id, 'video.json'), 'utf8'));
     for (const [name, view] of [['study', 'studying'], ['plan', 'dancing']]) {
       assert.equal(meta[name].size, 512, `${id}/${name}`);
-      assert.equal(meta[name].scene, CHARACTERS[id].scenes[view] === true, `${id}/${name} scene`);
+      assert.equal(meta[name].scene, CHARACTERS[id].scenes[name] === true, `${id}/${name} scene`);
       assert.ok(meta[name].frames > 0);
     }
   }
@@ -132,10 +132,11 @@ test('설치 화면·둘러보기·오버레이 짧은 말: 캐릭터마다 모�
       for (const s of steps) assert.doesNotMatch(s.text, honorific, `${id}/${s.id}: ${s.text}`);
     }
     for (const t of Object.values(LOCAL_SAY[id])) assert.doesNotMatch(t, honorific, `${id}: ${t}`);
-    assert.equal(quickBubble({}, id).text, LOCAL_SAY[id].quick);
-    assert.equal(quickBubble({ provider: 'claude-code', known: true }, id).text, LOCAL_SAY[id].quickLogin);
+    assert.equal(quickBubble({ ready: false }, id).text, LOCAL_SAY[id].quick);
+    assert.equal(quickBubble({ ready: false, provider: 'claude-code', known: true }, id).text, LOCAL_SAY[id].quickLogin);
+    assert.equal(quickBubble({ ready: true }, id).text, LOCAL_SAY[id].quickAi);
   }
-  assert.equal(quickBubble({}).text, LOCAL_SAY.shisa.quick);
+  assert.equal(quickBubble({ ready: false }).text, LOCAL_SAY.shisa.quick);
 });
 
 test('대사 파일: assets/characters/lines.json 과 렌더러 사본(character-lines.js)이 같다', async () => {
@@ -162,4 +163,28 @@ test('대사 파일: 캐릭터마다 모든 칸이 있고, 둘러보기 자리�
     assert.match(c.tour.settings, /\{slack_off\}/);
     assert.match(c.tour.today, /\{cal\}/);
   }
+});
+
+test('춤 영상 종류: 일정 알림·춤·응원마다 캐릭터 파일, 없는 건 대신 쓰는 파일도 실제로 있다', async () => {
+  const { clipFor, danceClipOf, activityReducer, initialActivity } = await import('../src/character.js');
+  for (const id of CHARACTER_IDS) {
+    const a = characterAssets(id);
+    for (const k of ['plan', 'dance', 'cheer']) {
+      const c = clipFor(a, k);
+      assert.ok(resolveAsset(c.src) && fs.existsSync(fileOf(c.src)), `${id}/${k}: ${c.src}`);
+      assert.ok(resolveAsset(c.poster) && fs.existsSync(fileOf(c.poster)), `${id}/${k}: ${c.poster}`);
+    }
+    assert.equal(clipFor(a, 'nope'), clipFor(a, 'plan'));
+  }
+  assert.match(clipFor(characterAssets('hachi'), 'cheer').src, /hachi\/cheer\.webm$/);
+  assert.match(clipFor(characterAssets('rakko'), 'dance').src, /rakko\/dance\.webm$/);
+  assert.match(clipFor(characterAssets('momonga'), 'dance').src, /momonga\/dance\.webm$/);
+  assert.match(clipFor(characterAssets('rakko'), 'plan').src, /rakko\/plan\.webm$/);
+  // 데몬 state.danceClip → 그 영상, 칩(로컬) 춤은 고른 종류
+  let s = activityReducer(initialActivity(), { type: 'state', activity: 'dancing', runs: [], danceId: 'd1', danceClip: 'cheer' });
+  assert.equal(danceClipOf(s), 'cheer');
+  s = activityReducer(initialActivity(), { type: 'state', activity: 'dancing', runs: [], danceId: 'd2' });
+  assert.equal(danceClipOf(s), 'plan');
+  s = activityReducer(s, { type: 'localDance', on: true, clip: 'dance' });
+  assert.equal(danceClipOf(s), 'dance');
 });

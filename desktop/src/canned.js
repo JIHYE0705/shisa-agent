@@ -11,6 +11,7 @@ export const CANNED = [
   { id: 'done', label: '오늘 할 일 다 끝냈어요' },
   { id: 'rest', label: '좀 쉬어도 될까요?' },
   { id: 'cheer', label: '응원해 주세요' },
+  { id: 'dance', label: '춤춰 줘' },
   { id: 'hello', label: '안녕!' },
   { id: 'who', label: '넌 누구야?' },
   { id: 'what', label: '뭘 할 수 있어요?' },
@@ -88,6 +89,10 @@ export const CANNED_CATALOG = [
     '**파이팅!**\n막히면 쉬었다 해도 돼요.',
     '당신은 **생각보다 잘하고** 있어요.\n작은 한 걸음이면 돼요.',
     '**응원해요.**\n오늘도 천천히, 그래도 꾸준히 해요. (기쁜 시사)',
+  ] },
+  { key: 'dance', button: 'dance', hint: '', lines: [
+    '💃 **춤춰요!**\n같이 신나게 해 봐요. (스이시~사)',
+    '**춤 타임!**\n잠깐 쉬어 가요.',
   ] },
   { key: 'hello:morning', button: 'hello', hint: '아침', lines: [
     '**좋은 아침이에요!**\n오늘도 천천히 시작해요. (스이시~사)',
@@ -199,6 +204,7 @@ export function cannedPool(kind, c, override, character) {
     case 'done': return { key: c.open ? 'done:o' : 'done', pool: c.open ? [...pick('done:o'), ...pick('done')] : pick('done') };
     case 'rest': return { key: 'rest', pool: pick('rest') };
     case 'cheer': return { key: 'cheer', pool: pick('cheer') };
+    case 'dance': return { key: 'dance', pool: pick('dance') };
     case 'hello': return { key: `hello:${c.period}`, pool: pick(`hello:${c.period}`) };
     case 'who': return { key: 'who', pool: pick('who') };
     case 'what': return { key: 'what', pool: pick('what') };

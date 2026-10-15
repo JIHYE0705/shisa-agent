@@ -235,11 +235,16 @@ await bus.listen(cfg.port, {
   },
   settings: { get: () => settings.view(), put: (body) => settings.put(body) },
   // AI 없이 고르는 질문(캐릭터 더블클릭 칩): 오늘 할 일·열린 할 일·캘린더만 보고 정해진 말로
-  localAsk: (id) => localAsk(id, {
-    today: () => agent.dailyPlan().state().items,
-    open: () => store.openTodos(),
-    calendar: () => ({ enabled: calendar.enabled, meetings: calendar.enabled ? calendar.upcoming() : [] }),
-  }),
+  // 응원해 줘·춤춰 줘: 답과 함께 그 캐릭터의 응원·춤 영상(앱이 캐릭터마다 고른다)
+  localAsk: (id) => {
+    const answer = localAsk(id, {
+      today: () => agent.dailyPlan().state().items,
+      open: () => store.openTodos(),
+      calendar: () => ({ enabled: calendar.enabled, meetings: calendar.enabled ? calendar.upcoming() : [] }),
+    });
+    if (answer?.id === "cheer" || answer?.id === "dance") bus.activity.startDance(8000, answer.id);
+    return answer;
+  },
   guidelines: agent.guidelinesApi(),
   focus: focusApi(focus),
   connections: { ids: CHECK_IDS, list: () => connections.list(), recheck: async (id) => { const r = await connections.recheck(id as CheckId | undefined); bus.statusChanged(status()); return r; } },

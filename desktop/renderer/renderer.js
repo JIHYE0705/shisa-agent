@@ -11,7 +11,7 @@ import { createAttachTray } from './attach-tray.js';
 import { hasFiles, filesFromTransfer, ATTACH_ERRORS } from '../src/attachments.js';
 import { normFocus, focusBubble } from '../src/focus.js';
 import { who, setWho } from './who.js';
-import { characterAssets, okCharacter, localSay, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf } from '../src/character.js';
+import { characterAssets, okCharacter, localSay, clipFor, danceClipOf, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf } from '../src/character.js';
 
 const cy = window.cy;
 const stack = document.getElementById('stack');
@@ -103,22 +103,31 @@ function showVideo(k) {
   }
   wrap.classList.toggle('video-on', !!k);
 }
+// 그 자리에 틀 영상: 춤 자리는 종류(일정 알림·춤·응원)에 따라 다르다
+const clipOf = (k) => (k === 'dancing' ? clipFor(charA, danceClipOf(act)) : charA.videos[k]);
 function startVideo(k) {
   const v = videos[k];
-  if (!v.getAttribute('src') || v.dataset.failed) { delete v.dataset.failed; v.src = charA.videos[k].src; }
+  const c = clipOf(k);
+  if (v.dataset.clip !== c.src) { v.removeAttribute('src'); v.dataset.clip = c.src; v.poster = c.poster; v.classList.toggle('scene', !!c.scene); }
+  if (!v.getAttribute('src') || v.dataset.failed) { delete v.dataset.failed; v.src = c.src; }
   try { v.currentTime = 0; } catch { /* 아직 메타데이터 전 */ }
   const p = v.play();
   if (p) p.catch(() => {});
 }
+let shownClip = null;
 function applyActivity() {
   const view = viewOf(act);
-  if (view === shownView) return;
+  const clip = view === 'dancing' ? danceClipOf(act) : null;
+  if (view === shownView && clip === shownClip) return;
+  const sameView = view === shownView;
   shownView = view;
+  shownClip = clip;
   wrap.dataset.view = view;
   wrap.classList.remove('blink');
   clearTimeout(danceCap);
   if (view === 'idle') return showVideo(null);
   if (view === 'dancing') danceCap = setTimeout(() => dispatchActivity({ type: 'danceEnd' }), DANCE_MAX_MS);
+  if (sameView) showVideo(null); // 춤 종류만 바뀜(예: 칩 춤 → 데몬 응원) — 새 영상 첫 장면이 나올 때 다시 켠다
   startVideo(view);
 }
 // 캐릭터 바꾸기: 정지 그림을 새로 찾고, 영상은 새 주소로(지금 영상 중이면 새 캐릭터 영상으로 이어서)
@@ -140,8 +149,9 @@ function setCharacter(id) {
     v.removeAttribute('src');
     delete v.dataset.failed;
     v.load();
-    v.poster = charA.videos[k].poster;
-    v.classList.toggle('scene', !!charA.videos[k].scene);
+    delete v.dataset.clip;
+    v.poster = clipOf(k).poster;
+    v.classList.toggle('scene', !!clipOf(k).scene);
   }
   if (shownView !== 'idle') { showVideo(null); startVideo(shownView); }
 }
@@ -857,8 +867,8 @@ cy.onBrain?.((v) => { if (v) brain = v; if (brain.ready === false && askOpen) hi
 let danceOff = null;
 let chipSeq = 0; // 칩을 새로 누르면 앞선 「다시 띄우기」는 버린다
 const CHIPS_AGAIN_MS = 2000; // 답을 보여 주고 이만큼 뒤에 칩을 다시
-function localDance(ms) {
-  dispatchActivity({ type: 'localDance', on: true });
+function localDance(ms, clip = 'dance') {
+  dispatchActivity({ type: 'localDance', on: true, clip });
   clearTimeout(danceOff);
   danceOff = setTimeout(() => dispatchActivity({ type: 'localDance', on: false }), ms);
 }
@@ -872,7 +882,7 @@ async function quickChip(id) {
   dismiss(QUICK_ID); // 누르면 칩은 내리고 답만 보인다
   if (a.type === 'open') { cy.openItem(a.section, a.id); return; }
   const seq = ++chipSeq;
-  if (a.id === 'cheer') localDance(2600);
+  if (a.id === 'cheer' || a.id === 'dance') localDance(8000, a.id); // 바로 영상(데몬도 같은 영상을 튼다 — 꺼져 있어도 보이게)
   const ask = async () => { try { return await cy.localAsk(a.id); } catch (e) { return { ok: false, error: e?.message }; } };
   let r = await ask();
   if (!r?.ok) { await new Promise((ok) => setTimeout(ok, 800)); r = await ask(); } // 데몬이 잠깐 바빴으면 한 번 더
@@ -885,6 +895,12 @@ function talk() {
   if (brain.ready === false) return noBrain();
   showAsk();
 }
+// AI가 있어도 입력창 ＋ 로 정해진 답 칩(오늘 할 일·지금 할 일·다음 일정·응원·춤)
+document.getElementById('ask-more')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  chipSeq++;
+  showBubble(quickBubble(brain, charA.id));
+});
 
 function onCharacterClick() {
   if (clickTimer) {

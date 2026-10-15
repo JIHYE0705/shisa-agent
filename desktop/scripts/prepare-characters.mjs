@@ -2,6 +2,7 @@
 //   eyes_open.png · eyes_closed.png  정지 그림(512 정사각형, 투명). 눈 감은 그림이 없으면 눈 뜬 그림만(깜빡이지 않는다)
 //   study.webm · study.png           집중·공부 중 영상과 첫 장면
 //   plan.webm  · plan.png            일정 알림(n분 전) 영상과 첫 장면
+//   dance.webm · cheer.webm          「춤춰 줘」·「응원해 줘」 영상(있는 캐릭터만 — 없으면 앱이 다른 영상으로 대신한다)
 //   video.json                       { study: {...}, plan: {...} } — scene: true 면 배경이 있는 장면(네모 카드로 보인다)
 // 배경 처리(key): green = 초록 배경 크로마키(prepare-videos.mjs 와 같은 그래프) · flood = 가장자리에서 이어진 단색 배경을 지움
 //                 scene = 배경을 그대로 두고 가운데를 정사각형으로 자름
@@ -21,15 +22,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const SOURCES = {
   hachi: {
     stills: { open: 'hachi_open_eyes.png', closed: 'hachi_closed_eyes.png' },
-    clips: { plan: { file: 'hachi_plan.mp4', key: 'green' }, study: { file: 'hachi_study.mp4', key: 'flood' } },
+    clips: { plan: { file: 'hachi_plan.mp4', key: 'green' }, study: { file: 'hachi_study.mp4', key: 'flood' }, cheer: { file: 'hachi-응원.gif', key: 'scene' } },
   },
   rakko: {
     stills: { open: 'rakko_eyes_open.png', closed: 'rakko_closed_eyes.png' },
-    clips: { plan: { file: 'rakko_plan.gif', key: 'scene' }, study: { file: 'rakko_focus.gif', key: 'scene' } },
+    clips: { plan: { file: 'rakko_plan.gif', key: 'scene' }, study: { file: 'rakko_focus.gif', key: 'scene' }, dance: { file: 'rakko-dance.gif', key: 'scene', cx: 0.6 } },
   },
   momonga: {
     stills: { open: 'momonga_open_eyes.png', closed: 'momonga_closed_eyes.png' },
-    clips: { plan: { file: 'momonga_plan.mp4', key: 'scene' }, study: { file: 'momonga_study.gif', key: 'scene' } },
+    clips: { plan: { file: 'momonga_plan.mp4', key: 'scene' }, study: { file: 'momonga_study.gif', key: 'scene' }, dance: { file: 'momonga_dance.gif', key: 'scene' } },
   },
 };
 
