@@ -14,7 +14,7 @@ import { SETUP_FLOW_VERSION, isSetupPhase, phaseAfterBrain, backPhase, restorePh
 import { brainView, connectCard, chatLock } from '../src/brain-state.js';
 import { initialChat, chatReducer, isBusy, isRunning, busyLabel, busyThreads, sendButton, stopTargets, localState, queuedChats, queuedLabel, sentLabel } from '../src/chat.js';
 import { stamp, withDayDividers } from '../src/chat-time.js';
-import { KIND_ICONS, KIND_LABELS, normThread, normThreads, upsertThread, groupThreads, filterThreads, initSeen, isUnread, markSeen, pruneSeen, unreadCount, pickInitial, neighborThread, afterRemoval, mergeMessages, appendLocal, tagLocal, dropLocal, markSent, isDoubleSend, todoChip, okThreadId, editTarget, dropFrom } from '../src/threads.js';
+import { KIND_ICONS, KIND_LABELS, normThread, normThreads, upsertThread, groupThreads, filterThreads, initSeen, isUnread, markSeen, pruneSeen, unreadCount, pickInitial, neighborThread, afterRemoval, mergeMessages, appendLocal, tagLocal, dropLocal, dropFailed, markSent, isDoubleSend, todoChip, okThreadId, editTarget, dropFrom } from '../src/threads.js';
 import { PRIORITIES, mergeRecentDone, newTodoBody, overlayTodos, descriptionPatch, isDoing, patchToday, isToday } from '../src/todos.js';
 import { createClickSorter, toggleOpen, dropTarget, autoScrollDelta, reorderLocal, isNoopMove, keyMove, detailView, LONG_PRESS, MOVE_SLOP } from '../src/todo-rows.js';
 import { openEdit, fillDescription, editKey, editPatch } from '../src/todo-edit.js';
@@ -2788,6 +2788,7 @@ async function sendChat() {
   try { r = await cy.chatSend(text, { threadId: tid, clientId, ...(model ? { model } : {}), ...(atts.length ? { attachments: atts.map((a) => a.id) } : {}) }); } catch { r = { ok: false }; }
   if (r?.ok && r.chatId) {
     messages = tagLocal(messages, { text, at, clientId }, r.chatId); // 대기 중·지금 보내기·취소가 이 말을 찾게
+    messages = dropFailed(messages); // 앞서 못 보낸 말·실패 줄은 이제 걷는다
     // queued: POST 응답이 SSE queued 보다 먼저 와도 대기 중으로(예전엔 이때 「보냄」처럼 보였다)
     dispatchChat({ type: 'accepted', chatId: r.chatId, threadId: r.threadId, clientId, text, ...(r.queued != null ? { queued: r.queued } : {}), ...(r.position ? { position: r.position } : {}) });
     if (tid === null && r.threadId && selectedId === null) {
