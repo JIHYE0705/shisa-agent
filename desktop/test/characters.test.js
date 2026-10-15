@@ -137,3 +137,29 @@ test('설치 화면·둘러보기·오버레이 짧은 말: 캐릭터마다 모�
   }
   assert.equal(quickBubble({}).text, LOCAL_SAY.shisa.quick);
 });
+
+test('대사 파일: assets/characters/lines.json 과 렌더러 사본(character-lines.js)이 같다', async () => {
+  const { render, SRC, OUT } = await import('../scripts/sync-character-lines.mjs');
+  assert.equal(fs.readFileSync(OUT, 'utf8'), render(fs.readFileSync(SRC, 'utf8')), 'lines.json 을 고쳤으면 node scripts/sync-character-lines.mjs');
+});
+
+test('대사 파일: 캐릭터마다 모든 칸이 있고, 둘러보기 자리표시는 아는 것만', async () => {
+  const lines = JSON.parse(fs.readFileSync(path.join(ASSETS, 'characters', 'lines.json'), 'utf8'));
+  const { SISA_SAY } = await import('../src/ai-onboard.js');
+  const { LOCAL_SAY } = await import('../src/character.js');
+  const TOUR = ['character_ready', 'character_noai', 'todos', 'todos_slack', 'chat_ready', 'chat_noai', 'today', 'today_cal', 'today_nocal', 'settings', 'settings_noslack'];
+  for (const id of ['hachi', 'rakko', 'momonga']) {
+    const c = lines[id];
+    assert.equal(c.name, CHARACTERS[id].name);
+    for (const k of ['intro', 'tone', 'persona']) assert.ok(c.prompt?.[k]?.trim(), `${id}: prompt.${k}`);
+    assert.deepEqual(Object.keys(c.setup).sort(), Object.keys(SISA_SAY).sort(), `${id}: setup 칸`);
+    assert.deepEqual(Object.keys(c.overlay).sort(), Object.keys(LOCAL_SAY.shisa).sort(), `${id}: overlay 칸`);
+    assert.deepEqual(Object.keys(c.tour).sort(), [...TOUR].sort(), `${id}: tour 칸`);
+    for (const [k, v] of Object.entries(c.tour)) {
+      for (const m of v.matchAll(/\{(\w+)\}/g)) assert.ok({ todos: ['slack_on'], settings: ['slack_off'], today: ['cal'] }[k]?.includes(m[1]), `${id}: tour.${k} 의 {${m[1]}}`);
+    }
+    assert.match(c.tour.todos, /\{slack_on\}/);
+    assert.match(c.tour.settings, /\{slack_off\}/);
+    assert.match(c.tour.today, /\{cal\}/);
+  }
+});

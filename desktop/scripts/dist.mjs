@@ -77,8 +77,9 @@ for (const name of fs.readdirSync(path.join(AGENT, 'node_modules', '@anthropic-a
   }
 }
 
-// 2) 캐릭터 그림·영상(레포 assets/) — 앱 Resources/assets 로
+// 2) 캐릭터 그림·영상(레포 assets/) — 앱 Resources/assets 로. 대사(lines.json)는 렌더러용 사본도 맞춘다
 step('캐릭터 그림 준비');
+execFileSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'sync-character-lines.mjs')], { stdio: 'inherit' });
 const ASSETS = path.join(STAGE, 'assets');
 fs.cpSync(path.join(REPO, 'assets'), ASSETS, { recursive: true, filter: (src) => path.basename(src) !== '.DS_Store' });
 

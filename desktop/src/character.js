@@ -4,6 +4,8 @@
 // 우선순위 dancing > studying > idle. 춤이 끝나면(데몬이 알리거나 로컬 상한) 그 전 상태로 돌아간다.
 // 집중하기(focus.js): 집중 중이면 공부 영상, 일시정지면 기본 그림(데몬이 다른 일로 공부 중이면 그대로 공부 영상).
 
+import { CHARACTER_LINES } from './character-lines.js';
+
 export const CHAR_DIR = 'cy-asset://app/character';
 // 정지 그림 대체 순서: 눈 뜬 그림 → 예전 개인 그림 → 번들 그림 → 번들 svg
 export const STILL_SRCS = [`${CHAR_DIR}/eyes_open.png`, 'cy-asset://app/character.png', '../assets/character.png', '../assets/character.svg'];
@@ -23,12 +25,9 @@ export const CHARACTERS = {
 export const CHARACTER_IDS = Object.keys(CHARACTERS);
 export const DEFAULT_CHARACTER = 'shisa';
 // 오버레이가 데몬 말 없이 스스로 띄우는 짧은 말(머지 결과를 먼저 보일 때·AI 없이 묻기 칩). 시사는 예전 글 그대로
-export const LOCAL_SAY = {
-  shisa: { mergeDone: '머지했어요 🎉 (스이시~사)', mergeDeclined: '알겠어요, 머지는 안 할게요. PR은 열어 둘게요', quick: '무엇이 궁금하세요? AI 없이도 이건 바로 알려 드려요', quickLogin: 'Claude Code 로그인 전이라도 이건 바로 알려 드려요. 무엇이 궁금하세요?' },
-  hachi: { mergeDone: '머지했어 🎉', mergeDeclined: '알았어, 머지는 안 할게. PR은 열어 둘게', quick: '뭐가 궁금해? AI 없이도 이건 바로 알려 줄게!', quickLogin: 'Claude Code 로그인 전이라도 이건 바로 알려 줄게! 뭐가 궁금해?' },
-  rakko: { mergeDone: '머지했다.', mergeDeclined: '그래, 머지는 안 하지. PR은 열어 두겠다.', quick: '무엇이 궁금하지? AI 없이도 이건 바로 알려 주지.', quickLogin: 'Claude Code 로그인 전이라도 이건 알려 주지. 무엇이 궁금하지?' },
-  momonga: { mergeDone: '머지했다구', mergeDeclined: '알았어, 머지는 안 해. PR은 열어 둘게', quick: '뭐가 궁금한데? AI 없이도 이 정도는 알려 주지', quickLogin: 'Claude Code 로그인 전이라도 이 정도는 알려 주지. 뭐가 궁금한데?' },
-};
+const SHISA_SAY_LOCAL = { mergeDone: '머지했어요 🎉 (스이시~사)', mergeDeclined: '알겠어요, 머지는 안 할게요. PR은 열어 둘게요', quick: '무엇이 궁금하세요? AI 없이도 이건 바로 알려 드려요', quickLogin: 'Claude Code 로그인 전이라도 이건 바로 알려 드려요. 무엇이 궁금하세요?' };
+// 다른 캐릭터 글은 assets/characters/lines.json 의 overlay
+export const LOCAL_SAY = { shisa: SHISA_SAY_LOCAL, ...Object.fromEntries(Object.entries(CHARACTER_LINES).map(([id, c]) => [id, { ...SHISA_SAY_LOCAL, ...(c.overlay ?? {}) }])) };
 export const localSay = (id) => LOCAL_SAY[okCharacter(id)];
 
 // 화면에 쓰는 이름: 「하치와레」·「하치와레 비서」(앱 이름·메뉴·창 제목)

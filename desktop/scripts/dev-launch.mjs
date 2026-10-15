@@ -59,6 +59,8 @@ function ensureApp(icns) {
   return bin;
 }
 
+// 캐릭터 대사(assets/characters/lines.json)를 렌더러용 사본으로
+execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'sync-character-lines.mjs')], { stdio: 'inherit' });
 const icns = ensureIcon();
 const bin = ensureApp(icns);
 const child = spawn(bin, [ROOT], {
