@@ -31,7 +31,6 @@ cat > "$NOTES" <<EOF
 
 - 애플 실리콘 맥(M1 이후): \`Shisa-$VER-arm64.dmg\`
 - 인텔 맥: \`Shisa-$VER-x64.dmg\`
-- 윈도우: \`Shisa-$VER-Setup.exe\`(설치 없이 쓰려면 \`Shisa-$VER-win-x64.zip\`). 윈도우 파일은 조금 뒤에 붙습니다
 
 어느 쪽인지 모르겠다면 화면 왼쪽 위 사과 메뉴 → 이 Mac에 관하여 에서 「칩」이 Apple 로 시작하면 애플 실리콘, 「프로세서」가 Intel 이면 인텔입니다.
 
