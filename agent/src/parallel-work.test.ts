@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -25,7 +25,7 @@ import type { Proposal } from "./store.ts";
 const git = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 function repoIn(root: string, name: string) {
   const seed = join(root, `${name}-seed`);
-  execFileSync("mkdir", ["-p", seed]);
+  mkdirSync(seed, { recursive: true }); // Windows 엔 mkdir -p 명령이 없다
   git(seed, "init", "-q", "-b", "main");
   writeFileSync(join(seed, "README.md"), "# demo\n");
   git(seed, "add", "-A");
@@ -256,7 +256,7 @@ test("커밋 전 테스트: 한 번 실패하면 다시 돌리고(불안정), �
   assert.match(args[1], /\.zshrc/);
   assert.deepEqual(args.slice(2), ["cy-test", "npm", "test"]);
   const [sh2, args2] = userShellArgs(["echo", "hi there"], "/bin/sh");
-  assert.equal(execFileSync(sh2, args2, { encoding: "utf8" }).trim(), "hi there");
+  if (process.platform !== "win32") assert.equal(execFileSync(sh2, args2, { encoding: "utf8" }).trim(), "hi there"); // Windows 는 testSpawn(plat.test.ts)
 });
 
 test("토큰: SDK assistant usage 를 run 에 더하고(같은 message.id 는 한 번), 서브에이전트별로도 — 요약을 다시 보내 실시간으로", async () => {

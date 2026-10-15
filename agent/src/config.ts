@@ -6,6 +6,7 @@ import { resolveConnectors, type Connectors } from "./connectors.ts";
 import { homedir, userInfo } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { phraseLines } from "./phrases.ts";
+import { IS_WIN, isAbsPath, isFsRoot } from "./plat.ts";
 import { autoMergeList } from "./auto-merge.ts";
 import { todayReminderOf, type TodayReminder } from "./daily-plan.ts";
 import { isNewStyle, onboardedOf, readSessionsOf } from "./onboarding.ts";
@@ -222,7 +223,8 @@ export function repoRootsOf(raw: unknown, notes: string[]): string[] | undefined
   const out: string[] = [];
   for (const x of list) {
     const p = typeof x === "string" ? x.trim() : "";
-    if (!p || !isAbsolute(p) || resolve(p) === "/") { notes.push(`repoRoots 에서 쓸 수 없는 값(${typeof x === "string" ? x.slice(0, 80) : typeof x})을 뺐어요. 「/」로 시작하는 폴더 경로만, 디스크 맨 위(/)는 안 돼요`); continue; }
+    // Windows: 드라이브 절대 경로(C:\…)만, 드라이브 맨 위(C:\)·UNC 는 안 됨
+    if (!p || !isAbsolute(p) || resolve(p) === "/" || (IS_WIN && (!isAbsPath(p) || isFsRoot(p)))) { notes.push(`repoRoots 에서 쓸 수 없는 값(${typeof x === "string" ? x.slice(0, 80) : typeof x})을 뺐어요. 「/」로 시작하는 폴더 경로만, 디스크 맨 위(/)는 안 돼요`); continue; }
     const r = resolve(p);
     if (!out.includes(r)) out.push(r);
   }

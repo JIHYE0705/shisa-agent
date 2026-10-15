@@ -36,7 +36,7 @@ html, body {
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
-  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", "Malgun Gothic", sans-serif;
   color: var(--bubble-fg);
 }
 
@@ -148,7 +148,7 @@ html, body {
 .bubble .md li { margin: 2px 0; }
 .bubble .md li::marker { color: var(--bubble-muted); }
 .bubble .md strong { font-weight: 650; color: var(--bubble-fg); }
-.bubble .md code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0 3px; border-radius: 4px; background: color-mix(in srgb, var(--bubble-fg) 8%, transparent); }
+.bubble .md code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 0 3px; border-radius: 4px; background: color-mix(in srgb, var(--bubble-fg) 8%, transparent); }
 .bubble .md mark { background: rgba(255, 214, 10, 0.38); color: inherit; padding: 0 2px; border-radius: 3px; }
 .bubble .md table { border-collapse: collapse; margin: 3px 0; font-size: 12px; }
 .bubble .md th, .bubble .md td { padding: 3px 7px 3px 0; text-align: left; border-bottom: 1px solid var(--bubble-border); vertical-align: top; }

@@ -32,13 +32,16 @@ test("detectTestCommand", () => {
   // 파이썬: 워크트리 → 원래 체크아웃의 .venv, 없으면 uv · 시스템 python3
   const py = mkdtempSync(join(tmpdir(), "cy-py-")), main = mkdtempSync(join(tmpdir(), "cy-main-"));
   writeFileSync(join(py, "pyproject.toml"), ""); mkdirSync(join(py, "tests"));
-  assert.deepEqual(detectTestCommand(py, main), ["python3", "-m", "pytest", "-q"]);
+  // Windows: venv 는 Scripts\python.exe, 시스템 파이썬은 python
+  const win = process.platform === "win32";
+  const [vbin, vpy] = win ? ["Scripts", "python.exe"] : ["bin", "python"];
+  assert.deepEqual(detectTestCommand(py, main), [win ? "python" : "python3", "-m", "pytest", "-q"]);
   writeFileSync(join(py, "uv.lock"), "");
   assert.deepEqual(detectTestCommand(py, main), ["uv", "run", "pytest", "-q"]);
-  mkdirSync(join(main, ".venv", "bin"), { recursive: true }); writeFileSync(join(main, ".venv", "bin", "python"), "");
-  assert.deepEqual(detectTestCommand(py, main), [join(main, ".venv", "bin", "python"), "-m", "pytest", "-q"]);
-  mkdirSync(join(py, "venv", "bin"), { recursive: true }); writeFileSync(join(py, "venv", "bin", "python"), "");
-  assert.deepEqual(detectTestCommand(py, main), [join(py, "venv", "bin", "python"), "-m", "pytest", "-q"]);
+  mkdirSync(join(main, ".venv", vbin), { recursive: true }); writeFileSync(join(main, ".venv", vbin, vpy), "");
+  assert.deepEqual(detectTestCommand(py, main), [join(main, ".venv", vbin, vpy), "-m", "pytest", "-q"]);
+  mkdirSync(join(py, "venv", vbin), { recursive: true }); writeFileSync(join(py, "venv", vbin, vpy), "");
+  assert.deepEqual(detectTestCommand(py, main), [join(py, "venv", vbin, vpy), "-m", "pytest", "-q"]);
 });
 
 test("slugify: 한글만이면 기본값", () => {

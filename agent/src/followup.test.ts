@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -21,7 +21,7 @@ const until = async (cond: () => boolean, ms = 5000) => { const t = Date.now(); 
 function setupRepo() {
   const root = mkdtempSync(join(tmpdir(), "cy-follow-"));
   const seed = join(root, "seed");
-  execFileSync("mkdir", ["-p", seed]);
+  mkdirSync(seed, { recursive: true }); // Windows 엔 mkdir -p 명령이 없다
   git(seed, "init", "-q", "-b", "main");
   writeFileSync(join(seed, "README.md"), "# demo\n");
   git(seed, "add", "-A");

@@ -6,6 +6,7 @@ import type { Config } from "./config.ts";
 import type { Store, Todo, TodoSource } from "./store.ts";
 import { ask } from "./brain.ts";
 import { permalinkOf } from "./ingest/slack.ts";
+import { isAbsPath } from "./plat.ts";
 
 export type GitShow = (repo: string, sha: string) => { sha: string; author: string; at: string; subject: string } | undefined;
 export type Describe = (cfg: Config, todo: Todo, origin: TodoSource | undefined) => Promise<string>;
@@ -17,7 +18,7 @@ const clip = (s: unknown, n: number) => {
 const safeLink = (v: unknown) => (typeof v === "string" && /^(https?|slack):\/\/\S+$/i.test(v) ? v : undefined);
 
 const realGitShow: GitShow = (repo, sha) => {
-  if (!/^[0-9a-f]{4,40}$/i.test(sha) || !repo.startsWith("/") || !existsSync(repo)) return undefined;
+  if (!/^[0-9a-f]{4,40}$/i.test(sha) || !isAbsPath(repo) || !existsSync(repo)) return undefined;
   try {
     const out = execFileSync("git", ["-C", repo, "show", "-s", "--format=%H%x1f%an%x1f%cI%x1f%s", sha], { timeout: 3000, encoding: "utf8" }).trim();
     const [full, author, at, subject] = out.split("\x1f");

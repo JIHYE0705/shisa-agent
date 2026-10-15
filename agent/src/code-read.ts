@@ -5,6 +5,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { HOME_DIR, type Config } from "./config.ts";
 import { findRepos } from "./git.ts";
+import { IS_WIN, pathKey, pathWithin, realish, winLocalPath } from "./plat.ts";
 import type { Store, Todo, ChatTurn } from "./store.ts";
 import type { Verdict } from "./guard.ts";
 
@@ -13,28 +14,30 @@ export const CODE_TOOLS = ["Read", "Glob", "Grep"] as const;
 // 비밀일 수 있는 파일(이름 기준) — 레포 안이어도 읽지 않는다
 const SECRET_NAMES = [/^\.env(\..*)?$/i, /\.pem$/i, /\.key$/i, /\.p12$/i, /\.pfx$/i, /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/i, /^\.npmrc$/i, /^\.netrc$/i, /^\.pypirc$/i, /^credentials(\.json)?$/i, /\.keystore$/i];
 export function isSecretPath(p: string): boolean {
+  if (IS_WIN) { // Windows: 대소문자·8.3 이름·끝 점·:스트림 으로 비켜 가지 못하게 실제 경로 + pathKey 로. UNC·장치 경로(\\localhost\c$\…)는 비밀로 본다
+    const local = winLocalPath(p);
+    if (local === undefined) return true;
+    const real0 = realish(local), home = realish(HOME_DIR);
+    const real = winLocalPath(real0);
+    if (real === undefined) return true;
+    if (pathWithin(real, home)) return true;
+    return pathKey(real).split("\\").some((part) => SECRET_NAMES.some((re) => re.test(part)));
+  }
   const abs = resolve(p);
   if (abs === resolve(HOME_DIR, "config.json") || abs.startsWith(resolve(HOME_DIR) + sep)) return true; // ~/.cy-agent(토큰·DB)
   return abs.split(sep).some((part) => SECRET_NAMES.some((re) => re.test(part)));
 }
 
-// 심볼릭 링크로 빠져나가지 못하게: 있는 데까지 실제 경로로 바꾼 뒤 루트 안인지
-function realish(p: string): string {
-  let cur = resolve(p);
-  const rest: string[] = [];
-  while (!existsSync(cur)) {
-    const up = dirname(cur);
-    if (up === cur) break;
-    rest.unshift(basename(cur));
-    cur = up;
-  }
-  try { cur = realpathSync(cur); } catch {}
-  return rest.length ? join(cur, ...rest) : cur;
-}
+// 심볼릭 링크로 빠져나가지 못하게: 있는 데까지 실제 경로로 바꾼 뒤(plat.ts realish) 루트 안인지. Windows 는 대소문자 무시
+// Windows: UNC·장치 경로(\\localhost\c$\… · \\?\UNC\…)는 루트 안으로 보지 않는다(\\?\C:\… 는 C:\… 로)
 export function insideRoots(p: string, roots: string[]): boolean {
-  const real = realish(p);
+  const local = IS_WIN ? winLocalPath(p) : p;
+  if (local === undefined) return false;
+  const real = IS_WIN ? winLocalPath(realish(local)) : realish(local);
+  if (real === undefined) return false;
   return roots.some((r) => {
     const root = realish(r);
+    if (IS_WIN) return pathWithin(real, root);
     return real === root || real.startsWith(root.endsWith(sep) ? root : root + sep);
   });
 }

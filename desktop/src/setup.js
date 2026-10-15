@@ -1,6 +1,8 @@
 // 설치 마법사 내용. 패널은 토큰을 받지 않고, 터미널 명령과 ~/.cy-agent/config.json 예시만 보여 준다.
 // 절차는 docs/connect/ 와 같은 출처(2026-10)만 담는다.
 
+import { WIN, claudeInstall } from './os-hint.js';
+
 export const SETUP_STEPS = [
   {
     id: 'welcome',
@@ -29,9 +31,11 @@ export const SETUP_STEPS = [
         '새 터미널에서 claude 를 실행하고, 브라우저에서 로그인한 뒤 /exit 로 나옵니다. Pro·Max·Team·Enterprise 또는 Console 계정이 필요합니다.',
         'claude mcp list 로 사용자 범위 서버가 보이는지 확인합니다. 아직 없으면 다음 단계에서 추가합니다.',
       ] },
-      { type: 'code', label: '설치', text: 'curl -fsSL https://claude.ai/install.sh | bash\nclaude --version' },
+      { type: 'code', label: '설치', text: `${claudeInstall()}\nclaude --version` },
       { type: 'link', href: 'https://code.claude.com/docs/en/setup', text: 'Claude Code 설치 문서' },
-      { type: 'note', text: 'claude: command not found 이면 ~/.local/bin 이 PATH에 없는 것입니다. Homebrew로 깔려면 brew install --cask claude-code (자동 업데이트는 안 됩니다).' },
+      { type: 'note', text: WIN
+        ? 'claude 를 찾을 수 없다고 나오면 PowerShell 창을 닫고 새로 엽니다. 그래도 안 되면 %USERPROFILE%\\.local\\bin 이 사용자 PATH에 있는지 확인합니다.'
+        : 'claude: command not found 이면 ~/.local/bin 이 PATH에 없는 것입니다. Homebrew로 깔려면 brew install --cask claude-code (자동 업데이트는 안 됩니다).' },
     ],
   },
   {
@@ -218,11 +222,13 @@ export const SETUP_STEPS = [
     blocks: [
       { type: 'ol', items: [
         '비밀값이 들어간 파일을 채팅이나 레포에 붙이지 않았는지 확인합니다.',
-        '이미 launchd로 깔려 있으면 아래 명령으로 데몬만 다시 띄웁니다.',
+        WIN ? '앱이 데몬을 띄웠다면 알림 영역(작업 표시줄 오른쪽)의 시사 아이콘을 오른쪽 클릭 → **종료** 한 뒤 시작 메뉴에서 시사를 다시 엽니다.' : '이미 launchd로 깔려 있으면 아래 명령으로 데몬만 다시 띄웁니다.',
         '개발 중이라 터미널에서 데몬을 띄웠다면, 그 프로세스를 끄고 agent 폴더에서 npm start 를 다시 합니다.',
         'claude mcp list 와 데몬 로그의 [connectors] 줄로 확인합니다. “(준비 안 됨)”이 붙으면 이유가 같이 나옵니다.',
       ] },
-      { type: 'code', label: '데몬 다시 시작', text: 'launchctl kickstart -k gui/$(id -u)/com.cy-agent.daemon\ngrep -E \'\\[connectors\\]\' ~/.cy-agent/logs/com.cy-agent.daemon.log | tail' },
+      WIN
+        ? { type: 'code', label: '연결 확인(PowerShell)', text: 'Select-String -Path "$HOME\\.cy-agent\\logs\\com.cy-agent.daemon.log" -Pattern \'\\[connectors\\]\' | Select-Object -Last 10' }
+        : { type: 'code', label: '데몬 다시 시작', text: 'launchctl kickstart -k gui/$(id -u)/com.cy-agent.daemon\ngrep -E \'\\[connectors\\]\' ~/.cy-agent/logs/com.cy-agent.daemon.log | tail' },
       { type: 'note', text: '비밀값은 채팅이나 공개 저장소에 붙이지 않습니다. 토큰·ICS 주소는 ~/.cy-agent/config.json 에만 둡니다.' },
     ],
   },

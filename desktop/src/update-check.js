@@ -27,16 +27,47 @@ export function compareVersions(a, b) {
 
 export const isNewer = (latest, current) => compareVersions(latest, current) > 0;
 
-// GET /releases/latest 응답 → { version, tag, url } | null. 초안·미리보기판은 건너뛴다.
-// 열 주소는 이 레포의 릴리스 페이지만(아니면 릴리스 목록)
-export function latestRelease(json) {
+const okLink = (u, prefix) => typeof u === 'string' && u.startsWith(prefix) && !/[\s"'<>]/.test(u);
+
+// 이 PC 가 받을 파일 이름 고르기(이름은 windows/dist-win.mjs · desktop/scripts/dist.mjs 와 같다).
+// win32 설치본: Shisa-<v>-Setup.exe(x64) · Shisa-<v>-arm64-Setup.exe. 휴대용 zip: Shisa-<v>-win-<arch>.zip.
+// darwin: Shisa-<v>-<arch>.dmg. arm64 는 자기 것이 없으면 x64 로(윈도우·맥 모두 에뮬레이션으로 돈다). 그 밖의 플랫폼은 없음
+function assetMatchers({ platform, arch, portable }) {
+  const archs = arch === 'arm64' ? ['arm64', 'x64'] : ['x64'];
+  if (platform === 'win32') {
+    if (portable) return archs.map((a) => new RegExp(`-win-${a}\\.zip$`, 'i'));
+    return archs.map((a) => (a === 'x64' ? (n) => /-Setup\.exe$/i.test(n) && !/-arm64-Setup\.exe$/i.test(n) : /-arm64-Setup\.exe$/i));
+  }
+  if (platform === 'darwin') return archs.map((a) => new RegExp(`-${a}\\.dmg$`, 'i'));
+  return [];
+}
+const matches = (m, name) => (typeof m === 'function' ? m(name) : m.test(name));
+
+// 릴리스의 assets 에서 이 PC 용 파일 → { name, url } | null. 받는 주소는 이 레포 릴리스 파일만
+export function pickAsset(assets, target) {
+  if (!Array.isArray(assets)) return null;
+  const ok = assets.filter((a) => a && typeof a.name === 'string' && okLink(a.browser_download_url, `${RELEASES_PAGE}/download/`));
+  for (const m of assetMatchers(target)) {
+    const a = ok.find((x) => matches(m, x.name));
+    if (a) return { name: a.name, url: a.browser_download_url };
+  }
+  return null;
+}
+
+// GET /releases/latest 응답 → { version, tag, url, asset } | null. 초안·미리보기판은 건너뛴다.
+// 열 주소는 이 레포의 릴리스 페이지만(아니면 릴리스 목록).
+// target { platform, arch, portable, checkout } 를 주면 이 PC 용 파일이 올라온 릴리스만 알린다(맥이 먼저 내고 윈도우가
+// 나중에 덧붙이는 사이엔 null → 알림 기록도 안 남아 다음 확인 때 다시 본다). 터미널 설치(checkout)는 파일이 필요 없다
+export function latestRelease(json, target) {
   if (!json || typeof json !== 'object' || json.draft || json.prerelease) return null;
   const tag = typeof json.tag_name === 'string' ? json.tag_name.trim() : '';
   const p = parseVersion(tag);
   if (!p) return null;
   const version = tag.replace(/^v/, '');
-  const okUrl = typeof json.html_url === 'string' && json.html_url.startsWith(`${RELEASES_PAGE}/`) && !/[\s"'<>]/.test(json.html_url);
-  return { version, tag, url: okUrl ? json.html_url : RELEASES_PAGE };
+  const url = okLink(json.html_url, `${RELEASES_PAGE}/`) ? json.html_url : RELEASES_PAGE;
+  if (!target || target.checkout) return { version, tag, url, asset: null };
+  const asset = pickAsset(json.assets, target);
+  return asset ? { version, tag, url, asset } : null;
 }
 
 // 지금 확인할 때인가: 켜져 있고, 마지막 확인이 하루 전보다 오래됐거나 없거나 시계가 거꾸로 갔으면
@@ -53,9 +84,18 @@ export function shouldNotify({ latest, current, notified }) {
 }
 
 // 캐릭터 말풍선. checkout: 터미널 설치(레포 체크아웃) — dmg 대신 ./ops/update.sh 로 받는다
-export function updateBubble({ version, url, checkout = false }) {
+// platform 'win32': 설치본은 새 Setup.exe 를 실행(Squirrel 이 다시 깐다 — 켜져 있는 시사는 바로 꺼지니 먼저 종료).
+// portable(Update.exe 없는 휴대용 zip): 새 zip 을 풀어 쓴다. assetUrl 이 있으면 그 파일을 바로 받는다
+export function updateBubble({ version, url, assetUrl, checkout = false, platform, portable = false }) {
   const text = checkout
     ? `새 버전 v${version} 가 나왔어요. 받은 레포 폴더에서 ./ops/update.sh 를 실행하면 바뀌어요.`
-    : `새 버전 v${version} 가 나왔어요. 새 dmg 를 받아 응용 프로그램에 덮어 넣으면 돼요. 할 일·기록은 그대로예요.`;
-  return { id: BUBBLE_ID, kind: 'info', text, link: url || RELEASES_PAGE, linkLabel: checkout ? '바뀐 점 보기' : '받으러 가기', ttlMs: 120000 };
+    : platform === 'win32'
+      ? portable
+        ? `새 버전 v${version} 가 나왔어요. 시사를 종료하고 새 zip 을 받아 풀어서 Shisa.exe 를 실행하면 돼요. 할 일·기록은 그대로예요.`
+        : `새 버전 v${version} 가 나왔어요. 알림 영역 아이콘에서 시사를 종료한 뒤 새 Setup.exe 를 받아 실행하면 바뀌어요. 할 일·기록은 그대로예요.`
+      : platform === 'darwin'
+        ? `새 버전 v${version} 가 나왔어요. 새 dmg 를 받아 응용 프로그램에 덮어 넣으면 돼요. 할 일·기록은 그대로예요.`
+        : `새 버전 v${version} 가 나왔어요. 새 버전을 받아 바꿔 주세요. 할 일·기록은 그대로예요.`;
+  const link = (!checkout && assetUrl) || url || RELEASES_PAGE;
+  return { id: BUBBLE_ID, kind: 'info', text, link, linkLabel: checkout ? '바뀐 점 보기' : '받으러 가기', ttlMs: 120000 };
 }

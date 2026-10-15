@@ -38,7 +38,7 @@
 html, body {
   margin: 0; min-height: 100%;
   background: var(--surface); color: var(--fg);
-  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", "Malgun Gothic", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 button, select { font: inherit; color: var(--fg); }
@@ -115,7 +115,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
 .gl-add { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 
 /* 문구 */
-.card code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); padding: 0 4px; border-radius: 4px; }
+.card code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code); padding: 0 4px; border-radius: 4px; }
 .ph-groups details { border-top: 1px solid var(--line); }
 .ph-groups details:first-child { border-top: 0; }
 .ph-groups summary { font-weight: 600; color: var(--fg); font-size: 12.5px; }

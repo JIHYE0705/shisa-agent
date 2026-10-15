@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { DEDUPE, sameItem } from "./todo-match.ts";
 import type { Attachment } from "./attachments.ts";
+import { IS_WIN, pathWithin } from "./plat.ts";
 
 export type Node = { id: string; kind: string; label: string; props: Record<string, unknown>; updated: string };
 export type Todo = {
@@ -620,7 +621,7 @@ export class Store {
   }
   // 경로가 숨긴 프로젝트(또는 그 하위 폴더)인가
   isHiddenPath(path: string, hidden = this.hiddenProjects()): boolean {
-    return hidden.some((h) => path === h.path || path.startsWith(h.path.endsWith("/") ? h.path : h.path + "/"));
+    return hidden.some((h) => path === h.path || path.startsWith(h.path.endsWith("/") ? h.path : h.path + "/") || (IS_WIN && pathWithin(path, h.path)));
   }
 
   // threadId 없으면 "이전 대화"(옛 호출부 호환). 스레드 updated 도 같이 민다

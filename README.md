@@ -6,7 +6,7 @@
 macOS와 윈도우에서 쓸 수 있습니다.
 
 새로 들어온 것:
-- 윈도우 버전을 추가했습니다.
+- 윈도우 버전을 추가했습니다. 설치는 [windows/README.md](windows/README.md)를 봐 주세요.
 - 캐릭터를 고를 수 있습니다. 시사에 더해 하치와레·랏코·모몽가가 있고, 캐릭터마다 그림과 말투가 다릅니다.
 
 써 보시고 불편한 점이 있으면 [의견 보내기](#의견-보내기)로 알려 주세요!
@@ -370,6 +370,7 @@ cd ~/shisa-agent && ./ops/uninstall.sh
 |---|---|
 | `agent/` | 데몬. TypeScript를 빌드 없이 Node.js로 바로 돌립니다. 수집, 뇌, 브리핑, 코드 고치기, 로컬 서버(`127.0.0.1:47823`) |
 | `desktop/` | Electron 앱. 캐릭터 오버레이, 패널, 작업 세션 창, 설정 창([desktop/README.md](desktop/README.md)) |
+| `windows/` | 윈도우 버전 안내, 설치 파일(Setup.exe)·zip 만들기(`dist-win.mjs`) |
 | `assets/` | 캐릭터 그림·영상·스티커. 설치할 때 `~/.cy-agent/assets`로 복사됩니다 |
 | `ops/` | 터미널 설치·업데이트·삭제 스크립트(launchd), 릴리스 스크립트(`release.sh`), Slack 앱 매니페스트, 설정 예시 |
 | `docs/connect/` | 연결 안내 |

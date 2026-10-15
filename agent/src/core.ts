@@ -38,6 +38,7 @@ import { inAutoMerge, normSlug, readyBlock, settlePr } from "./auto-merge.ts";
 import { execFileSync } from "node:child_process";
 import type { ActionVia } from "./actions.ts";
 import { insideRoots } from "./code-read.ts";
+import { isAbsPath } from "./plat.ts";
 import { BackgroundAgents, type BgPorts } from "./bg-agents.ts";
 import { addAgentWorktree, agentBranch, finishAgentWorktree, isolationSource, worktreeNote, worktreeRecords } from "./agent-worktrees.ts";
 import { runBackgroundAgent } from "./chat.ts";
@@ -749,7 +750,7 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
     if (!this.reactions) return { error: `${label} 머지 승인을 띄울 수 없어요(캐릭터 반응이 꺼져 있어요)` };
     const ref = parsePrRef(ask.pr, ask.repo);
     if (!ref) return { error: `어느 PR 인지 알아보지 못했어요(${label}) — 링크나 owner/repo#번호로 말해 주세요` };
-    const local = !ref.url && !ref.repo && ask.repo?.startsWith("/") ? ask.repo : undefined;
+    const local = !ref.url && !ref.repo && ask.repo && isAbsPath(ask.repo) ? ask.repo : undefined;
     if (!ref.url && !ref.repo && !(local && insideRoots(local, this.cfg.repoRoots)))
       return { error: `${label} 이(가) 어느 레포의 PR 인지 몰라요 — 링크나 owner/repo#번호로 말해 주세요` };
     let st;
@@ -817,7 +818,7 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
     for (const o of ops.slice(0, 5)) {
       const raw = String(o.repo ?? "").trim();
       let slug = normSlug(raw);
-      if (!slug && raw.startsWith("/") && insideRoots(raw, this.cfg.repoRoots)) {
+      if (!slug && isAbsPath(raw) && insideRoots(raw, this.cfg.repoRoots)) {
         try { slug = normSlug(execFileSync("git", ["-C", raw, "remote", "get-url", "origin"], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] })); } catch {}
       }
       if (!slug) { out.push(`⚠️ 자동 머지 레포를 ${o.op === "add" ? "넣지" : "빼지"} 못했어요 — 어느 레포인지 몰라요(${raw.slice(0, 80) || "빈 값"}). owner/name 으로 말해 주세요`); continue; }
@@ -1125,7 +1126,7 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
     const p = (await this.dashboard()).projects.find((x) => x.path === path);
     const node = this.store.node(`project:${path}`);
     if (!p && !node) return false;
-    this.store.hideProject(path, p?.name ?? node?.label ?? path.split("/").filter(Boolean).at(-1) ?? path);
+    this.store.hideProject(path, p?.name ?? node?.label ?? path.split(/[\\/]/).filter(Boolean).at(-1) ?? path);
     this.changed();
     return true;
   }

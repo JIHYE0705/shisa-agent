@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   okSessionId, okCwd, projectDirName, sessionFile, shQuote, resumeCommand, appleString, terminalArgs, planResume, canResume, resumeTip,
-  parseSessionId, importNote,
+  parseSessionId, importNote, sessionCwd, winResumeLaunches,
 } from '../src/resume.js';
 
 const HOME = '/Users/a.b';
@@ -79,6 +79,61 @@ test('parseSessionId·importNote: 붙여 넣은 글에서 UUID 하나 · 결과 
   assert.equal(importNote({ imported: 0 }), '세션을 만들었지만 불러올 터미널 기록이 없었어요.');
   assert.equal(importNote({ imported: 2, existing: true }), '이미 있던 세션이에요 — 새 기록 2줄을 더 불러왔어요.');
   assert.equal(importNote({ imported: 0, existing: true }), '이미 있던 세션이에요.');
+});
+
+const WHOME = 'C:\\Users\\a.b';
+
+test('윈도우 okCwd·canResume·sessionCwd: 드라이브 경로도 홈 아래만, 대소문자 무시, cmd 특수문자·.. 금지', () => {
+  assert.equal(okCwd(`${WHOME}\\.cy-agent\\brain`, WHOME), true);
+  assert.equal(okCwd('c:\\users\\A.B\\code\\my repo', `${WHOME}\\`), true);
+  assert.equal(okCwd('C:/Users/a.b/code/x', WHOME), true);
+  assert.equal(okCwd(`${WHOME}\\code\\a&b (old)`, WHOME), true); // cmd 줄에선 따옴표 안이라 괜찮다
+  for (const bad of [WHOME, `${WHOME}x\\y`, 'D:\\Users\\a.b\\x', 'C:\\Windows\\x', 'rel\\x', '\\\\srv\\share\\x', `${WHOME}\\a\\..\\..\\x`, `${WHOME}\\.\\a`, `${WHOME}\\\\a`,
+    `${WHOME}\\a"b`, `${WHOME}\\a'b`, `${WHOME}\\a\nb`, `${WHOME}\\%PATH%`, `${WHOME}\\a!b`, `${WHOME}\\a^b`, `${WHOME}\\a;b`, `${WHOME}\\a:b`, `${WHOME}\\a.`, `${WHOME}\\a `, null]) {
+    assert.equal(okCwd(bad, WHOME), false, JSON.stringify(bad));
+  }
+  assert.equal(okCwd('/Users/a.b/x', WHOME), false);
+  assert.equal(okCwd(`${WHOME}\\x`, HOME), false); // 맥 홈엔 윈도우 경로 안 받음(그대로)
+  assert.equal(projectDirName('C:\\Users\\a'), 'C--Users-a');
+  assert.equal(sessionFile(`${WHOME}\\.claude\\`, `${WHOME}\\x`, SID), `${WHOME}\\.claude\\projects\\C--Users-a-b-x\\${SID}.jsonl`);
+  assert.equal(canResume({ sdkSessionId: SID, cwd: 'C:\\x' }), true);
+  assert.equal(canResume({ sdkSessionId: SID, cwd: 'x\\y' }), false);
+  const text = [JSON.stringify({ cwd: 'rel' }), JSON.stringify({ cwd: 'C:\\Users\\a\\b' })].join('\n');
+  assert.equal(sessionCwd(text, null), 'C:\\Users\\a\\b');
+  assert.equal(sessionCwd(`${JSON.stringify({ cwd: '/x' })}\n${JSON.stringify({ cwd: 'C:\\y' })}`, 'C--y'), 'C:\\y');
+});
+
+test('winResumeLaunches: Windows Terminal 이 있으면 먼저, 다음은 cmd start — 셸 없이 execFile 그대로', () => {
+  const cwd = `${WHOME}\\code\\my repo`;
+  const wt = 'C:\\Users\\a.b\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe';
+  const [a, b] = winResumeLaunches(cwd, SID, { wt });
+  assert.deepEqual(a, { file: wt, args: ['-d', cwd, 'cmd.exe', '/k', 'claude', '--resume', SID] });
+  assert.deepEqual(b, { file: 'cmd.exe', args: ['/d', '/c', `start "" /D "${cwd}" cmd.exe /k claude --resume ${SID}`], verbatim: true });
+  assert.equal(winResumeLaunches(cwd, SID).length, 1);
+  assert.deepEqual(winResumeLaunches(cwd, `${SID} & calc`), []);
+  for (const bad of [`${WHOME}\\a"b`, `${WHOME}\\%x%`, '/x', `${WHOME}\\a;b`]) assert.deepEqual(winResumeLaunches(bad, SID, { wt }), [], bad);
+});
+
+test('planResume win32: launches 로, 워크트리 밖 사라진 폴더는 못 연다', () => {
+  const claudeDir = `${WHOME}\\.claude`, worktreesDir = `${WHOME}\\.cy-agent\\worktrees`;
+  const wt = `${worktreesDir}\\cy-fix-1`;
+  const have = (...paths) => (p) => paths.includes(p);
+  const opts = (exists) => ({ home: WHOME, claudeDir, worktreesDir, exists, platform: 'win32', wt: null });
+  const run = { sdkSessionId: SID, cwd: wt };
+  const re = planResume(run, opts(have(sessionFile(claudeDir, wt, SID))));
+  assert.deepEqual([re.ok, re.mkdir, re.args], [true, true, undefined]);
+  assert.deepEqual(re.launches, winResumeLaunches(wt, SID));
+  const gone = `${WHOME}\\code\\gone`;
+  assert.match(planResume({ ...run, cwd: gone }, opts(have(sessionFile(claudeDir, gone, SID)))).error, /작업 폴더가 없어져서/);
+  // 홈 밖 기록은 못 연다
+  assert.equal(planResume({ ...run, cwd: 'C:\\Windows\\x' }, opts(() => true)).ok, false);
+});
+
+test('IPC 배선: 윈도우는 plan.launches 를 execFile 로 차례로(셸 없이), wt 는 lstat 로 찾는다', () => {
+  const main = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  assert.match(main, /platform: process\.platform,\s+wt: process\.platform === 'win32' \? windowsTerminal\(\) : null,/);
+  assert.match(main, /execFile\(l\.file, l\.args, \{ timeout: 15000, env: consoleEnv\(\), \.\.\.\(l\.verbatim \? \{ windowsVerbatimArguments: true \} : \{\}\) \}/);
+  assert.match(main, /'WindowsApps', 'wt\.exe'/);
 });
 
 test('IPC 배선: 세션 창 importSession → 메인 session-import(UUID 만) → POST /runs/import', () => {

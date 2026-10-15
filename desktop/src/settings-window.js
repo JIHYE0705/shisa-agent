@@ -23,6 +23,7 @@ export function setupSettings(deps) {
       show: false,
       title: '설정',
       acceptFirstMouse: true,
+      autoHideMenuBar: true, // 윈도우: 앱 메뉴(편집·윈도우)를 창마다 띄우지 않는다(Alt 로 보임). 맥은 상관없음
       webPreferences: { preload: deps.preload, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false },
     });
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

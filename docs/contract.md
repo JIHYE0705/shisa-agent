@@ -61,9 +61,15 @@ type Bubble = {
   "user": { "name": "길동" },
   "onboarded": true,
   "configError": "설정 파일(config.json)에 문법 오류가 있어 …",  // 있을 때만. 파일을 못 읽어 안전 모드로 켬
-  "configNotes": ["ingestIntervalMin 값이 이상해서 …"]         // 있을 때만. 이상한 설정 값을 기본값으로 바꾼 것들
+  "configNotes": ["ingestIntervalMin 값이 이상해서 …"],        // 있을 때만. 이상한 설정 값을 기본값으로 바꾼 것들
+  "daemon": "shisa",                 // 늘 같은 값: 이 포트의 주인이 시사 데몬이다(GET /status 에만, SSE status 엔 없음)
+  "pid": 12345,                      // 데몬 프로세스 id
+  "stopping": true                   // 있을 때만. 꺼지는 중(곧 포트가 빈다)
 }
 ```
+
+- `daemon`·`pid`·`stopping`: 앱(desktop `daemonAlive`)은 2xx JSON 에 `daemon: "shisa"`가 있어야 그 포트에 시사 데몬이 있다고 본다. 이 칸이 생기기 전의 데몬은 `brain.provider`가 있는 모양으로 알아본다. 다른 프로그램이 답하면 데몬을 띄워 본다.
+- 데몬은 `cy.db`를 열기 전에 포트부터 잡는다. 이미 누가 쓰고 있으면 한 줄 남기고 종료 코드 75로 끝난다. 앱은 이걸 충돌로 세지 않고 그 포트를 다시 지켜본다(처음 1분은 2초마다, 그 뒤로는 1분마다).
 
 - `configError`: `config.json`이 JSON 문법 오류이거나 `{ … }` 모양이 아니면 데몬은 안전 모드로 켠다. 설치 마법사 전처럼 작업 기록·레포를 읽지 않고, 뇌는 `local`이다. 로그에도 크게 남긴다. 파일을 고친 뒤 데몬을 다시 켜면 풀린다.
 - `configNotes`: 모르는 `brain.provider`(→ `local`), 1분보다 작거나 숫자가 아닌 분 간격(`briefingIntervalMin`·`ingestIntervalMin`·`slackIngestIntervalMin`·`progressCheckMin`, `progressCheckMin`만 0 = 끔), 0이 아니면서 0.25시간보다 작은 `todayReminder.everyHours`, 숫자가 아닌 `port`(→ 47823), `repoRoots`의 상대 경로·`/` 같은 값. 위쪽 상한은 없다.

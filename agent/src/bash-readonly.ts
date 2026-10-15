@@ -7,6 +7,7 @@
 //   - 인자가 비밀 경로(.env·자격 증명·키·~/.ssh 등)면 안 됨 — `cd` 로 옮긴 위치까지 따라가서 본다.
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
+import { IS_WIN, bashPathWin, isRealishUnknown, pathKey, realish } from "./plat.ts";
 
 // 셸 낱말 하나 — glob: 따옴표 밖 *?[ 가 있음(펼쳐질 수 있다)
 type Word = { text: string; glob: boolean };
@@ -33,7 +34,11 @@ export function splitReadOnly(cmd: string): Word[][] | undefined {
       let j = i + 1;
       for (; j < s.length && s[j] !== '"'; j++) {
         if (s[j] === "$" || s[j] === "`") return undefined;
-        if (s[j] === "\\" && j + 1 < s.length) { j++; if (s[j] === "\n") return undefined; }
+        // bash 처럼: 큰따옴표 안 역슬래시는 " \ $ ` 줄바꿈 앞에서만 이스케이프, 그 밖(\n · \| · C:\x)은 글자 그대로 남는다
+        if (s[j] === "\\" && j + 1 < s.length) {
+          if (s[j + 1] === "\n") return undefined;
+          if (s[j + 1] === '"' || s[j + 1] === "\\") j++;
+        }
         cur.text += s[j];
       }
       if (j >= s.length) return undefined;
@@ -83,7 +88,8 @@ const ENV_OK = /^\.env\.(example|sample|template|dist)$/i;
 const secretPart = (part: string) => !ENV_OK.test(part) && SECRET_PARTS.some((re) => re.test(part));
 // 인자 글에만 보는 것(셸 위치가 이전 명령으로 바뀌었을 수 있어서 이름으로도): Claude 설정 · 데몬 토큰·DB
 const SECRET_ARG_PARTS = [/^\.claude/, /^cy\.db/, /^\.cy-agent$/];
-const secretArg = (piece: string) => piece.split("/").some((p) => secretPart(p) || SECRET_ARG_PARTS.some((re) => re.test(p)));
+// Windows: 경로 대소문자 무관(.SSH = .ssh) · 역슬래시도 구분자
+const secretArg = (piece: string) => (IS_WIN ? piece.toLowerCase().split(/[\\/]/) : piece.split("/")).some((p) => secretPart(p) || SECRET_ARG_PARTS.some((re) => re.test(p)));
 
 // 읽기 명령 표: 이름 → 인자 검사(true = 괜찮음). 파일 내용을 읽는 명령은 따옴표 밖 glob 을 안 받는다(.env 로 펼쳐질 수 있어서)
 type Check = (args: string[]) => boolean;
@@ -131,6 +137,7 @@ function gitOk(args: string[]): boolean {
 const CMDS: Record<string, Check> = {
   cd: (args) => args.length <= 1 && args[0] !== "-",
   ls: ANY, pwd: ANY, cat: ANY, head: ANY, tail: ANY, wc: ANY, echo: ANY, which: ANY, cut: ANY, du: ANY, stat: ANY,
+  printf: (args) => args[0] !== "-v", // -v 변수 = 셸 변수에 쓰기
   grep: ANY,
   rg: noFlag(/^--pre\b|^--pre-glob\b|^--search-zip$|^-z$/), // --pre: 파일마다 프로그램 실행
   find: noFlag(/^-(exec|execdir|delete|ok|okdir|fprint|fprint0|fprintf|fls)$/),
@@ -142,16 +149,39 @@ const CMDS: Record<string, Check> = {
   git: gitOk,
 };
 
-export type ReadOnlyCtx = { cwd: string; home?: string; isSecret?: (abs: string) => boolean };
+// 따옴표 밖에 역슬래시가 있나(Windows 에서 C:\x 같은 경로인지 이스케이프인지 애매 — 그런 명령은 자동 허용 안 함)
+export function unquotedBackslash(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "\\") return true;
+    if (ch === "'") { const end = s.indexOf("'", i + 1); if (end < 0) return true; i = end; continue; }
+    if (ch === '"') {
+      let j = i + 1;
+      for (; j < s.length && s[j] !== '"'; j++) if (s[j] === "\\") j++;
+      if (j >= s.length) return true;
+      i = j;
+    }
+  }
+  return false;
+}
+
+export type ReadOnlyCtx ={ cwd: string; home?: string; isSecret?: (abs: string) => boolean };
 
 // 이 셸 명령이 읽기만 하나. 애매하면 false
 export function isReadOnlyBash(cmd: string, c: ReadOnlyCtx): boolean {
   if (typeof cmd !== "string" || !cmd.trim() || cmd.length > 2000) return false;
+  // Windows(Git Bash): 역슬래시가 이스케이프인지 경로 구분자인지 애매해서 경로를 믿을 수 없다 → 읽기 자동 허용 안 함
+  //   따옴표 안의 역슬래시('a\|b' · "a\nb" · '%s\n')는 글자 그대로 프로그램에 가고, 경로라면 아래에서 \ 도 구분자로 풀어 본다 → 괜찮다
+  if (IS_WIN && unquotedBackslash(cmd)) return false;
   const segs = splitReadOnly(cmd);
   if (!segs) return false;
   const home = c.home ?? homedir();
-  const expand = (p: string) => (p === "~" ? home : p.startsWith("~/") ? resolve(home, p.slice(2)) : p.startsWith("~") ? undefined : p);
-  const secret = (abs: string) => abs.split(sep).some(secretPart) || (c.isSecret?.(abs) ?? false);
+  // Windows: /c/Users/… → C:\Users\…. Git Bash 안쪽 경로(/tmp · /usr · /)·//서버 는 어딘지 모름 → undefined(읽기 자동 허용 안 함)
+  const expand = (p0: string) => { const p = bashPathWin(p0); if (IS_WIN && !p) return undefined; return p === "~" ? home : p.startsWith("~/") ? resolve(home, p.slice(2)) : p.startsWith("~") ? undefined : p; };
+  // Windows: 실제 경로로도(8.3 짧은 이름 SSH~1 → .ssh)
+  const parts = (abs: string) => (IS_WIN ? pathKey(abs).split("\\") : abs.split(sep)).some(secretPart);
+  const secret = (abs: string) => parts(abs) || (IS_WIN && realSecret(abs)) || (c.isSecret?.(abs) ?? false);
+  const realSecret = (abs: string) => { const r = realish(abs); return isRealishUnknown(r) || parts(r); }; // 너무 긴 경로 = 모름 → 비밀로
   let cwd = c.cwd;
   if (secret(cwd)) return false;
   for (const words of segs) {
