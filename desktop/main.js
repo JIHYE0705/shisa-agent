@@ -37,7 +37,7 @@ import { isFocusCmd, DAY_RE } from './src/focus.js';
 import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
 import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
-import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, loginItemPlan, loginItemHint, defaultLoginPref, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
+import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, loginItemPlan, loginItemHint, defaultLoginPref, daemonStatusKind, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
 import { createDaemonHost } from './src/daemon-host.js';
 import { RELEASES_API, checkDue, latestRelease, shouldNotify, updateBubble } from './src/update-check.js';
 import { denied } from './src/denied.js';
@@ -1687,10 +1687,14 @@ let daemonStopping = false;
 // 윈도우엔 launchd 가 없다(터미널 설치도 없음)
 const launchdPlist = () => process.platform !== 'win32' && fs.existsSync(path.join(os.homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_DAEMON}.plist`));
 
+// 그 포트의 주인이 시사 데몬인가 → true · 'stopping'(꺼지는 중) · false(아무도 없음·다른 프로그램·오류 응답)
+// 2xx JSON 이고 daemon: "shisa"(또는 그 칸 전의 데몬 모양 brain.provider)여야 한다(bundle.js daemonStatusKind)
 async function daemonAlive() {
   try {
-    await fetch(`${BASE}/status`, { signal: AbortSignal.timeout(1500), headers: { Accept: 'application/json' } });
-    return true; // 무슨 답이든 오면 누가 그 포트에 있다
+    const r = await fetch(`${BASE}/status`, { signal: AbortSignal.timeout(1500), headers: { Accept: 'application/json' } });
+    const ok = r.ok && /json/i.test(r.headers.get('content-type') ?? '');
+    const kind = daemonStatusKind(ok, ok ? await r.json().catch(() => null) : null);
+    return kind === 'stopping' ? 'stopping' : kind === 'daemon';
   } catch {
     return false;
   }
@@ -1772,6 +1776,8 @@ async function loginDefaultFromDaemon() {
 
 // ---- 새 버전 알림(src/update-check.js): 하루 한 번 GitHub Releases 최신판을 본다 ----
 const isCheckout = () => !app.isPackaged || launchdPlist(); // 터미널 설치(레포 체크아웃)는 ./ops/update.sh 로 받는다
+// 윈도우 휴대용 zip: Squirrel 설치본이면 Shisa.exe 한 칸 위(%LOCALAPPDATA%\Shisa)에 Update.exe 가 있다
+const isPortableWin = () => process.platform === 'win32' && app.isPackaged && !fs.existsSync(path.join(path.dirname(process.execPath), '..', 'Update.exe'));
 
 async function checkForUpdate() {
   const now = Date.now();
@@ -1781,11 +1787,13 @@ async function checkForUpdate() {
   try {
     const r = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'shisa-agent-desktop' }, signal: AbortSignal.timeout(15000) });
     if (!r.ok) return; // 아직 릴리스가 없으면 404
-    const rel = latestRelease(await r.json());
+    const target = { platform: process.platform, arch: process.arch, portable: isPortableWin(), checkout: isCheckout() };
+    // 이 PC 용 파일(Setup.exe·zip·dmg)이 아직 안 올라왔으면 null: 알림 기록을 안 남기니 다음 확인 때 다시 본다
+    const rel = latestRelease(await r.json(), target);
     if (!rel || !shouldNotify({ latest: rel.version, current: app.getVersion(), notified: state.updateNotified })) return;
     state.updateNotified = rel.version;
     saveState();
-    send('bubble', updateBubble({ version: rel.version, url: rel.url, checkout: isCheckout(), platform: process.platform }));
+    send('bubble', updateBubble({ version: rel.version, url: rel.url, assetUrl: rel.asset?.url, ...target }));
   } catch (e) {
     if (DEBUG) console.error('[update]', e?.message ?? e);
   }

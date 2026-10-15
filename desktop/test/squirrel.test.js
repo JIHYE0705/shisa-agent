@@ -7,7 +7,7 @@ import { squirrelPlan, loginItemTarget, updateExe, appUserModelId } from '../src
 const EXE = 'C:\\Users\\me\\AppData\\Local\\Shisa\\app-0.2.0\\Shisa.exe';
 const UPDATE = 'C:\\Users\\me\\AppData\\Local\\Shisa\\Update.exe';
 
-test('squirrelPlan: 설치·업데이트는 바로 가기 만들기, 제거는 지우기 + 로그인 항목 끄기, obsolete 는 그냥 끝', () => {
+test('squirrelPlan: 설치는 바로 가기 만들기, 업데이트(updated)는 아무것도 안 띄움, 제거는 지우기 + 로그인 항목 끄기, obsolete 는 그냥 끝', () => {
   const at = (arg) => squirrelPlan({ platform: 'win32', argv: [EXE, arg], execPath: EXE });
   assert.equal(updateExe(EXE), UPDATE);
   assert.deepEqual(at('--squirrel-install'), { event: 'install', run: [UPDATE, ['--createShortcut=Shisa.exe']], removeLoginItem: false });

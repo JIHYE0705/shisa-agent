@@ -82,18 +82,45 @@ export function isFsRoot(p: string, plat: Plat = process.platform): boolean {
   return r === path.win32.parse(r).root;
 }
 
-// 있는 데까지 실제 경로(Windows 는 native — 8.3 짧은 이름(CHAEYO~1)·대소문자·정션까지 풀린다) + 없는 나머지
+// 있는 데까지 실제 경로(Windows 는 native — 8.3 짧은 이름(ABCDEF~1)·대소문자·정션까지 풀린다) + 없는 나머지
+// 너무 긴 경로(글자·조각 수)는 파일 시스템을 끝까지 걷지 않고 "모름"(REALISH_UNKNOWN)으로 — 안전한 쪽(비밀·루트 밖으로 본다).
+// Windows 의 모름은 장치 경로 모양이라 winLocalPath 가 undefined(UNC 처럼 막힘), POSIX 는 절대 경로가 아니라 어느 루트 안도 아님
+export const REALISH_MAX_LEN = 4096, REALISH_MAX_SEGS = 256;
+const UNKNOWN_WIN = "\\\\?\\UNC\\cy-agent-unknown-path", UNKNOWN_POSIX = "\0cy-agent-unknown-path";
+export const isRealishUnknown = (p: string) => p === UNKNOWN_WIN || p === UNKNOWN_POSIX;
+// 한 판정(permissions.ts quick 한 번) 동안 existsSync·realish 결과를 기억한다 — 같은 낱말·같은 조상 폴더를 거듭 보지 않게. 밖에서는 늘 새로 본다
+let memo: { exists: Map<string, boolean>; real: Map<string, string> } | undefined;
+export function withFsMemo<T>(fn: () => T): T {
+  if (memo) return fn();
+  memo = { exists: new Map(), real: new Map() };
+  try { return fn(); } finally { memo = undefined; }
+}
+const exists = (p: string) => {
+  if (!memo) return existsSync(p);
+  let v = memo.exists.get(p);
+  if (v === undefined) { v = existsSync(p); memo.exists.set(p, v); }
+  return v;
+};
 export function realish(p: string, plat: Plat = process.platform): string {
-  let cur = path.resolve(p);
-  const rest: string[] = [];
-  while (!existsSync(cur)) {
+  const cur = path.resolve(p);
+  if (cur.length > REALISH_MAX_LEN || cur.split(/[\\/]/).length > REALISH_MAX_SEGS) return plat === "win32" ? UNKNOWN_WIN : UNKNOWN_POSIX;
+  return realishAt(cur, plat);
+}
+// 있는 조상까지 올라가 실제 경로로 + 없는 나머지(조상 결과는 memo 로 다시 쓴다)
+function realishAt(cur: string, plat: Plat): string {
+  const key = `${plat}\0${cur}`;
+  const hit = memo?.real.get(key);
+  if (hit !== undefined) return hit;
+  let out: string;
+  if (exists(cur)) {
+    out = cur;
+    try { out = plat === "win32" ? realpathSync.native(cur) : realpathSync(cur); } catch {}
+  } else {
     const up = path.dirname(cur);
-    if (up === cur) break;
-    rest.unshift(path.basename(cur));
-    cur = up;
+    out = up === cur ? cur : path.join(realishAt(up, plat), path.basename(cur));
   }
-  try { cur = plat === "win32" ? realpathSync.native(cur) : realpathSync(cur); } catch {}
-  return rest.length ? path.join(cur, ...rest) : cur;
+  memo?.real.set(key, out);
+  return out;
 }
 
 // PATH 안에서 실행 파일 찾기 → 전체 경로(없으면 undefined).

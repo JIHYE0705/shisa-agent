@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { createDaemonHost, WATCH_MS, KILL_AFTER_MS } from '../src/daemon-host.js';
+import { createDaemonHost, WATCH_MS, FAST_MS, FAST_FOR_MS, STOPPING_MS, KILL_AFTER_MS } from '../src/daemon-host.js';
+import { EXIT_PORT_TAKEN } from '../src/bundle.js';
 
 // 가짜 시계·프로세스
 function harness({ alive = [false] } = {}) {
@@ -56,15 +57,12 @@ test('포트가 비어 있으면 띄우고, 죽으면 1·2·4초… 간격으로
   assert.equal(h.children.length, 1);
   assert.equal(host.pid, 100);
 
-  // 오래 살다 죽음 → 1초 뒤
-  await h.advance(120_000);
+  // 띄우자마자 죽음 → 1초, 또 → 2초, 그다음 4초
   h.children[0].emit('exit', 1, null);
   assert.equal(host.mode, 'waiting');
   assert.equal([...h.timers.values()][0].ms, 1000);
   await h.advance(1000);
   assert.equal(h.children.length, 2);
-
-  // 바로 또 죽음 → 2초, 그다음 4초
   h.children[1].emit('exit', 1, null);
   assert.equal([...h.timers.values()][0].ms, 2000);
   await h.advance(2000);
@@ -73,19 +71,72 @@ test('포트가 비어 있으면 띄우고, 죽으면 1·2·4초… 간격으로
   await h.advance(4000);
   assert.equal(h.children.length, 4);
   assert.equal(host.restarts, 3);
+
+  // 오래 살다 죽음 → 다시 1초부터
+  await h.advance(120_000);
+  h.children[3].emit('exit', 1, null);
+  assert.equal([...h.timers.values()][0].ms, 1000);
 });
 
-test('이미 그 포트에 데몬이 있으면 띄우지 않고 지켜보다, 사라지면 그때 띄운다', async () => {
-  const h = harness({ alive: [true, true, false] });
+test('이미 그 포트에 데몬이 있으면 띄우지 않고 지켜보다(처음엔 2초마다, 1분 뒤엔 1분마다), 사라지면 그때 띄운다', async () => {
+  const h = harness({ alive: [true] });
+  let calls = 0;
+  const probe = h.deps.probe;
+  h.deps.probe = () => { calls++; return probe(); };
   const host = createDaemonHost(h.deps);
   await host.start();
   assert.equal(host.mode, 'external');
   assert.equal(h.children.length, 0);
+  assert.equal([...h.timers.values()][0].ms, FAST_MS);
+  await h.advance(FAST_FOR_MS);
+  assert.equal(calls, 1 + FAST_FOR_MS / FAST_MS);
+  assert.equal([...h.timers.values()][0].ms, WATCH_MS); // 1분 지나면 느리게
   await h.advance(WATCH_MS);
+  assert.equal(calls, 2 + FAST_FOR_MS / FAST_MS);
   assert.equal(host.mode, 'external');
-  await h.advance(WATCH_MS);
+  assert.equal(h.children.length, 0);
+});
+
+test('앱을 껐다 바로 켬: 꺼지는 중인 옛 데몬이 아직 답해도 몇 초 안에 새로 띄운다', async () => {
+  // 옛 데몬: 처음 두 번은 답함(하나는 stopping 표시), 그다음 사라짐
+  const h = harness({ alive: [true, 'stopping', false] });
+  const host = createDaemonHost(h.deps);
+  await host.start();
+  assert.equal(host.mode, 'external');
+  await h.advance(FAST_MS);
+  assert.equal(host.mode, 'external');
+  assert.equal([...h.timers.values()][0].ms, STOPPING_MS); // 꺼지는 중이라고 하면 더 자주
+  await h.advance(STOPPING_MS);
   assert.equal(host.mode, 'child');
   assert.equal(h.children.length, 1);
+  assert.ok(h.now <= 5000);
+});
+
+test('포트를 못 잡아 끝남(EXIT_PORT_TAKEN): 충돌로 세지 않고 그 포트를 다시 지켜본다', async () => {
+  const h = harness({ alive: [false] }); // 다른 프로그램이 포트를 쥐고 있어 /status 로는 시사 데몬이 아님
+  const host = createDaemonHost(h.deps);
+  await host.start();
+  h.children[0].emit('exit', EXIT_PORT_TAKEN, null);
+  assert.equal(host.mode, 'port-taken');
+  assert.equal(host.failures, 0);
+  assert.equal(host.restarts, 0);
+  assert.equal([...h.timers.values()][0].ms, FAST_MS);
+  // 계속 부딪혀도 간격이 늘지 않고, 1분 넘게 그러면 1분마다로
+  for (let i = 0; i < 40; i++) {
+    const t = [...h.timers.values()][0];
+    await h.advance(t.ms);
+    h.children.at(-1).emit('exit', EXIT_PORT_TAKEN, null);
+  }
+  assert.equal(host.failures, 0);
+  assert.equal([...h.timers.values()][0].ms, WATCH_MS);
+  assert.equal(h.logs.filter((m) => m.includes('포트를 잡지 못했어요')).length, 1);
+  // 포트가 비면 제대로 뜬다 — 그 뒤에 빨리 죽으면 보통 충돌처럼 1초
+  const t = [...h.timers.values()][0];
+  await h.advance(t.ms);
+  assert.equal(host.mode, 'child');
+  h.children.at(-1).emit('exit', 1, null);
+  assert.equal(host.mode, 'waiting');
+  assert.equal([...h.timers.values()][0].ms, 1000);
 });
 
 test('다시 띄우기 전에 누가 그 포트를 차지했으면 그쪽을 쓴다', async () => {
@@ -93,7 +144,7 @@ test('다시 띄우기 전에 누가 그 포트를 차지했으면 그쪽을 쓴
   const host = createDaemonHost(h.deps);
   await host.start();
   h.children[0].emit('exit', 0, null);
-  await h.advance(2000); // 곧바로 죽음 → 2초
+  await h.advance(1000); // 곧바로 죽음 → 1초
   assert.equal(h.children.length, 1);
   assert.equal(host.mode, 'external');
 });

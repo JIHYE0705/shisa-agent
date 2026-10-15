@@ -53,6 +53,17 @@ test("Windows: Git Bash 안쪽 경로(/tmp · /usr · /)·//서버 는 어딘지
   assert.ok(ro("ls /c/Users"));
 });
 
+test("Windows: 따옴표 안 역슬래시('a\\|b' · '%s\\n' · \"a\\nb\")는 읽기 그대로, 따옴표 밖 역슬래시·따옴표 안 비밀 경로는 아님", { skip: process.platform !== "win32" && "Windows 전용" }, () => {
+  for (const c of ["grep 'a\\|b' src", "grep -E \"x\\|y\" src", "printf '%s\\n' a b", "echo \"a\\nb\"", "grep -rn 'foo\\(bar\\)' src"]) assert.ok(ro(c), c);
+  for (const c of ["cat src\\a.ts", "cat .\\.env", "grep x a\\|b", "cat 'src\\.env'", "cat \"..\\.ssh\\id_rsa\"", "cat 'C:\\Users\\u\\.ssh\\id_rsa'", "cat \"x\\\"y\\.env\""]) assert.ok(!ro(c), c);
+});
+
+test("printf 는 읽기(출력만), -v(셸 변수에 쓰기)는 아님 · 큰따옴표 안 \\ 는 bash 처럼(\\\" \\\\ 만 이스케이프)", () => {
+  assert.ok(ro("printf '%s' x"));
+  assert.ok(!ro("printf -v X '%s' y"));
+  assert.deepEqual(splitReadOnly("echo \"a\\nb\" \"c\\\"d\" \"e\\\\f\"")?.[0].map((w) => w.text), ["echo", "a\\nb", "c\"d", "e\\f"]);
+});
+
 test("낱말 나누기: 따옴표·이스케이프 풀기, 리디렉션은 /dev/null·fd 만", () => {
   assert.deepEqual(splitReadOnly("git log --oneline | head -3")?.map((s) => s.map((w) => w.text)), [["git", "log", "--oneline"], ["head", "-3"]]);
   assert.deepEqual(splitReadOnly("cat 'a b' \"c d\" e\\ f 2>/dev/null")?.map((s) => s.map((w) => w.text)), [["cat", "a b", "c d", "e f"]]);

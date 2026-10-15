@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  bundlePaths, launchdOwns, spawnDecision, daemonEnv, restartDelay, nextFailures, STABLE_MS,
+  bundlePaths, launchdOwns, spawnDecision, daemonEnv, restartDelay, nextFailures, STABLE_MS, daemonStatusKind, EXIT_PORT_TAKEN,
   loginItemPlan, loginItemHint, defaultLoginPref, DEFAULT_PORT,
 } from '../src/bundle.js';
 
@@ -69,13 +69,34 @@ test('daemonEnv win32: "Path" 키를 그대로 고치고 ; 로 잇고, ~/.local/
 });
 
 test('restartDelay·nextFailures: 빨리 죽을수록 점점 길게, 오래 살았으면 처음부터', () => {
-  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7].map((n) => restartDelay(n)), [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]);
+  // failures = 연속 실패 수: 첫 재시작(0·1)은 1초, 그다음 2·4·8… 최대 1분
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => restartDelay(n)), [1000, 1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]);
   assert.equal(restartDelay(-3), 1000);
   assert.equal(restartDelay(1000), 60000);
   assert.equal(nextFailures(0, 500), 1);
   assert.equal(nextFailures(3, 2000), 4);
   assert.equal(nextFailures(5, STABLE_MS), 0);
   assert.equal(nextFailures(undefined, 10), 1);
+  // 처음 시작해 바로 죽으면 1초, 또 죽으면 2초, 4초
+  let f = 0;
+  const waits = [500, 500, 500].map((up) => restartDelay((f = nextFailures(f, up))));
+  assert.deepEqual(waits, [1000, 2000, 4000]);
+});
+
+test('daemonStatusKind: 2xx JSON 의 daemon:"shisa"(또는 그 칸 전 데몬의 brain 모양)만 시사 데몬', () => {
+  assert.equal(EXIT_PORT_TAKEN, 75);
+  assert.equal(daemonStatusKind(true, { daemon: 'shisa', pid: 4, brain: { provider: 'local' } }), 'daemon');
+  assert.equal(daemonStatusKind(true, { daemon: 'shisa', pid: 4, stopping: true }), 'stopping');
+  // 예전 데몬: daemon 칸 없이 brain.provider
+  assert.equal(daemonStatusKind(true, { brain: { provider: 'claude-code', ready: null }, chat: null, onboarded: true }), 'daemon');
+  // 다른 프로그램·오류 응답·이상한 본문
+  assert.equal(daemonStatusKind(false, { daemon: 'shisa' }), null);
+  assert.equal(daemonStatusKind(true, { daemon: 'other', brain: { provider: 'x' } }), null);
+  assert.equal(daemonStatusKind(true, { status: 'ok' }), null);
+  assert.equal(daemonStatusKind(true, { brain: 'x' }), null);
+  assert.equal(daemonStatusKind(true, null), null);
+  assert.equal(daemonStatusKind(true, [1]), null);
+  assert.equal(daemonStatusKind(true, 'shisa'), null);
 });
 
 test('loginItemPlan: dmg 앱만, 시험·터미널 설치·개발 실행은 건드리지 않는다', () => {

@@ -78,10 +78,23 @@ function winPath(out, home) {
   return out;
 }
 
-// 죽은 데몬을 다시 띄우기까지 기다릴 시간: 1초, 2초, 4초 … 최대 1분
+// 죽은 데몬을 다시 띄우기까지 기다릴 시간. failures = 연속 실패 수(nextFailures): 0·1 → 1초, 2 → 2초, 3 → 4초 … 최대 1분
 export function restartDelay(failures, { base = 1000, max = 60_000 } = {}) {
-  const n = Number.isInteger(failures) && failures > 0 ? failures : 0;
+  const n = Number.isInteger(failures) && failures > 1 ? failures - 1 : 0;
   return Math.min(max, base * 2 ** Math.min(n, 30));
+}
+
+// 데몬이 포트를 못 잡아 끝났을 때의 종료 코드(agent/src/bus.ts EXIT_PORT_TAKEN). 충돌로 세지 않는다
+export const EXIT_PORT_TAKEN = 75;
+
+// GET /status 응답이 시사 데몬의 것인가 → 'daemon' · 'stopping'(꺼지는 중) · null(아님: 다른 프로그램·오류 응답)
+//  ok: 2xx 이고 JSON 인가 · body: 파싱한 본문. daemon: "shisa" 가 있으면 확실하고,
+//  그 칸이 생기기 전의 데몬은 brain.provider 가 있는 모양으로 알아본다
+export function daemonStatusKind(ok, body) {
+  if (!ok || !body || typeof body !== 'object' || Array.isArray(body)) return null;
+  if (body.daemon === 'shisa') return body.stopping === true ? 'stopping' : 'daemon';
+  if (body.daemon === undefined && body.brain && typeof body.brain === 'object' && typeof body.brain.provider === 'string') return 'daemon';
+  return null;
 }
 
 // 방금 죽은 데몬이 얼마나 살았나로 연속 실패 수를 센다. 오래 살았으면(정상 재시작 포함) 0부터

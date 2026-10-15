@@ -29,7 +29,7 @@ import { isReadOnlyBash } from "./bash-readonly.ts";
 import { isSubagentTool, subagentCall } from "./subagents.ts";
 import type { ActionCard, ActionVia, PendingAction } from "./actions.ts";
 import { repoLocks, type RepoLocks } from "./repo-lock.ts";
-import { IS_WIN, bashPathWin, isFsRoot, msysToWin, pathKey, pathWithin, realish, samePath, winLocalPath, winNorm, winPathForms, winShellNorm } from "./plat.ts";
+import { IS_WIN, bashPathWin, isFsRoot, msysToWin, pathKey, pathWithin, realish, samePath, winLocalPath, winNorm, winPathForms, winShellNorm, withFsMemo } from "./plat.ts";
 
 export const PERMISSION_TTL_MS = 10 * 60e3;
 // 서비스·도구를 인자로 받는 MCP 중계 도구(이름이 …__invoke, 입력 { service, tool, args }) — 규칙·카드를 "서비스.도구" 단위로
@@ -123,7 +123,7 @@ function winBashSecretWhy(cmd: string, c: PermCtx): string | undefined {
   if (/\.cy-agent\/+config\.json|\bcy\.db\b/.test(n)) return "~/.cy-agent 의 토큰·데몬 상태(config.json · cy.db)";
   if (cyHomes(c).some((h) => winPathForms(h).some((f) => n.includes(`${f}/config.json`)))) return "~/.cy-agent/config.json(토큰)";
   const homes = ["~", "$home", "${home}", "$userprofile", "${userprofile}", "%userprofile%", "$env:userprofile", "%homedrive%%homepath%", ...winPathForms(homeOf(c))];
-  // 아무 드라이브의 users/<이름>/.claude(짧은 이름 CHAEYO~1 · 다른 대소문자 포함)도
+  // 아무 드라이브의 users/<이름>/.claude(짧은 이름 ABCDEF~1 · 다른 대소문자 포함)도
   if (homes.some((h) => n.includes(`${h}/.claude`)) || /(^|[^\w.-])(?:[a-z]:|\/[a-z]|\/cygdrive\/[a-z])?\/users\/[^/\s'"]+\/+\.claude/.test(n)) return "~/.claude*(Claude 설정·자격 증명)";
   return undefined;
 }
@@ -146,33 +146,93 @@ function bashSecretWhy(cmd: string, c: PermCtx): string | undefined {
 export function normShell(cmd: string): string {
   return cmd.replace(/\\(.)/g, "$1").replace(/["']/g, "");
 }
+// 끝의 chars 글자들을 뗀다(/[)`]+$/ 같은 정규식은 같은 글자가 길게 이어지면 길이 제곱만큼 걸린다)
+const trimEnd = (s: string, chars: string) => { let e = s.length; while (e > 0 && chars.includes(s[e - 1])) e--; return e === s.length ? s : s.slice(0, e); };
 // 비어 있을 수 있는 변수 자리(${x} · $x)까지 걷은 글(.e${x}nv)
 const dropVars = (s: string) => s.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*/g, "");
 const GLOB_CH = /[*?[{]/;
-// 셸 glob 한 조각 → 정규식(* ? [..] [!..] {a,b})
-export function globRe(seg: string): RegExp {
-  let out = "", i = 0;
-  while (i < seg.length) {
-    const ch = seg[i];
-    if (ch === "*") { out += "[^/]*"; i++; continue; }
-    if (ch === "?") { out += "[^/]"; i++; continue; }
-    if (ch === "[") {
-      const end = seg.indexOf("]", i + 2);
-      if (end > 0) { const body = seg.slice(i + 1, end).replace(/^!/, "^").replace(/\\/g, "\\\\"); out += `[${body}]`; i = end + 1; continue; }
+// 판정이 감당 못 하는 입력(너무 긴 glob · {} 펼침이 너무 많음 등) — quick() 이 받아 승인 카드로(묻지 않고 허용하지 않는다)
+export class GuardLimit extends Error {}
+const GLOB_SEG_MAX = 256, BRACE_MAX = 64;
+// bash 처럼 {a,b} · {a..c} · {1..3} 를 먼저 펼친다(겹친 {} 도). 펼친 수가 BRACE_MAX 를 넘으면 GuardLimit
+function braceExpand(s: string, out: string[] = []): string[] {
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== "{") continue;
+    let depth = 0, end = -1;
+    const commas: number[] = [];
+    for (let j = i; j < s.length; j++) {
+      if (s[j] === "{") depth++;
+      else if (s[j] === "}") { if (--depth === 0) { end = j; break; } }
+      else if (s[j] === "," && depth === 1) commas.push(j);
     }
-    if (ch === "{") {
-      const end = seg.indexOf("}", i);
-      if (end > 0 && seg.slice(i + 1, end).includes(",")) { out += `(?:${seg.slice(i + 1, end).split(",").map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`; i = end + 1; continue; }
+    if (end < 0) break;
+    const body = s.slice(i + 1, end), pre = s.slice(0, i), post = s.slice(end + 1);
+    let alts: string[] | undefined;
+    if (commas.length) alts = [i, ...commas].map((at, k) => s.slice(at + 1, k < commas.length ? commas[k] : end));
+    else {
+      const seq = /^(?:(-?\d+)\.\.(-?\d+)|([^.])\.\.([^.]))$/.exec(body);
+      if (seq) {
+        const [a, b] = seq[1] !== undefined ? [Number(seq[1]), Number(seq[2])] : [seq[3].charCodeAt(0), seq[4].charCodeAt(0)];
+        if (Math.abs(b - a) >= BRACE_MAX) throw new GuardLimit("brace");
+        alts = [];
+        for (let v = a; ; v += a <= b ? 1 : -1) { alts.push(seq[1] !== undefined ? String(v) : String.fromCharCode(v)); if (v === b) break; }
+      }
     }
-    out += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    i++;
+    if (!alts) continue;
+    for (const x of alts) { braceExpand(pre + x + post, out); if (out.length > BRACE_MAX) throw new GuardLimit("brace"); }
+    return out;
   }
-  try { return new RegExp(`^${out}$`, "i"); } catch { return /^$/; }
+  out.push(s);
+  if (out.length > BRACE_MAX) throw new GuardLimit("brace");
+  return out;
+}
+// glob 한 조각의 낱자: * · ? · [..]/[!..] · 글자
+type GlobTok = { star: true } | { any: true } | { set: string; neg: boolean } | { ch: string };
+function globToks(p: string): GlobTok[] {
+  const t: GlobTok[] = [];
+  for (let i = 0; i < p.length; i++) {
+    const ch = p[i];
+    if (ch === "*") { if (!(t.length && "star" in t[t.length - 1])) t.push({ star: true }); continue; }
+    if (ch === "?") { t.push({ any: true }); continue; }
+    if (ch === "[") {
+      const end = p.indexOf("]", i + 2);
+      if (end > 0) { const body = p.slice(i + 1, end); const neg = body[0] === "!" || body[0] === "^"; t.push({ set: (neg ? body.slice(1) : body).toLowerCase(), neg }); i = end; continue; }
+    }
+    t.push({ ch: ch.toLowerCase() });
+  }
+  return t;
+}
+const inSet = (set: string, c: string) => {
+  for (let i = 0; i < set.length; i++) {
+    if (set[i + 1] === "-" && i + 2 < set.length) { if (c >= set[i] && c <= set[i + 2]) return true; i += 2; continue; }
+    if (set[i] === c) return true;
+  }
+  return false;
+};
+const tokOk = (t: GlobTok, c: string) => ("any" in t ? true : "set" in t ? inSet(t.set, c) !== t.neg : "ch" in t ? t.ch === c : false);
+// 와일드카드 맞추기(되짚기는 마지막 * 하나만 — 길이 곱 이내)
+function wildMatch(t: GlobTok[], s: string): boolean {
+  let pi = 0, si = 0, star = -1, mark = 0;
+  while (si < s.length) {
+    const tk = t[pi];
+    if (tk && !("star" in tk) && tokOk(tk, s[si])) { pi++; si++; }
+    else if (tk && "star" in tk) { star = pi++; mark = si; }
+    else if (star >= 0) { pi = star + 1; si = ++mark; }
+    else return false;
+  }
+  while (pi < t.length && "star" in t[pi]) pi++;
+  return pi === t.length;
+}
+// 셸 glob 한 조각(* ? [..] [!..] {a,b} {a..c})이 이름에 맞나 — 대소문자 무시, 정규식 없이. 너무 긴 조각 → GuardLimit
+export function globMatch(seg: string, name: string): boolean {
+  if (seg.length > GLOB_SEG_MAX) throw new GuardLimit("glob");
+  const n = name.toLowerCase();
+  return braceExpand(seg).some((alt) => wildMatch(globToks(alt), n));
 }
 const ENV_NAMES = [".env", ".env.local", ".env.production", ".env.development", ".env.test"];
 // Windows: glob 앞부분이 홈(대소문자·/c/… · $USERPROFILE · users/<누구든>)인가
 const winHomePrefix = (prefix: string, home: string) => {
-  const n = winNorm(prefix).replace(/\/+$/, "");
+  const n = trimEnd(winNorm(prefix), "/");
   return ["~", "$home", "${home}", "$userprofile", "${userprofile}", ...winPathForms(home)].includes(n) || /(^|\/)users\/[^/]+$/.test(n);
 };
 // glob 낱말이 비밀 파일(.env* · ~/.cy-agent 의 config.json·cy.db · ~/.claude*)을 가리킬 수 있으면 그 이유
@@ -188,7 +248,7 @@ function globSecretWhy(cmd: string, c: PermCtx): string | undefined {
     for (let i = 0; i < segs.length; i++) {
       const seg = segs[i], last = i === segs.length - 1;
       if (!seg) continue;
-      const re = GLOB_CH.test(seg) ? globRe(seg) : undefined;
+      const re = GLOB_CH.test(seg) ? { test: (n: string) => globMatch(seg, n) } : undefined;
       if (re && ENV_NAMES.some((n) => re.test(n))) return `${word}(.env 비밀 파일을 가리킬 수 있는 glob)`;
       if (seg === ".cy-agent" || re?.test(".cy-agent")) cy = true;
       if (re && (re.test(".claude") || re.test(".claude.json")) && (i === 0 || segs.slice(0, i).join("/").replace(/^(~|\$HOME|\$\{HOME\})/, home) === home || (W && winHomePrefix(segs.slice(0, i).join("/"), home)))) return `${word}(~/.claude* 를 가리킬 수 있는 glob)`;
@@ -296,32 +356,67 @@ function shellDir(base: string, d: string, c: PermCtx): string {
 // Windows(Git Bash): 셸 낱말을 경로로 풀어(cd 로 옮긴 위치까지 따라가서) 파일 도구와 같은 비밀 경로 판정(secretPathWhy — 실제 경로라 8.3 짧은 이름
 // CY-AGE~1 · CONFIG~1.JSO 도 풀린다)에 넣는다. why: 하드 차단 이유. card: 확인할 수 없음 → 묻지 않고 허용하지 않는다(승인 카드)
 //   - 짧은 이름 모양(~숫자)인데 위치를 모르거나 glob·변수가 섞임 · UNC(//서버 · \\서버) → card
-const SHORT_NAME = /~\d/;
+// 짧은 이름 모양(~숫자)이 경로에 있나. git 리비전(HEAD~1 · main~2..main · HEAD^~2 · @~1)·버전(lodash@~4.17)은 짧은 이름이 아니다:
+// [@^]~ 는 빼고, git 리비전 자리(gitRev)에선 / · \ · 드라이브가 있는 경로 모양 낱말만 본다(REV:경로 는 경로 쪽만). 그 밖 낱말은 ABCDEF~1 처럼 통째여도 짧은 이름으로
+function shortNameIn(p: string, gitRev: boolean): boolean {
+  let s = p.replace(/[@^]~\d*/g, "");
+  if (gitRev) s = s.replace(/^[^:\\/]+:/, "");
+  if (!/~\d/.test(s)) return false;
+  return !gitRev || /[\\/]|^[A-Za-z]:/.test(s);
+}
+// 이 조각이 리비전을 받는 git 하위 명령인가(git diff HEAD~1 · git log main~3..). --no-index 는 경로 비교라 아님
+const GIT_REV_SUBS = new Set(["diff", "log", "show", "rev-parse", "rev-list", "reset", "checkout", "switch", "rebase", "cherry-pick", "revert", "blame", "describe", "merge-base", "name-rev", "branch", "tag", "format-patch", "range-diff", "shortlog", "cherry", "whatchanged", "commit", "stash", "bisect"]);
+const SEG_PREFIX = ["sudo", "env", "command", "exec", "nohup", "time", "builtin"];
+const cmdAt = (words: string[]) => { let at = 0; while (at < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at]) || SEG_PREFIX.includes(words[at]))) at++; return at; };
+function gitRevSeg(words: string[]): boolean {
+  let i = cmdAt(words);
+  if (!isGitName(words[i] ?? "")) return false;
+  for (i++; i < words.length && words[i].startsWith("-"); i++) if (words[i] === "-C" || words[i] === "-c") i++;
+  return GIT_REV_SUBS.has(words[i] ?? "") && !words.includes("--no-index");
+}
+// 한 판정 동안 다시 쓰는 것(quick 한 번 — hardDeny·bashNeedsCard 가 같은 명령을 두 번 풀지 않게)
+let scope: { wbp: Map<string, { why?: string; card?: boolean }> } | undefined;
+function inScope<T>(fn: () => T): T {
+  if (scope) return fn();
+  scope = { wbp: new Map() };
+  try { return withFsMemo(fn); } finally { scope = undefined; }
+}
+// 실제 경로로 풀어 보는 낱말 수 상한 — 넘으면 확인하지 않고 승인 카드
+const WIN_PATH_WORDS_MAX = 512;
 function winBashPaths(cmd: string, c: PermCtx): { why?: string; card?: boolean } {
-  let cwd = c.cwd, card = false;
+  const hit = scope?.wbp.get(cmd);
+  if (hit) return hit;
+  const r = winBashPaths0(cmd, c);
+  scope?.wbp.set(cmd, r);
+  return r;
+}
+function winBashPaths0(cmd: string, c: PermCtx): { why?: string; card?: boolean } {
+  let cwd = c.cwd, card = false, checked = 0;
   for (const seg of shellSegments(cmd)) {
     const words = shellWordsNorm(seg);
+    const at = cmdAt(words), gitRev = gitRevSeg(words);
     const cands = new Set<string>();
-    for (const w0 of words) {
-      const w = w0.replace(/^\d*[<>]+&?|^\(+|\)+$/g, "");
-      if (!w) continue;
-      cands.add(w);
+    words.forEach((w0, k) => {
+      const w = trimEnd(w0.replace(/^\d*[<>]+&?|^\(+/g, ""), ")");
+      if (!w) return;
+      // 경로 글자(/ \ . ~ :)가 없는 명령 이름(ls · git — 경로가 아니라 PATH 에서 찾는다)·옵션(-la)은 풀어 볼 것이 없다
+      const plain = !/[\\/.~:$`=]/.test(w);
+      if (!(plain && (k === at || w.startsWith("-")))) cands.add(w);
       if (w.includes("=")) cands.add(w.slice(w.indexOf("=") + 1));
       const rev = /^[^:]{2,}:(.+)$/.exec(w); // REV:경로(드라이브 C: 는 아님 · https://… 같은 URL 도 아님)
       if (rev && !rev[1].startsWith("//")) cands.add(rev[1]);
-    }
+    });
     for (const p of cands) {
       if (!p) continue;
       if (/^[\\/]{2}/.test(p)) { card = true; continue; }
-      if (/[$`]/.test(p)) { if (SHORT_NAME.test(p)) card = true; continue; }
-      if (!cwd) { if (SHORT_NAME.test(p) || /(^|[\\/])(config\.json|cy\.db[^\\/]*|\.claude[^\\/]*)$/i.test(p)) card = true; continue; }
-      if (SHORT_NAME.test(p) && GLOB_CH.test(p)) { card = true; continue; }
+      if (/[$`]/.test(p)) { if (shortNameIn(p, gitRev)) card = true; continue; }
+      if (!cwd) { if (shortNameIn(p, gitRev) || /(^|[\\/])(config\.json|cy\.db[^\\/]*|\.claude[^\\/]*)$/i.test(p)) card = true; continue; }
+      if (shortNameIn(p, gitRev) && GLOB_CH.test(p)) { card = true; continue; }
+      if (++checked > WIN_PATH_WORDS_MAX) return { card: true };
       const why = secretPathWhy(p, { ...c, cwd }, false);
       if (why && why !== UNC_WHY) return { why };
       if (why) card = true;
     }
-    let at = 0;
-    while (at < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at]) || ["sudo", "env", "command", "exec", "nohup", "time", "builtin"].includes(words[at]))) at++;
     if (words[at] === "cd" || words[at] === "pushd") { const d = words[at + 1]; cwd = !d ? homeOf(c) : shellDir(cwd, d, c); }
   }
   return card ? { card } : {};
@@ -348,14 +443,87 @@ function rmVerdict(words: string[], c: PermCtx): string | undefined {
   return undefined;
 }
 
-const GH_MERGE = /\bgh\s+pr\s+merge\b|\bgh\s+api\b[^;&|\n]*\/pulls\/\d+\/merge\b/;
+// head 가 나온 뒤 같은 명령 조각(; & | 줄바꿈 전까지) 안에 tail 이 있나 — /head[^;&|\n]*tail/ 과 같되 선형(그 정규식은 head 가 많으면 길이 제곱)
+function headThenTail(s: string, head: RegExp, tail: RegExp): boolean {
+  const h = new RegExp(head.source, head.flags.includes("g") ? head.flags : head.flags + "g"), sep = /[;&|\n]/g;
+  let m: RegExpExecArray | null, covered = -1;
+  while ((m = h.exec(s))) {
+    if (!m[0].length) h.lastIndex++;
+    const at = m.index + m[0].length;
+    if (at < covered) continue; // 앞 head 와 같은 조각 — 이미 봤다
+    sep.lastIndex = at;
+    const e = sep.exec(s)?.index ?? s.length;
+    if (tail.test(s.slice(at, e))) return true;
+    if (s[e] === "\n") { const t = new RegExp(tail.source, tail.flags + "y"); t.lastIndex = e; if (t.test(s)) return true; } // tail 의 \s 가 그 줄바꿈일 수도
+    covered = e;
+  }
+  return false;
+}
+const GH_MERGE = { test: (s: string) => /\bgh\s+pr\s+merge\b/.test(s) || headThenTail(s, /\bgh\s+api\b/, /\/pulls\/\d+\/merge\b/) };
 // 하드 차단된 gh pr merge: 모델이 "여기선 막혔으니 GitHub에서 누르세요"로 끝내지 않게 무엇을 해야 하는지까지 알려 준다
 export const GH_MERGE_WHY = "gh pr merge — 대화에서 gh 로 직접 머지하지 않는다. 대신 답의 merges 에 그 PR(링크 또는 owner/repo#번호)을 넣어라 — 사용자가 이번 말로 직접 시켰으면 userSaid: true(데몬이 사용자 말과 검사를 확인하고 바로 머지), 아니면 데몬이 이 대화에 머지 승인 카드(검사·충돌·리뷰 + ✓/✗)와 캐릭터 말풍선을 띄우고 사용자가 ✓ 를 눌러야 머지된다. reply_md 는 짧게, GitHub·다른 화면에서 누르라고 안내하지 않는다";
 // 글 판정(첫 거름): git · GIT · git.exe · 경로/git.exe 다음 옵션들 뒤 push|merge|commit. 따옴표·역슬래시를 걷은 글(normShell)로도 본다
-const GIT_WRITE = /\bgit(?:\.exe)?\b(?:\s+-{1,2}[\w-]+(?:[ =](?!push\b|merge\b|commit\b)\S+)?)*\s+(push|merge|commit)\b/i;
-// 하위 명령 이름을 바꿀 수 있는 git 설정(-c alias.p=push p · --config-env · git config alias.x push · --exec-path) — 무엇이 도는지 확인할 수 없다
-const GIT_ALIAS = /\bgit(?:\.exe)?\b[^\n;&|]*?(?:\s-c\s*alias\.|\s-calias\.|\s--config-env\b|\s--exec-path\b|\sconfig\b[^\n;&|]*\salias\.)/i;
-const gitWriteText = (s: string) => { const n = normShell(s.replace(/\\\r?\n/g, "")); return GIT_WRITE.test(s) || GIT_WRITE.test(n) || GIT_ALIAS.test(n); }; // 줄 이음(\⏎)도 걷는다
+// 정규식 대신 빈칸으로 나눈 낱말을 한 번씩만 훑는다(되짚기 없음 — 긴 글에도 선형). 옵션은 - 로 시작하는 아무 낱말(-ccore.editor=true 도),
+// 옵션 뒤 값 하나(-C dir · -c x=y)는 건너뛸 수 있다. merge-base 처럼 - 가 이어지면 하위 명령이 아니다
+const GIT_SUB = /^(push|merge|commit)(?![\w-])/i;
+const GIT_TOKEN_END = /(?:^|[^\w])git(?:\.exe)?$/i;
+function gitWriteRe(s: string): boolean {
+  const t = s.split(/\s+/), n = t.length;
+  // ok[j]: j 번째 낱말부터 "옵션들 … push|merge|commit" 으로 읽힌다
+  const ok = new Uint8Array(n + 2);
+  for (let j = n - 1; j >= 0; j--) {
+    const x = t[j];
+    if (GIT_SUB.test(x)) ok[j] = 1;
+    else if (x.startsWith("-")) ok[j] = ok[j + 1] || (j + 1 < n && !GIT_SUB.test(t[j + 1]) && ok[j + 2]) ? 1 : 0;
+  }
+  for (let k = 0; k + 1 < n; k++) if (ok[k + 1] && GIT_TOKEN_END.test(t[k])) return true;
+  return false;
+}
+// git config 인자가 alias.* 에 값을 넣나(git config alias.p push · --global alias.p 'push x' · --add · set). 읽기(git config alias.st ·
+// --get alias.st · --get-regexp · get · list)는 괜찮다. 모르는 옵션이 섞이면 넣는 것으로(안전한 쪽)
+const CONFIG_READ = /^(--get|--get-all|--get-regexp|--get-urlmatch|--get-color|--get-colorbool|-l|--list)$/;
+const CONFIG_VAL = /^(-f|--file|--blob|--type|--default)$/;
+const CONFIG_SAFE = /^(--global|--system|--local|--worktree|--show-origin|--show-scope|--includes|--no-includes|-z|--null|--name-only|(--file|--blob|--type|--default)=.*)$/;
+function configSetsAlias(args: string[]): boolean {
+  if (!args.some((a) => /^alias\./i.test(a))) return false;
+  let read = false, other = false;
+  const pos: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") { pos.push(...args.slice(i + 1)); break; }
+    if (CONFIG_READ.test(a)) { read = true; continue; }
+    if (CONFIG_VAL.test(a)) { i++; continue; }
+    if (CONFIG_SAFE.test(a)) continue;
+    if (a.startsWith("-")) { other = true; continue; }
+    pos.push(a);
+  }
+  if (other) return true;
+  if (pos[0] === "get" || pos[0] === "list") return false;
+  return !(read || pos.length <= 1);
+}
+// 하위 명령 이름을 바꿀 수 있는 git 설정(-c alias.p=push p · --config-env · git config alias.x push · --exec-path=…) — 무엇이 도는지 확인할 수 없다.
+// 값 없는 --exec-path(경로만 찍고 끝)·alias 읽기는 아님. 글 판정(첫 거름)이라 명령 조각(; & | 줄바꿈)마다 낱말로
+function gitAliasRe(s: string): boolean {
+  for (const chunk of s.split(/[\n;&|]/)) {
+    const t = chunk.split(/\s+/).filter(Boolean).map((x) => trimEnd(x, ")`"));
+    const g = t.findIndex((x) => /(?:^|[^\w])git(?:\.exe)?(?!\w)/i.test(x));
+    if (g < 0) continue;
+    let conf = -1, multi = false;
+    for (let k = g + 1; k < t.length; k++) {
+      const x = t[k];
+      if (/^-c$/i.test(x) && /^alias\./i.test(t[k + 1] ?? "")) return true;
+      if (/^-calias\./i.test(x) || /^--config-env/i.test(x)) return true;
+      if (/^--exec-path/i.test(x) && !(x.toLowerCase() === "--exec-path" && k === t.length - 1)) return true;
+      if (x.toLowerCase() === "config") { if (conf >= 0) multi = true; else conf = k; }
+    }
+    // config 인자는 조각 끝까지(값이 '!git push …' 여도). config 가 둘 이상이면 alias. 만 보여도 넣는 것으로(안전한 쪽 — 한 번만 훑으려고)
+    if (conf >= 0) { const args = t.slice(conf + 1); if (multi ? args.some((a) => /^alias\./i.test(a)) : configSetsAlias(args)) return true; }
+  }
+  return false;
+}
+// 판정하는 글 길이 상한 — 넘으면 확인하지 않고 승인 카드(quick)
+export const CHECK_MAX = 64 * 1024;
+const gitWriteText = (s: string) => { const n = normShell(s.replace(/\\\r?\n/g, "")); return gitWriteRe(s) || gitWriteRe(n) || gitAliasRe(n); }; // 줄 이음(\⏎)도 걷는다
 const isGitName = (w: string) => /^git(\.exe)?$/i.test(basename(w.replace(/\\/g, "/")));
 
 // ── git 쓰기(commit·push·merge) ─────────────────────────────────────
@@ -379,14 +547,64 @@ export const protectedBranch = (b: string, st: Pick<GitState, "defaultBranch">) 
 export function cySafePlace(st: GitState, c: PermCtx): boolean {
   if (st.branch.startsWith("cy/")) return true;
   if (cyHomes(c).some((h) => within(st.top, resolve(h, "worktrees")))) return true;
+  // Windows: git 이 준 경로(C:/Users/ABCDEF~1/…)와 홈이 서로 다른 모양(8.3 짧은 이름·정션)일 수 있다 → 실제 경로끼리도 맞춰 본다
+  const top = W ? real(st.top) : st.top;
+  if (W && cyHomes(c).some((h) => within(top, real(resolve(h, "worktrees"))))) return true;
   // Windows: git 은 C:/Users/… 처럼 / 로 준다 · 대소문자 무관
-  if (W) return winNorm(st.top).split("/").some((part, i, all) => part === "worktrees" && all[i - 1] === ".claude" && i < all.length - 1 && !!all[i + 1]);
+  if (W) return [st.top, top].some((t) => winNorm(t).split("/").some((part, i, all) => part === "worktrees" && all[i - 1] === ".claude" && i < all.length - 1 && !!all[i + 1]));
   return st.top.split(sep).some((part, i, all) => part === "worktrees" && all[i - 1] === ".claude" && i < all.length - 1);
 }
 
 // 따옴표 밖의 && || ; | & 줄바꿈으로 나눈다(커밋 메시지 안의 && 는 그대로). heredoc 본문은 먼저 뺀다
+// heredoc 본문 빼기: <<EOF 머리 줄만 남기고 본문~끝 줄(EOF)까지 지운다. 끝 줄 찾기는 줄 표(낱말 하나뿐인 줄의 위치)로 — 끝나지 않은
+// <<EOF 가 많아도 선형(예전 정규식 [\s\S]*? 은 길이 제곱)
+function stripHeredocs(cmd: string): string {
+  if (!cmd.includes("<<")) return cmd;
+  const lines = new Map<string, number[]>(); // 낱말 → 그 낱말만 있는 줄의 [시작, 끝(공백 뺀)] 위치들
+  for (let at = 0; at <= cmd.length;) {
+    const nl = cmd.indexOf("\n", at), end = nl < 0 ? cmd.length : nl;
+    const m = /^\s*(\w+)\s*$/.exec(cmd.slice(at, end));
+    if (m) { const list = lines.get(m[1]) ?? []; list.push(at, at + trimEnd(m[0], " \t\r\f\v").length); lines.set(m[1], list); }
+    if (nl < 0) break;
+    at = nl + 1;
+  }
+  const re = /<<-?[ \t]*(['"]?)(\w+)\1/g;
+  let out = "", last = 0, nl = -2, m: RegExpExecArray | null;
+  while ((m = re.exec(cmd))) {
+    const after = m.index + m[0].length;
+    if (nl !== -1 && nl < after) nl = cmd.indexOf("\n", after);
+    if (nl < 0) break; // 뒤에 줄바꿈이 없으면 본문도 없다
+    const bodyAt = nl + 1, list = lines.get(m[2]);
+    let end = -1;
+    if (list) { // 본문 뒤 첫 끝 줄(머리 줄 바로 다음 줄은 아님 — 예전 정규식과 같게 본문 앞 \n 이 하나 더 있어야)
+      let lo = 0, hi = list.length / 2;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid * 2] > bodyAt) hi = mid; else lo = mid + 1; }
+      if (lo < list.length / 2) end = list[lo * 2 + 1];
+    }
+    if (end < 0) { re.lastIndex = m.index + 1; continue; }
+    out += cmd.slice(last, nl);
+    last = end;
+    re.lastIndex = end;
+  }
+  return out + cmd.slice(last);
+}
+// 명령 치환 $(…) · `…` 의 안쪽들(첫 ) · 다음 ` 까지 — 예전 정규식과 같게). 닫는 글자 위치를 기억해서 선형으로
+function substsOf(cmd: string): string[] {
+  const out: string[] = [];
+  let close = -2, tick = -2;
+  for (let i = 0; i < cmd.length; i++) {
+    if (cmd[i] === "$" && cmd[i + 1] === "(") {
+      if (close !== -1 && close < i + 2) close = cmd.indexOf(")", i + 2);
+      if (close >= 0) { out.push(cmd.slice(i + 2, close)); i = close; continue; }
+    } else if (cmd[i] === "`") {
+      if (tick !== -1 && tick < i + 1) tick = cmd.indexOf("`", i + 1);
+      if (tick >= 0) { out.push(cmd.slice(i + 1, tick)); i = tick; continue; }
+    }
+  }
+  return out;
+}
 function shellSegments(cmd: string): string[] {
-  const src = cmd.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, (m) => m.split("\n")[0]);
+  const src = stripHeredocs(cmd);
   const out: string[] = [];
   let cur = "", q: string | null = null;
   for (let i = 0; i < src.length; i++) {
@@ -428,17 +646,39 @@ function pushWhy(args: string[], st: GitState): string | undefined {
   return bad ? `${bad} 는 기본·보호 브랜치라 대화에서 푸시하지 않음(머지는 merges 흐름으로)` : undefined;
 }
 
-// Windows: Git Bash 에서 cmd·PowerShell·wsl 로 감싸 부르기(sh -c 와 같이 안을 볼 수 없다)
-const WIN_WRAP = /(^|[^\w.-])(cmd(\.exe)?\s+\/+[ck]\b|powershell|pwsh|wsl)(\.exe)?\b/i;
+// 안을 볼 수 없게 감싸 부르기: eval · source · . · xargs · sh/bash -c(Windows: cmd /c · powershell · pwsh · wsl) · 명령 이름이 변수·치환.
+// 글 아무 데나가 아니라 낱말로 본다 — 커밋 메시지("support PowerShell" · "fix: source map")·파일 이름(docs/wsl.md · src/source.ts)은 아니다.
+// 명령 자리만이 아니라 아무 낱말 자리(timeout 5 sh -c … · find -exec sh -c …)도 본다(. 만 명령 자리)
+function shellWrapper(cmd: string): boolean {
+  for (const seg of shellSegments(cmd)) {
+    const w = shellWordsNorm(seg);
+    const at = cmdAt(w);
+    if (at < w.length && /[$`]/.test(w[at])) return true;
+    for (let k = 0; k < w.length; k++) {
+      const b = basename(trimEnd(w[k].replace(/^[$(`{]+/, ""), ")`}").replace(/\\/g, "/")).toLowerCase().replace(/\.exe$/, "");
+      if (b === "eval" || b === "source" || b === "xargs" || (b === "." && k === at)) return true;
+      // sh -c … · 스크립트 없이 stdin(heredoc · 파이프)을 읽는 셸
+      if (/^(ba|z|da|k)?sh$/.test(b)) {
+        let j = k + 1;
+        for (; j < w.length && w[j].startsWith("-"); j++) if (/^-[a-z]*c/i.test(w[j])) return true;
+        if (j >= w.length || /^\d*</.test(w[j])) return true;
+      }
+      if (W && ((b === "cmd" && /^\/+[ck]$/i.test(w[k + 1] ?? "")) || /^(powershell|pwsh|wsl)(?![\w.])/.test(b))) return true;
+    }
+  }
+  return false;
+}
 // Windows 의 재귀 삭제(cmd rd/rmdir/del /s · PowerShell Remove-Item -Recurse) — 대상을 확인할 수 없어 막는다
-const WIN_RECURSIVE_RM = /(^|[^\w.-])((rd|rmdir|del|erase)\b[^;&|\n]*\s\/+s\b|(remove-item|ri)\b[^;&|\n]*\s-r(ecurse)?\b)/i;
+const WIN_RECURSIVE_RM = { test: (s: string) => headThenTail(s, /(^|[^\w.-])(rd|rmdir|del|erase)\b/i, /\s\/+s\b/i) || headThenTail(s, /(^|[^\w.-])(remove-item|ri)\b/i, /\s-r(ecurse)?\b/i) };
 // 셸 명령 속 git commit·push·merge → 막는 이유(없으면 undefined = 그 git 쓰기는 괜찮다)
 export function gitWriteWhy(cmd: string, c: PermCtx): string | undefined {
   // 첫 거름: 글에 git 쓰기·alias 가 보이거나, git 을 말하면서 변수·치환이 있으면($G push · git $'\x70ush') 낱말로 본다
   const loose = /\bgit\b/i.test(normShell(cmd)) && /[$`]/.test(cmd);
   if (!gitWriteText(cmd) && !loose) return undefined;
-  const subst = [...cmd.matchAll(/\$\(([\s\S]*?)\)|`([^`]*)`/g)].map((m) => m[1] ?? m[2] ?? "");
-  if (gitWriteText(cmd) && (subst.some((x) => gitWriteText(unquote(x))) || /\beval\b|\b(ba|z|da)?sh\s+-c\b|\bxargs\b|\bsource\b/.test(normShell(cmd)) || (W && WIN_WRAP.test(normShell(cmd)))))
+  const subst = substsOf(cmd);
+  // $(cat <<'EOF' … EOF) 는 글(커밋 메시지 본문)이라 첫 줄만 명령으로 본다
+  const catDoc = (x: string) => (/^\s*cat\s+<<-?\s*(['"]?)\w+\1/.test(x) ? x.split("\n")[0] : x);
+  if (gitWriteText(cmd) && (subst.some((x) => gitWriteText(unquote(x)) || shellWrapper(catDoc(x))) || shellWrapper(cmd)))
     return "git 쓰기를 명령 치환·eval·sh -c·xargs 안에서 — 확인할 수 없음";
   const probe = c.gitProbe ?? realGitProbe;
   let cwd = c.cwd;
@@ -461,6 +701,8 @@ export function gitWriteWhy(cmd: string, c: PermCtx): string | undefined {
       if (a === "-C") { const d = w[++i] ?? ""; dir = dir ? shellDir(dir, d, c) : ""; continue; }
       if (a === "-c" || /^-c./.test(a)) { const v = a === "-c" ? w[++i] ?? "" : a.slice(2); if (/^alias\./i.test(v) || /[$`]/.test(v)) return "git -c alias.… — 하위 명령이 무엇인지 확인할 수 없음"; continue; }
       if (/^--(git-dir|work-tree)\b/.test(a)) return "git --git-dir·--work-tree 로 쓰기 — 확인할 수 없음";
+      // 값 없는 --exec-path(맨 끝)는 경로만 찍고 끝난다 — --exec-path=… · --exec-path <dir> 는 막는다
+      if (a === "--exec-path" && i === w.length - 1) continue;
       if (/^--(config-env|exec-path)\b/.test(a)) return "git --config-env·--exec-path — 하위 명령이 무엇인지 확인할 수 없음";
       if (a.startsWith("-")) continue;
       break;
@@ -468,7 +710,7 @@ export function gitWriteWhy(cmd: string, c: PermCtx): string | undefined {
     const sub = w[i];
     if (sub === undefined) continue;
     if (/[$`]/.test(sub)) return "git 하위 명령이 변수·치환 — 확인할 수 없음";
-    if (sub === "config" && w.slice(i + 1).some((x) => /^alias\./i.test(x))) return "git config 로 alias 만들기 — 확인할 수 없음";
+    if (sub === "config" && configSetsAlias(w.slice(i + 1))) return "git config 로 alias 만들기 — 확인할 수 없음";
     if (sub !== "push" && sub !== "merge" && sub !== "commit") continue;
     if (!dir) return `git ${sub} — 어느 폴더인지 확인할 수 없음`;
     const st = probe(dir);
@@ -512,14 +754,15 @@ export function hardDeny(toolName: string, input: unknown, c: PermCtx): Verdict 
     }
     for (const k of ["pattern", "glob"]) {
       const v = i[k];
-      if (W && typeof v === "string" && winLocalPath(v) === undefined) return no(`${v} — ${UNC_WHY}`);
+      // 경로 모양은 Glob 의 pattern · Grep 의 glob 만(Grep 의 pattern 은 정규식 — "// TODO" · "\\\\n" 은 UNC 가 아니다)
+      const pathy = k === "glob" || toolName === "Glob";
+      if (W && pathy && typeof v === "string" && winLocalPath(v) === undefined) return no(`${v} — ${UNC_WHY}`);
       if (typeof v === "string" && (/(^|[\\/*{,])\.env(?!\.(example|sample|template|dist)\b)/i.test(v) || (W ? /\.claude|\.cy-agent|cy\.db/i : /\.claude|\.cy-agent|cy\.db/).test(v)))
         return no(`${v} 은(는) 비밀 파일을 가리킬 수 있음`);
       // Glob 패턴·Grep glob 은 glob 으로도 맞춰 본다(**/.en? · .[e]nv)
-      if (typeof v === "string" && (k === "glob" || toolName === "Glob") && GLOB_CH.test(v)) {
+      if (typeof v === "string" && pathy && GLOB_CH.test(v)) {
         const base = v.split("/").pop() ?? "";
-        const re = globRe(base);
-        if (ENV_NAMES.some((n) => re.test(n))) return no(`${v} 은(는) .env 비밀 파일을 가리킬 수 있음`);
+        if (ENV_NAMES.some((n) => globMatch(base, n))) return no(`${v} 은(는) .env 비밀 파일을 가리킬 수 있음`);
       }
     }
   }
@@ -563,7 +806,11 @@ export function isLocalTool(toolName: string): boolean { return LOCAL_TOOLS.has(
 // 체크아웃 = 고치는 파일이 든 것(파일 수정) · 맨 앞 `cd <경로>` 가 가리키는 것(셸) · 아니면 이 답의 cwd 가 든 것(허용 루트·판 워크트리 안 git 체크아웃).
 // cwd 가 ~/.cy-agent/brain(레포 없는 대화)이면 잠그지 않는다 — 레포 없는 대화끼리는 서로 막지 않는다
 export function writeRepo(toolName: string, input: unknown, c: PermCtx): string | undefined {
-  const writes = EDIT_TOOLS.has(toolName) || (toolName === "Bash" && !isAutoAllowed(toolName, input, c));
+  return inScope(() => writeRepo0(toolName, input, c));
+}
+function writeRepo0(toolName: string, input: unknown, c: PermCtx): string | undefined {
+  const ro = () => { try { return isAutoAllowed(toolName, input, c); } catch { return false; } }; // 판정이 터지면 쓰기로(잠근다)
+  const writes = EDIT_TOOLS.has(toolName) || (toolName === "Bash" && !ro());
   if (!writes) return undefined;
   const roots = rootsOf(c);
   const i = (input ?? {}) as Record<string, unknown>;
@@ -783,6 +1030,8 @@ export const DENIED_MSG = "사용자가 이 작업을 거부했어요. 같은 �
 // 사용자가 말로 시킨 머지는 merges[].userSaid 로)
 export type MergeAttemptSink = (a: { command: string; cwd: string; origin?: PermOrigin }) => void;
 
+export type QuickVerdict = { decision: "deny"; reason: string } | { decision: "allow"; why: string; input?: Record<string, unknown>; worktree?: true } | { decision: "ask" };
+
 export class PermissionBroker {
   readonly rules: PermissionRules;
   private queue: PermQueue;
@@ -798,7 +1047,16 @@ export class PermissionBroker {
   // 서브에이전트(Agent/Task) 호출은 묻지 않고 허용하되 입력을 고친다(포그라운드로 — subagents.ts). 그 안의 도구 호출은
   // 이 훅·canUseTool 을 다시 거친다(SDK: 훅 입력 agent_id · canUseTool agentID)
   // worktree: 서브에이전트가 isolation "worktree" 로 불렸다(input 에선 뗐다 — 훅이 워크트리를 판다)
-  quick(toolName: string, input: unknown, c: PermCtx): { decision: "deny"; reason: string } | { decision: "allow"; why: string; input?: Record<string, unknown>; worktree?: true } | { decision: "ask" } {
+  // 절대 던지지 않는다: 판정 안에서 무엇이 터지든(감당 못 하는 glob·정규식·파일 시스템 오류) → 승인 카드("ask") — 묻지 않고 허용하지 않는다.
+  // 너무 긴 셸 명령(CHECK_MAX 넘음)도 판정하지 않고 카드로. 한 판정 동안 실제 경로 조회는 기억해 둔다(inScope)
+  quick(toolName: string, input: unknown, c: PermCtx): QuickVerdict {
+    try {
+      const cmd = toolName === "Bash" ? (input as { command?: unknown } | null)?.command : undefined;
+      if (typeof cmd === "string" && cmd.length > CHECK_MAX) return { decision: "ask" };
+      return inScope(() => this.quick0(toolName, input, c));
+    } catch { return { decision: "ask" }; }
+  }
+  private quick0(toolName: string, input: unknown, c: PermCtx): QuickVerdict {
     const h = hardDeny(toolName, input, c);
     if (!h.allow) return { decision: "deny", reason: h.reason };
     if (isSubagentTool(toolName)) {
@@ -836,7 +1094,8 @@ export class PermissionBroker {
         return { hookSpecificOutput: { ...out("allow", "서브에이전트(워크트리 격리)").hookSpecificOutput, updatedInput: r.input } };
       }
       // 이 답의 레포에 처음 쓰는 호출: 그 레포를 잡는다. 다른 답이 고치는 중이면 끝날 때까지 이 호출을 멈춰 둔다(채팅은 그동안 「기다려요」)
-      const repo = origin?.runId ? writeRepo(input.tool_name, input.tool_input, c) : undefined;
+      let repo: string | undefined;
+      try { repo = origin?.runId ? writeRepo(input.tool_name, input.tool_input, c) : undefined; } catch { repo = undefined; }
       if (repo) {
         const got = await this.lock(repo, { key: origin!.runId!, ...(origin!.threadId ? { threadId: origin!.threadId } : {}) }, opts?.signal);
         if (got === "aborted") return out("deny", "대화가 멈춰서 취소됐어요");

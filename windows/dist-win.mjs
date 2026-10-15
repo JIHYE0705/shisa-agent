@@ -6,7 +6,7 @@
 //       node windows/dist-win.mjs --no-installer   (앱 폴더 + zip 만)
 //       cd desktop && npm run dist:win -- --arch=x64
 // 결과: desktop/dist/win/Shisa-<버전>-Setup.exe (arm64 는 Shisa-<버전>-arm64-Setup.exe), Shisa-<버전>-win-<arch>.zip,
-//       Shisa.ico, SHA256SUMS-<버전>-win.txt (버전은 desktop/package.json version)
+//       Shisa.ico, SHA256SUMS-<버전>-win-<arch>.txt (이번에 만든 exe·zip 만. 버전은 desktop/package.json version)
 // 인터넷이 필요하다(npm ci, 처음 한 번 Electron 받기). 코드 서명은 하지 않는다(README 의 SmartScreen 「추가 정보 → 실행」 참고).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -67,6 +67,15 @@ const run = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { stdio: 'inherit'
 // npm 은 윈도우에서 npm.cmd 라 셸 없이 못 띄운다(.cmd 를 바로 spawn 하면 EINVAL). 인자는 공백·따옴표 없는 것만 넘긴다
 const npm = (argv, opts) => (process.platform === 'win32' ? run('cmd.exe', ['/d', '/s', '/c', 'npm', ...argv], opts) : run('npm', argv, opts));
 const step = (s) => console.log(`\n→ ${s}`);
+
+// 이 버전·아키텍처의 릴리스 파일 이름. 시작할 때 지워 두어, 중간에 실패하거나 --no-installer 로 다시 돌렸을 때
+// 옛 Setup.exe·SHA256SUMS 가 새 zip 옆에 남아 섞여 올라가지 않게 한다
+const SETUP_EXE = ARCH === 'x64' ? `${EXE_NAME}-${VERSION}-Setup.exe` : `${EXE_NAME}-${VERSION}-${ARCH}-Setup.exe`;
+const ZIP = path.join(DIST, `${EXE_NAME}-${VERSION}-win-${ARCH}.zip`);
+const SUMS = path.join(DIST, `SHA256SUMS-${VERSION}-win-${ARCH}.txt`);
+for (const f of [path.join(DIST, SETUP_EXE), ZIP, SUMS, path.join(DIST, `SHA256SUMS-${VERSION}-win.txt`) /* 예전 이름(아키텍처 섞임) */]) {
+  fs.rmSync(f, { force: true });
+}
 
 fs.rmSync(STAGE, { recursive: true, force: true });
 fs.mkdirSync(STAGE, { recursive: true });
@@ -166,8 +175,6 @@ fs.copyFileSync(ICO, path.join(DIST, `${EXE_NAME}.ico`)); // 릴리스에 같이
 // 5) 휴대용 zip: Squirrel 이 앱 폴더에 Squirrel.exe 를 넣기 전에 만든다. 윈도우 10+ 기본 tar.exe(bsdtar)는 -a 로 zip 을 만든다
 //    (PATH 의 Git tar 는 GNU tar 라 zip 을 못 만들어서 System32 것을 콕 집는다. 없으면 PowerShell Compress-Archive)
 step('휴대용 zip 만들기');
-const ZIP = path.join(DIST, `${EXE_NAME}-${VERSION}-win-${ARCH}.zip`);
-fs.rmSync(ZIP, { force: true });
 const sysTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
 if (fs.existsSync(sysTar)) {
   run(sysTar, ['-a', '-c', '-f', ZIP, '-C', path.dirname(APP), path.basename(APP)]);
@@ -179,20 +186,27 @@ if (fs.existsSync(sysTar)) {
 const outputs = [ZIP];
 if (MAKE_INSTALLER) {
   // 6) Squirrel.Windows 설치 파일. 설치하면 %LOCALAPPDATA%\Shisa 에 깔리고 바로 가기는 앱(main.js)이 --squirrel-install 때 만든다
+  //    (새 Setup.exe 를 다시 실행하면 이 Squirrel 은 통째로 다시 깔아서 --squirrel-install 이 또 온다. release.md)
   step('설치 파일(Setup.exe) 만들기');
   const winstaller = await load('electron-winstaller');
   const createWindowsInstaller = winstaller.createWindowsInstaller ?? winstaller.default?.createWindowsInstaller;
-  // npm 11 은 의존성의 install 스크립트를 기본으로 안 돌린다. electron-winstaller 는 그 스크립트로 vendor/7z.exe 를 고르니 없으면 여기서 고른다(이 PC 아키텍처용)
+  // 7z 우회: electron-winstaller 는 패키지 install 스크립트(script/select-7z-arch.js)로 vendor/7z-<arch>.exe·dll 을
+  // vendor/7z.exe·dll 로 복사해 두고, Setup.exe 를 만들 때 그 7z.exe 로 nupkg 를 푼다. npm 11 은 의존성의 install 스크립트를
+  // 기본으로 안 돌려서 7z.exe 가 없으면 createWindowsInstaller 가 실패한다. 그래서 그 스크립트가 할 일을 여기서 대신한다.
+  // desktop/node_modules 안을 고치지만 패키지에 든 파일을 복사만 하고(npm ci 하면 다시 지워졌다 같은 자리에 생긴다),
+  // 이미 같은 내용이면 건드리지 않으니 몇 번 돌려도 같다(이 PC 아키텍처용: 7z 는 빌드하는 PC 에서 돈다)
   const wiDir = MODULE_DIRS.map((d) => path.join(d, 'electron-winstaller')).find((d) => fs.existsSync(path.join(d, 'package.json')));
   const vendor = path.join(wiDir ?? path.join(MODULE_DIRS[0], 'electron-winstaller'), 'vendor');
   for (const ext of ['exe', 'dll']) {
     const dst = path.join(vendor, `7z.${ext}`);
     const src = path.join(vendor, `7z-${process.arch}.${ext}`);
-    if (!fs.existsSync(dst) && fs.existsSync(src)) fs.copyFileSync(src, dst);
+    if (!fs.existsSync(src)) continue;
+    if (fs.existsSync(dst) && fs.readFileSync(dst).equals(fs.readFileSync(src))) continue;
+    fs.copyFileSync(src, dst);
   }
   const SQ_OUT = path.join(DIST, `squirrel-${ARCH}`); // RELEASES·nupkg 는 아키텍처마다 따로(같은 이름이라 겹친다)
   fs.rmSync(SQ_OUT, { recursive: true, force: true });
-  const setupExe = ARCH === 'x64' ? `${EXE_NAME}-${VERSION}-Setup.exe` : `${EXE_NAME}-${VERSION}-${ARCH}-Setup.exe`;
+  const setupExe = SETUP_EXE;
   await createWindowsInstaller({
     appDirectory: APP,
     outputDirectory: SQ_OUT,
@@ -215,11 +229,9 @@ if (MAKE_INSTALLER) {
   outputs.unshift(path.join(DIST, setupExe));
 }
 
-// 7) SHA-256 목록: 이 버전의 윈도우 파일(이번에 안 만든 다른 아키텍처 것도 있으면 같이)
-const sumsName = `SHA256SUMS-${VERSION}-win.txt`;
-const mine = fs.readdirSync(DIST).filter((f) => f.startsWith(`${EXE_NAME}-${VERSION}-`) && /\.(exe|zip)$/.test(f)).sort();
-const sums = mine.map((f) => `${crypto.createHash('sha256').update(fs.readFileSync(path.join(DIST, f))).digest('hex')}  ${f}`);
-fs.writeFileSync(path.join(DIST, sumsName), sums.join('\n') + '\n');
+// 7) SHA-256 목록: 이번에 만든 파일만(아키텍처마다 따로). 맨 마지막에 쓰니, 이 파일이 있으면 위 단계가 다 끝난 것이다
+const sums = outputs.map((f) => `${crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex')}  ${path.basename(f)}`);
+fs.writeFileSync(SUMS, sums.join('\n') + '\n');
 
 for (const f of outputs) console.log(`\n✓ ${path.relative(REPO, f)} (${(fs.statSync(f).size / 1024 / 1024).toFixed(1)} MB)`);
-console.log(`✓ ${path.relative(REPO, path.join(DIST, sumsName))}`);
+console.log(`✓ ${path.relative(REPO, SUMS)}`);

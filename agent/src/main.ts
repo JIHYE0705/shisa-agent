@@ -4,7 +4,7 @@ import { loadConfig } from "./config.ts";
 import { DEFAULT_TODAY_REMINDER } from "./daily-plan.ts";
 import { localAsk } from "./local-mode.ts";
 import { Store } from "./store.ts";
-import { Bus } from "./bus.ts";
+import { Bus, EXIT_PORT_TAKEN } from "./bus.ts";
 import { runs } from "./runs.ts";
 import { modelChoices } from "./models.ts";
 import { Agent } from "./core.ts";
@@ -57,6 +57,18 @@ try {
 process.on("unhandledRejection", (e: any) => console.warn("[cy-agent] 처리 안 된 오류:", e?.data?.error ?? e?.message ?? e));
 
 const cfg = loadConfig();
+// 포트부터 잡는다: cy.db 를 열고 끊긴 턴을 닫기(closeDanglingTurns) 전에. 이미 데몬이 떠 있으면 그 데몬의 턴을 건드리지 않고 여기서 끝낸다.
+// 처리기는 아래 bus.listen 이 붙인다(그 사이엔 await 이 없어 요청이 기다릴 일은 거의 없다)
+const bus = new Bus();
+try {
+  await bus.bind(cfg.port);
+} catch (e: any) {
+  if (e?.code === "EADDRINUSE") {
+    console.error(`[cy-agent] 포트 ${cfg.port} 를 이미 다른 데몬이나 프로그램이 쓰고 있어 이 데몬은 끝낼게요 (종료 코드 ${EXIT_PORT_TAKEN})`);
+    process.exit(EXIT_PORT_TAKEN);
+  }
+  throw e;
+}
 if (!modelWorkAllowed(cfg)) console.log("[onboarding] 설치 마법사를 마치기 전: 브리핑·정리 작업은 쉬어요");
 console.log(`[onboarding] 작업 기록(Claude Code·Codex) 읽기: ${sessionsAllowed(cfg) ? "켬" : "끔"} · 레포 폴더 ${cfg.repoRoots.length}개`);
 // 커넥터(connectors.ts): 기능별 데이터 원천. 연결 안 된 기능은 조용히 빠진다
@@ -71,7 +83,6 @@ console.log(`[brain] ${cfg.brain.provider}`);
 if (cfg.github?.enabled === undefined) probeGh({ bin: cfg.github?.bin }).then((ok) => console.log(`[cy-agent] GitHub(gh) 읽기 도구 ${ok ? "켬" : "끔 — gh auth status 실패"}`));
 const store = new Store(cfg.dbPath);
 runs.attach(store.db); // 작업 세션 기록(세션 창)을 cy.db 에
-const bus = new Bus();
 bus.activity.bindRuns(runs); // 돌고 있는 run(대화 제외) → 캐릭터 "공부 중"
 // 집중하기(포커스 타이머): 기록은 cy.db, 바뀌면 SSE focus · 그만하면 「N분 집중했어요」 말풍선. AI 없이도 돈다
 const focus = new Focus(store);
@@ -455,6 +466,7 @@ let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  bus.stopping = true; // GET /status stopping: true — 새로 뜬 앱이 이 데몬이 곧 사라질 걸 안다
   stopCalendar();
   try { focus.checkpoint(); } catch { /* 꺼지는 중 */ }
   await canvas.flush().catch(() => {});

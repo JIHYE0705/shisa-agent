@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bashPathWin, winLocalPath, winRunnable } from "./plat.ts";
+import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { bashPathWin, isRealishUnknown, realish, winLocalPath, winRunnable, withFsMemo } from "./plat.ts";
 import { cmdQuoteArg, findOnPath, isAbsPath, isFsRoot, msysToWin, openSpec, pathKey, pathWithin, samePath, spawnSpec, winNorm, winPathForms, winShellNorm, winSpawnSpec } from "./plat.ts";
 import { testSpawn, userShellArgs } from "./fixer.ts";
 
@@ -139,4 +142,18 @@ test("bashPathWin·winLocalPath: Git Bash 안쪽 경로·UNC 는 모름(\"\"/und
   for (const p of ["\\\\localhost\\c$\\x", "//localhost/c$/x", "\\\\?\\UNC\\srv\\x", "\\\\.\\C:\\x", "\\??\\C:\\x", "\\/srv/x"]) assert.equal(winLocalPath(p, "win32"), undefined, p);
   assert.equal(winLocalPath("C:\\x", "win32"), "C:\\x");
   assert.equal(winLocalPath("//srv/x", "darwin"), "//srv/x");
+});
+
+test("realish: 있는 데까지 실제 경로 + 나머지 · 아주 긴 경로(조각 2만 개)는 걷지 않고 모름 · withFsMemo 안에서도 같은 답", () => {
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "cy-plat-")));
+  mkdirSync(join(dir, "a"));
+  assert.equal(realish(join(dir, "a", "b", "c")), join(dir, "a", "b", "c"));
+  assert.equal(withFsMemo(() => [realish(join(dir, "a", "x")), realish(join(dir, "a", "x"))].join("|")), `${join(dir, "a", "x")}|${join(dir, "a", "x")}`);
+  assert.equal(withFsMemo(() => withFsMemo(() => realish(dir))), dir); // 겹쳐도 됨
+  const t0 = performance.now();
+  const deep = realish(join(dir, ...Array(20000).fill("s")));
+  assert.ok(performance.now() - t0 < 200);
+  assert.ok(isRealishUnknown(deep));
+  if (process.platform === "win32") assert.equal(winLocalPath(deep), undefined); // Windows: UNC 처럼 막히는 모양
+  assert.ok(!isRealishUnknown(realish(join(dir, ...Array(50).fill("s")))));
 });
