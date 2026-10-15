@@ -1361,7 +1361,7 @@ function rulesBar() {
     title: '할 일 규칙',
     onclick: () => { rulesOpen = !rulesOpen; renderTodos(); },
   });
-  const bar = h('div.todo-tools', null, chip, vm.stats.backlogTodos ? h('span.muted.small', { text: `백로그 ${vm.stats.backlogTodos}개` }) : null, focusView.bar('todos'));
+  const bar = h('div.todo-tools', null, chip, vm.stats.backlogTodos ? h('span.muted.small', { text: `언젠가 ${vm.stats.backlogTodos}개` }) : null, focusView.bar('todos'));
   if (!rulesOpen) return bar;
   const list = rules.length
     ? rules.map((r) => h(`div.rule-row${r.enabled ? '' : '.off'}`, { dataset: { id: r.id } },
@@ -1442,7 +1442,7 @@ function todoRow(t) {
   const flashing = flash?.id === t.id && Date.now() < flash.until;
   const row = h(`div.todo.row${t.pending ? '.pending' : ''}${open ? '.open' : ''}${confirming ? '.confirming' : ''}${flashing ? '.flash' : ''}`, {
     dataset: { id: t.id }, tabindex: '0', role: 'button', 'aria-expanded': String(open),
-    'aria-label': `${t.title} — Enter 설명, Shift+Enter 제목·설명 고치기, Alt+↑↓ 순서, Alt+1·2·3 우선순위, Alt+4 백로그, Delete 휴지통`,
+    'aria-label': `${t.title} — Enter 설명, Shift+Enter 제목·설명 고치기, Alt+↑↓ 순서, Alt+1~4 우선순위(오늘 꼭·이번 주·천천히·언젠가), Delete 휴지통`,
     title: '눌러서 설명 · 두 번 눌러 제목·설명 고치기 · 꾹 눌러 끌어서 순서·우선순위',
     onclick: (e) => {
       if (suppressClick) { suppressClick = false; return; }

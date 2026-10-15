@@ -3,7 +3,7 @@
 // 사용: node scripts/sync-character-lines.mjs [--check]  (--check: 다르면 1로 끝냄)
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const SRC = path.join(ROOT, '..', 'assets', 'characters', 'lines.json');
@@ -15,7 +15,7 @@ export function render(json) {
   return `// 자동으로 만든 파일 — 고치지 마세요. 원본은 assets/characters/lines.json(node scripts/sync-character-lines.mjs)\nexport const CHARACTER_LINES = ${JSON.stringify(data, null, 2)};\n`;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const want = render(fs.readFileSync(SRC, 'utf8'));
   const have = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8') : '';
   if (process.argv.includes('--check')) {

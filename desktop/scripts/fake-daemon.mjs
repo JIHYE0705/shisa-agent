@@ -7,6 +7,10 @@ import { createFakeThreads } from './fake-threads.mjs';
 import { createFakeActions, permissionKindOf, PERMISSION_KINDS, fakeMerge } from './fake-actions.mjs';
 import { createFakeFocus, handleFocus } from './fake-focus.mjs';
 import { pathToFileURL } from 'node:url';
+// 캐릭터(말투·문구·AI 없이 하는 말)는 진짜 데몬 코드를 그대로 쓴다 — 가짜로 띄워도 말이 실제와 같다
+import { setCharacter, characterId, characterOptions, isCharacterId } from '../../agent/src/characters.ts';
+import { localAsk as realLocalAsk } from '../../agent/src/local-mode.ts';
+import { phrase } from '../../agent/src/phrases.ts';
 
 // 녹화용 데모(scripts/demo.mjs): FAKE_DATA=모듈 경로면 그 모듈이 데이터·훅(route·chat·createRuns 등)을 덮어쓴다
 const D = process.env.FAKE_DATA ? await import(pathToFileURL(process.env.FAKE_DATA).href) : {};
@@ -28,15 +32,17 @@ const bubble = (b) => emit('bubble', { id: `b${++seq}`, ...b });
 let curMood = 'idle';
 let activity = { activity: 'idle', runs: [] };
 let danceTimer = null;
-const stateFrame = () => ({ mood: curMood, ...activity });
+// FAKE_CHARACTER=hachi|rakko|momonga 로 그 캐릭터로 시작(설정 창에서도 바뀐다)
+setCharacter(process.env.FAKE_CHARACTER);
+const stateFrame = () => ({ mood: curMood, ...activity, character: characterId() });
 const mood = (m) => { curMood = m; emit('state', stateFrame()); };
-function setActivity(kind) {
+function setActivity(kind, clip = 'plan') {
   clearTimeout(danceTimer);
   if (kind === 'studying') activity = { activity: 'studying', runs: [{ id: `run${++seq}`, kind: 'briefing', title: '브리핑(가짜)', startedAt: new Date().toISOString() }] };
   else if (kind === 'idle') activity = { activity: 'idle', runs: [] };
   else if (kind === 'dancing') {
     const runs = activity.runs;
-    activity = { activity: 'dancing', runs, danceId: `dance${++seq}` };
+    activity = { activity: 'dancing', runs, danceId: `dance${++seq}`, danceClip: clip };
     // 8초 뒤 그 전 상태로(돌던 일이 있으면 공부)
     danceTimer = setTimeout(() => { activity = { activity: runs.length ? 'studying' : 'idle', runs }; emit('state', stateFrame()); }, Number(process.env.FAKE_DANCE_MS) || 8000);
   }
@@ -566,6 +572,7 @@ const fakeSettings = () => ({
   user: fakeCfg.name ? { name: fakeCfg.name } : {}, repoRoots: [...fakeCfg.repoRoots], configPath: '(가짜)',
   todayReminder: { ...fakeCfg.todayReminder },
   calendarAlert: { minutesBefore: [...fakeCfg.calendarAlert.minutesBefore] },
+  character: characterId(), characters: characterOptions(),
 });
 
 const server = http.createServer(async (req, res) => {
@@ -587,7 +594,7 @@ const server = http.createServer(async (req, res) => {
     res.write(`event: focus\ndata: ${JSON.stringify(fakeFocus.view())}\n\n`);
     const hb = setInterval(() => res.write(': ping\n\n'), 15000);
     req.on('close', () => { clearInterval(hb); clients.delete(res); });
-    if (!QUIET) setTimeout(() => { mood('idle'); bubble({ text: '안녕하세요! 가짜 데몬에 연결됐어요.', kind: 'info', ttlMs: 5000 }); }, 500);
+    if (!QUIET) setTimeout(() => { mood('idle'); bubble({ text: characterId() === 'shisa' ? '안녕하세요! 가짜 데몬에 연결됐어요.' : phrase('hello'), kind: 'info', ttlMs: 5000 }); }, 500);
     // 아직 결정을 기다리는 머지 말풍선은 다시 붙은 오버레이에도(데몬 bus.ts 처럼)
     for (const r of merges.values()) if (r.state === 'asking' && r.bubble) res.write(`event: bubble\ndata: ${JSON.stringify(r.bubble)}\n\n`);
     return;
@@ -606,6 +613,17 @@ const server = http.createServer(async (req, res) => {
       next_event: { text: '캘린더를 연결하면 다음 일정도 알려 드릴게요. 설정의 더 연결하기에서 할 수 있어요.', kind: 'info', open: { section: 'setup', id: 'extras' } },
       cheer: { text: '오늘도 잘하고 있어요. 제가 옆에서 응원할게요!', kind: 'done' },
     };
+    // 시사가 아니면(또는 응원·춤) 진짜 데몬 말(캐릭터 말투)로 — 가짜 할 일·오늘 할 일·일정을 넣어서
+    if (characterId() !== 'shisa' || b.id === 'cheer' || b.id === 'dance') {
+      const real = realLocalAsk(b.id, {
+        today: () => todayPlan().items,
+        open: () => todos.map((t) => ({ title: t.title, priority: t.priority })),
+        calendar: () => ({ enabled: true, meetings: fakeMeetings() }),
+      });
+      if (!real) return json(res, 400, { error: 'unknown id' });
+      if (b.id === 'cheer' || b.id === 'dance') setActivity('dancing', b.id);
+      return json(res, 200, { ok: true, answer: real });
+    }
     const a = answers[b.id];
     return a ? json(res, 200, { ok: true, answer: { id: b.id, ...a } }) : json(res, 400, { error: 'unknown id' });
   }
@@ -617,6 +635,11 @@ const server = http.createServer(async (req, res) => {
     if (Array.isArray(b.repoRoots)) fakeCfg.repoRoots = b.repoRoots;
     if (b.todayReminder) fakeCfg.todayReminder = { ...fakeCfg.todayReminder, ...b.todayReminder };
     if (Array.isArray(b.calendarAlert?.minutesBefore)) fakeCfg.calendarAlert = { minutesBefore: [...new Set(b.calendarAlert.minutesBefore)].sort((x, y) => y - x) };
+    if (b.character !== undefined) {
+      if (!isCharacterId(b.character)) return json(res, 400, { error: 'character must be one of shisa, hachi, rakko, momonga' });
+      setCharacter(b.character);
+      emit('state', stateFrame());
+    }
     if (b.brain || b.user) emit('status', { status: fakeStatus() });
     return json(res, 200, { ok: true, settings: fakeSettings(), applied: 'live', restartNeeded: false });
   }
@@ -666,6 +689,9 @@ const server = http.createServer(async (req, res) => {
   if (m) return json(res, 200, { ok: true, id: m[1], action: m[2] });
 
   // ---- 캐릭터 활동: POST /fake/activity/idle|studying|dancing, 회의 알림: POST /fake/meeting ----
+  // 지금 캐릭터의 고정 문구 하나를 말풍선으로: POST /fake/say/<문구 키>(hello·daily_half…) {vars?}
+  const fs = p.match(/^\/fake\/say\/(\w+)$/);
+  if (fs) { bubble({ text: phrase(fs[1], body.vars ?? {}), kind: 'info', ttlMs: Number(body.ttlMs) || 60e3 }); return json(res, 200, { ok: true }); }
   const fa = p.match(/^\/fake\/activity\/(idle|studying|dancing)$/);
   if (fa) { setActivity(fa[1]); return json(res, 200, { ok: true, ...stateFrame() }); }
   if (p === '/fake/meeting') {
@@ -673,7 +699,7 @@ const server = http.createServer(async (req, res) => {
     setActivity('dancing');
     // 데몬 alertText 와 같은 모양: "· 📍 회의실 · 온라인"(없는 부분은 뺀다)
     const where = [m.location ? `📍 ${m.location}` : '', m.link ? '온라인' : ''].filter(Boolean).join(' · ');
-    emit('bubble', { id: `meeting:${m.id}@${m.start}#10`, text: `일정 10분 전이에요! 〈${m.subject}〉 ${kstHHMM(new Date(m.start))}${where ? ` · ${where}` : ''}`, kind: 'todo', ttlMs: 60e3, link: m.link });
+    emit('bubble', { id: `meeting:${m.id}@${m.start}#10`, text: phrase('meeting_alert', { mins: 10, title: m.subject, time: kstHHMM(new Date(m.start)), where: where ? ` · ${where}` : '' }), kind: 'todo', ttlMs: 60e3, link: m.link });
     return json(res, 200, { ok: true });
   }
 

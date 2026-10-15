@@ -156,7 +156,8 @@ export const QUICK_LINES = {
   ],
 } as const;
 
-const PRIO_LABEL: Record<number, string> = { 1: "P1", 2: "P2", 3: "P3", 4: "백로그" };
+// 화면에 보이는 우선순위 이름(데스크톱 todos.js PRIORITIES 와 같다)
+export const PRIO_LABEL: Record<number, string> = { 1: "오늘 꼭", 2: "이번 주", 3: "천천히", 4: "언젠가" };
 const fill = (s: string, v: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (all, k: string) => (k in v ? String(v[k]) : all));
 const quote = (t: string) => `'${cleanTitle(t).slice(0, 30)}'`;
 
@@ -202,7 +203,7 @@ function answerTodo(f: QuickFacts, seed: string): QuickAnswer {
     id: "next_todo",
     kind: "info",
     text: spoken(fill(localLine("todoTop"), { title: cleanTitle(top[0].title).slice(0, 30) }), seed, "busy"),
-    detail: top.map((t) => `- ${PRIO_LABEL[t.priority ?? 2] ?? "P2"} ${cleanTitle(t.title)}`).join("\n") + (sorted.length > 3 ? `\n- 그 밖에 ${sorted.length - 3}개` : ""),
+    detail: top.map((t) => `- ${PRIO_LABEL[t.priority ?? 2] ?? PRIO_LABEL[2]} ${cleanTitle(t.title)}`).join("\n") + (sorted.length > 3 ? `\n- 그 밖에 ${sorted.length - 3}개` : ""),
     open: { section: "todos" },
   };
 }
