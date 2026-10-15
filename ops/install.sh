@@ -8,11 +8,11 @@ DRY=0
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 HOME_DIR="$HOME/.cy-agent"
 LA="$HOME/Library/LaunchAgents"
-# Node.js 26 이상(데몬이 node:sqlite·TypeScript 바로 실행을 쓴다). 없거나 낮으면 안내하고 멈춘다
+# Node.js 24 이상(데몬이 node:sqlite·TypeScript 바로 실행을 쓴다. 앱(dmg)에 든 Electron 의 Node 와 같은 줄). 없거나 낮으면 안내하고 멈춘다
 NODE=$(command -v node || true)
 [ -n "$NODE" ] || { echo "✗ Node.js 가 없습니다. 터미널에 brew install node 를 입력해 설치한 뒤 다시 실행해 주세요."; exit 1; }
 NODE_MAJOR=$("$NODE" -p 'process.versions.node.split(".")[0]')
-[ "$NODE_MAJOR" -ge 26 ] || { echo "✗ Node.js $("$NODE" -v) 는 너무 낮습니다(26 이상 필요). brew upgrade node 로 올린 뒤 다시 실행해 주세요."; exit 1; }
+[ "$NODE_MAJOR" -ge 24 ] || { echo "✗ Node.js $("$NODE" -v) 는 너무 낮습니다(24 이상 필요). brew upgrade node 로 올린 뒤 다시 실행해 주세요."; exit 1; }
 PATH_ENV="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 APPS="$HOME/Applications"
 APP="$APPS/cy.app"
