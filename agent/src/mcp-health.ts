@@ -1,6 +1,6 @@
 // 커넥터 MCP 서버(사용자가 Claude Code 에 등록한 http 서버) 도달 상태. 회사·학교 VPN 뒤의 서버면 VPN 이 꺼졌을 때
 // MCP 대신 안내 페이지로 302 가 온다 — 그때는 "VPN 꺼짐"이라고 정확히 알려 준다. stdio 서버(주소 없음)는 여기서 보지 않는다.
-import { readFileSync } from "node:fs";
+import { readClaudeJson } from "./mcp.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CAPABILITIES, CONNECTORS, type Connectors } from "./connectors.ts";
@@ -16,7 +16,7 @@ export function connectorServers(c: Connectors = CONNECTORS): string[] {
 // ~/.claude.json 에서 그 서버들의 http 주소(없으면 빠진다)
 export function serverUrls(names: readonly string[], path = join(homedir(), ".claude.json")): Record<string, string> {
   try {
-    const j = JSON.parse(readFileSync(path, "utf8"));
+    const j = readClaudeJson(path);
     const out: Record<string, string> = {};
     for (const n of names) {
       const u = j?.mcpServers?.[n]?.url;

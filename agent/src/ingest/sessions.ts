@@ -1,5 +1,5 @@
 // Claude Code / Codex 세션 JSONL → 지식그래프(session · project · file 노드).
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Store } from "../store.ts";
@@ -35,10 +35,42 @@ function textOf(content: unknown, kind: "text" | "input_text" | "output_text"): 
   return parts.length ? parts.join("\n") : undefined;
 }
 
-export function parseClaudeSession(raw: string, fallbackId: string): SessionDigest | undefined {
+const linesOf = (raw: string | Iterable<string>) => (typeof raw === "string" ? raw.split("\n") : raw);
+
+// JSONL 을 1MB 씩 읽어 한 줄씩 낸다. 통째로 읽지 않는다: 앱(Electron)의 Node 는 2GB 넘는 파일을
+// readFileSync(…, "utf8") 하면 오류 대신 프로세스째 죽는다(PartitionAlloc OOM, SIGTRAP).
+// 문자열로 만들 수 없을 만큼 긴 줄은 건너뛴다.
+export function* readLines(path: string): Generator<string> {
+  const fd = openSync(path, "r");
+  try {
+    const buf = Buffer.alloc(1 << 20);
+    let parts: Buffer[] = [];
+    let n: number;
+    const flush = function* () {
+      if (!parts.length) return;
+      const line = parts.length === 1 ? parts[0] : Buffer.concat(parts);
+      parts = [];
+      try { yield line.toString("utf8"); } catch { /* 너무 긴 줄 */ }
+    };
+    while ((n = readSync(fd, buf, 0, buf.length, null)) > 0) {
+      let start = 0;
+      for (let i = buf.indexOf(10, 0); i !== -1 && i < n; i = buf.indexOf(10, start)) {
+        parts.push(Buffer.from(buf.subarray(start, i)));
+        yield* flush();
+        start = i + 1;
+      }
+      if (start < n) parts.push(Buffer.from(buf.subarray(start, n)));
+    }
+    yield* flush();
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function parseClaudeSession(raw: string | Iterable<string>, fallbackId: string): SessionDigest | undefined {
   const d: SessionDigest = { id: fallbackId, tool: "claude", turns: 0, files: [] };
   const files = new Set<string>();
-  for (const line of raw.split("\n")) {
+  for (const line of linesOf(raw)) {
     if (!line) continue;
     let e: any;
     try { e = JSON.parse(line); } catch { continue; }
@@ -67,9 +99,9 @@ export function parseClaudeSession(raw: string, fallbackId: string): SessionDige
   return d;
 }
 
-export function parseCodexSession(raw: string, fallbackId: string): SessionDigest | undefined {
+export function parseCodexSession(raw: string | Iterable<string>, fallbackId: string): SessionDigest | undefined {
   const d: SessionDigest = { id: fallbackId, tool: "codex", turns: 0, files: [] };
-  for (const line of raw.split("\n")) {
+  for (const line of linesOf(raw)) {
     if (!line) continue;
     let e: any;
     try { e = JSON.parse(line); } catch { continue; }
@@ -141,10 +173,9 @@ export function ingestSessions(
       let mtime: number;
       try { mtime = statSync(path).mtimeMs; } catch { continue; }
       if (mtime < cutoff || store.markOf(path) === mtime) continue;
-      let raw: string;
-      try { raw = readFileSync(path, "utf8"); } catch { continue; }
       const id = basename(path, ".jsonl");
-      const s = tool === "claude" ? parseClaudeSession(raw, id) : parseCodexSession(raw, id);
+      let s: SessionDigest | undefined;
+      try { s = tool === "claude" ? parseClaudeSession(readLines(path), id) : parseCodexSession(readLines(path), id); } catch { continue; }
       if (s && !isCyAgentCwd(s.cwd, skipCwdPrefix)) { recordSession(store, s); n++; }
       store.setMark(path, mtime);
     }

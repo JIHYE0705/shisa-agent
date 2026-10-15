@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../store.ts";
-import { ingestSessions, parseClaudeSession, parseCodexSession } from "./sessions.ts";
+import { ingestSessions, parseClaudeSession, parseCodexSession, readLines } from "./sessions.ts";
 
 const claudeLines = [
   { type: "user", sessionId: "s1", cwd: "/r/app", gitBranch: "main", timestamp: "2026-10-08T01:00:00Z", message: { content: "버튼 색 바꿔줘" } },
@@ -63,4 +63,14 @@ test("isCyAgentCwd: 이 설치와 같은 맥의 다른 시사 설치 폴더 세�
   assert.equal(isCyAgentCwd("/h/.cy-agent/worktrees/app-1", undefined, "/h"), true);
   assert.equal(isCyAgentCwd("/h/code/app", "/h/.cy-agent", "/h"), false);
   assert.equal(isCyAgentCwd(undefined, "/h/.cy-agent", "/h"), false);
+});
+
+test("readLines: 1MB 경계를 넘는 줄도 한 줄로, 마지막 줄바꿈이 없어도", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cy-lines-"));
+  const p = join(dir, "s.jsonl");
+  const long = "가".repeat(700_000); // 2.1MB
+  writeFileSync(p, `a\n${long}\n\nb`);
+  assert.deepEqual([...readLines(p)].map((l) => l.length), [1, long.length, 0, 1]);
+  assert.equal([...readLines(p)][1], long);
+  rmSync(dir, { recursive: true, force: true });
 });
