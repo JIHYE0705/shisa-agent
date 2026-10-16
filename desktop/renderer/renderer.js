@@ -720,7 +720,7 @@ function syncChat() {
 function showReply(r) {
   const { text, truncated } = summarizeReply(r.text);
   const b = { id: `chat-${r.chatId}`, text: text || '(빈 답)', kind: r.error ? 'error' : 'info', ttlMs: r.stopped ? 5000 : 20000 };
-  // 호버에서 한 말은 새 대화(스레드) — "패널에서 보기"는 그 대화를 연다
+  // 캐릭터 대화방(스레드)의 답 — "패널에서 보기"는 그 대화를 연다
   if (r.threadId) b.open = { section: 'chat', id: r.threadId };
   else if (truncated) b.panelSection = 'chat';
   queue.add(b);
@@ -740,7 +740,8 @@ async function sendChat(text, ids = []) {
   } catch {
     r = { ok: false };
   }
-  if (r?.ok && r.chatId) dispatchChat({ type: 'accepted', chatId: r.chatId });
+  // 캐릭터 대화방을 따라간다 — 패널에서 이어 말해도 답은 머리 위 말풍선으로
+  if (r?.ok && r.chatId) dispatchChat({ type: 'accepted', chatId: r.chatId, ...(r.threadId ? { threadId: r.threadId, follow: true } : {}) });
   else showReply({ chatId: `fail-${Date.now()}`, text: r?.status === 400 && r.data?.error ? `못 보냈어요: ${r.data.error}` : `${who()}에 연결되지 않아서 못 보냈어요.`, error: true });
 }
 

@@ -407,7 +407,7 @@ export class Chat {
 
   // 바로 chatId·threadId를 돌려주고, 실제 대화는 그 스레드의 앞선 대화가 끝난 뒤 돈다(다른 스레드는 기다리지 않는다).
   // 기록은 차례가 왔을 때 남긴다(문답 순서가 섞이지 않게)
-  // threadId 없으면: todoId가 있으면 그 할 일의 스레드, 아니면 새 스레드(제목은 첫 말에서)
+  // threadId 없으면: todoId가 있으면 그 할 일의 스레드, kind hover 면 가장 최근 캐릭터 대화, 아니면 새 스레드(제목은 첫 말에서)
   send(text: string, opts: SendOpts | string = {}): Sent {
     const o: SendOpts = typeof opts === "string" ? { todoId: opts } : opts;
     // 첨부: 올려 둔 것이 다 있고 개수·합 크기 안인지 먼저(스레드를 만들기 전에)
@@ -429,6 +429,8 @@ export class Chat {
       const t = this.store.getTodo(o.todoId);
       if (!t) return { error: "no_todo" };
       ({ thread, created: fresh } = todoThreadFor(this.store, t));
+    } else if (o.kind === "hover" && (thread = this.store.latestThread("hover"))) {
+      // 캐릭터 입력창: 늘 같은 대화방(가장 최근 캐릭터 대화)에 이어 말한다. 보관하거나 지우면 다음 말부터 새 대화방
     } else {
       thread = this.store.createThread({ title: threadTitle(text || attachmentsTitle(briefs)), kind: o.kind === "hover" ? "hover" : "chat" });
       fresh = true;

@@ -17,6 +17,7 @@
 //   SSE edited = 사용자가 말을 고침: n 이 있으면 그 턴을 새 chatId 로 다시(replaces = 멈춘 옛 답 — 이 창이 보낸 것이었으면
 //                새 답도 이 창이 보인다), 없으면 줄 선 말의 글만 바뀜(pending.text)
 //   { type: 'consumed' }                   replies 를 다 꺼내 씀
+//   accepted 에 follow: true 면 그 threadId 를 따라간다 — 그 대화방의 답은 어느 창에서 보냈든 이 창의 replies 로
 import { normalizeSection } from './dashboard.js';
 import { normAttachments } from './attachments.js';
 
@@ -32,7 +33,8 @@ export function initialChat() {
     pending: {},
     mine: [], // 이 창에서 보낸 chatId
     finished: [], // 최근 끝난 { chatId, text, show, error, stopped?, threadId? } — accepted 가 늦게 와도 짝 맞추기
-    replies: [], // 이 창이 보여줘야 할 답 (mine ∩ finished)
+    replies: [], // 이 창이 보여줘야 할 답 (mine ∩ finished, 또는 follow 대화방의 답)
+    follow: null, // 이 창이 따라가는 대화방 id — 다른 창(패널)에서 보낸 말의 답도 이 창이 보여준다(캐릭터 대화방)
   };
 }
 
@@ -70,14 +72,16 @@ export function chatReducer(state, action) {
       if (typeof id !== 'string' || !id || state.mine.includes(id)) return state;
       const done = state.finished.find((f) => f.chatId === id);
       // 답이 POST 응답보다 먼저 와버린 경우 바로 replies 로
-      if (done) return { ...state, replies: [...state.replies, done] };
       const tid = typeof action.threadId === 'string' && action.threadId ? action.threadId : state.pending[id]?.threadId;
+      const follow = action.follow === true && tid ? tid : state.follow ?? null;
+      // (따라가던 대화방의 답이면 이미 replies 로 나갔다)
+      if (done) return { ...state, follow, replies: wants(state, null, done.threadId) ? state.replies : [...state.replies, done] };
       const prev = state.pending[id] ?? { step: null };
       // POST 응답의 queued 를 믿는다 — SSE queued 가 늦게 와도 대기 중. 이미 thinking 을 받았으면(running) 그대로
       const queued = !prev.running && (prev.queued || action.queued === true);
       const next = { ...prev, step: prev.step ?? null, ...(tid ? { threadId: tid } : {}), ...(queued ? { queued: true } : {}), ...info(action, prev) };
       if (queued && !next.queuedAt) next.queuedAt = new Date().toISOString();
-      return { ...state, mine: cap([...state.mine, id], MAX_FINISHED), pending: { ...state.pending, [id]: next } };
+      return { ...state, follow, mine: cap([...state.mine, id], MAX_FINISHED), pending: { ...state.pending, [id]: next } };
     }
     case 'queue': {
       let pending = state.pending;
@@ -142,7 +146,7 @@ export function chatReducer(state, action) {
           pending,
           finished: cap([...state.finished, fin], MAX_FINISHED),
           mine: state.mine.filter((x) => x !== id),
-          replies: state.mine.includes(id) ? [...state.replies, fin] : state.replies,
+          replies: wants(state, id, tid) ? [...state.replies, fin] : state.replies,
         };
       }
       if (ev.status === 'done' || ev.status === 'error') {
@@ -160,7 +164,7 @@ export function chatReducer(state, action) {
           messages: cap([...state.messages, msg], MAX_MESSAGES),
           finished: cap([...state.finished, fin], MAX_FINISHED),
           mine: state.mine.filter((x) => x !== id),
-          replies: state.mine.includes(id) ? [...state.replies, fin] : state.replies,
+          replies: wants(state, id, tid) ? [...state.replies, fin] : state.replies,
         };
       }
       return state;
@@ -171,6 +175,9 @@ export function chatReducer(state, action) {
       return state;
   }
 }
+
+// 이 창이 보여줄 답인가: 이 창에서 보냈거나, 이 창이 따라가는 대화방의 답
+const wants = (state, id, tid) => state.mine.includes(id) || (!!tid && !!state.follow && tid === state.follow);
 
 // 레포 잠금 대기 정보(이벤트·GET /chat/queue running[].held): 데몬이 지은 이유 글 그대로
 function heldOf(x) {

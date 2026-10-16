@@ -667,6 +667,11 @@ export class Store {
     const r = this.db.prepare(`${this.threadSelect()} WHERE t.kind = 'todo' AND t.todo_id = ? ORDER BY t.created LIMIT 1`).get(todoId) as any;
     return r ? threadRow(r) : undefined;
   }
+  // 그 종류에서 가장 최근에 말이 오간 스레드(보관한 것 빼고). 캐릭터 입력창은 이걸 이어 쓴다
+  latestThread(kind: ThreadKind): Thread | undefined {
+    const r = this.db.prepare(`${this.threadSelect()} WHERE t.kind = ? AND t.archived = 0 ORDER BY t.updated DESC, lastn DESC, t.created DESC LIMIT 1`).get(kind) as any;
+    return r ? threadRow(r) : undefined;
+  }
   // 최근에 말이 오간 순. before = updated 커서(그보다 이전). archived: true면 보관한 것만
   threads(opts: { limit?: number; before?: string; archived?: boolean } = {}): Thread[] {
     const rows = this.db.prepare(`${this.threadSelect()} WHERE t.archived = ? ${opts.before ? "AND t.updated < ?" : ""} ORDER BY t.updated DESC, lastn DESC, t.created DESC LIMIT ?`)

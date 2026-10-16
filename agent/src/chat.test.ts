@@ -184,6 +184,26 @@ test("chat: threadId 없으면 새 스레드(kind chat|hover), 모르는 threadI
   assert.equal(threadTitle("가".repeat(40)), `${"가".repeat(29)}…`);
 });
 
+test("chat: 캐릭터 입력창(kind hover)은 가장 최근 캐릭터 대화방에 이어 말한다 — 보관하면 새 대화방", async () => {
+  const seen: string[][] = [];
+  const s = setup(async (_c, _s, h, text) => { seen.push(h.map((m) => m.text)); return reply({ reply_md: `답:${text}` }); });
+  const a = sent(s.chat.send("내 이름은 시사야", { kind: "hover" }));
+  await s.chat.idle();
+  const panel = sent(s.chat.send("패널에서 연 대화"));
+  await s.chat.idle();
+  const b = sent(s.chat.send("내 이름 뭐였지?", { kind: "hover" }));
+  await s.chat.idle();
+  assert.equal(b.threadId, a.threadId, "같은 대화방");
+  assert.notEqual(panel.threadId, a.threadId);
+  assert.deepEqual(s.store.threadMessages(a.threadId).map((m) => m.text), ["내 이름은 시사야", "답:내 이름은 시사야", "내 이름 뭐였지?", "답:내 이름 뭐였지?"]);
+  assert.ok(seen.at(-1)!.includes("내 이름은 시사야"), "앞 말을 기억한다");
+  s.store.editThread(a.threadId, { archived: true });
+  const c = sent(s.chat.send("새로 시작", { kind: "hover" }));
+  await s.chat.idle();
+  assert.notEqual(c.threadId, a.threadId);
+  assert.equal(s.store.thread(c.threadId)!.kind, "hover");
+});
+
 test("chat: 할 일 스레드는 따로 집어 들지 않아도 그 할 일이 대상, todoId만 주면 그 할 일 스레드를 다시 쓴다", async () => {
   const store = new Store(":memory:");
   store.upsertTodo({ id: "a", title: "A", source: "user", priority: 2 });

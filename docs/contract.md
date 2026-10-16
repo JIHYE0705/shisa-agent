@@ -240,7 +240,7 @@ type FocusView = {
 - `text`(필수)
 - `threadId?`: 이어 말할 대화
 - `todoId?`: 대화 대상 할 일
-- `kind?: chat|hover`: 새 대화 종류. `hover`는 더블클릭 대화
+- `kind?: chat|hover`: 새 대화 종류. `hover`는 더블클릭 대화(threadId 없이 보내면 가장 최근의 보관 안 한 hover 대화에 이어 말하고, 없으면 새로 만든다)
 - `parentRunId?`, `model?`, `clientId?`
 - `attachments?`: `POST /chat/attachments`로 올린 id
 

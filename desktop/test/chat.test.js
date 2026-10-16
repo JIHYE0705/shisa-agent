@@ -26,6 +26,26 @@ test('다른 창에서 보낸 대화는 바쁨 표시만, replies 없음', () =>
   assert.equal(t.messages.length, 1);
 });
 
+test('캐릭터 대화방 따라가기(follow): 패널에서 같은 대화방에 이어 말해도 답이 이 창 replies 로, 다른 대화방은 아니다', () => {
+  let s = run([{ type: 'accepted', chatId: 'h1', threadId: 'hv', follow: true }, ev({ chatId: 'h1', threadId: 'hv', status: 'done', text: '첫 답' })]);
+  assert.equal(s.follow, 'hv');
+  assert.deepEqual(s.replies.map((r) => r.text), ['첫 답']);
+  s = chatReducer(s, { type: 'consumed' });
+  // 패널에서 같은 대화방에 보낸 말(이 창 mine 아님)
+  s = run([ev({ chatId: 'p1', threadId: 'hv', status: 'thinking' }), ev({ chatId: 'p1', threadId: 'hv', status: 'done', text: '패널 말의 답' })], s);
+  assert.deepEqual(s.replies.map((r) => r.text), ['패널 말의 답']);
+  s = chatReducer(s, { type: 'consumed' });
+  s = run([ev({ chatId: 'p2', threadId: 'other', status: 'done', text: '다른 방' })], s);
+  assert.deepEqual(s.replies, []);
+  // 답이 POST 응답보다 먼저 왔고 이미 따라가던 방이면 두 번 보이지 않는다
+  s = run([ev({ chatId: 'h2', threadId: 'hv', status: 'done', text: '빠른 답' })], s);
+  assert.equal(s.replies.length, 1);
+  s = run([{ type: 'consumed' }, { type: 'accepted', chatId: 'h2', threadId: 'hv', follow: true }], s);
+  assert.deepEqual(s.replies, []);
+  // follow 없는 창(패널)은 그대로
+  assert.equal(run([{ type: 'accepted', chatId: 'z', threadId: 'hv' }]).follow, null);
+});
+
 test('답이 POST 응답보다 먼저 와도 짝을 맞춘다', () => {
   const s = run([ev({ chatId: 'c2', status: 'done', text: '빠름' }), { type: 'accepted', chatId: 'c2' }]);
   assert.equal(s.replies.length, 1);
