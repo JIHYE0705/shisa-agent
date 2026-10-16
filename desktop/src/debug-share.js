@@ -49,7 +49,7 @@ const RULES = [
   [/\bxoxe\.[A-Za-z0-9-]+/g, REDACT],
   [/\bxox[pbsec]-[A-Za-z0-9-]{8,}/g, REDACT],
   [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, REDACT],
-  [/\bsk-[A-Za-z0-9]{20,}/g, REDACT],
+  [/\bsk-[A-Za-z0-9_-]{20,}/g, REDACT],
   [/\bAIza[0-9A-Za-z_-]{20,}/g, REDACT],
   [/\b(?:ghp_|github_pat_|gho_|ghu_|ghs_)[A-Za-z0-9_]{10,}/g, REDACT],
   [/\bBearer\s+[A-Za-z0-9._\-+/=]{8,}/gi, `Bearer ${REDACT}`],

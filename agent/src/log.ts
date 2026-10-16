@@ -11,7 +11,7 @@ const RULES: [RegExp, string][] = [
   [/\bxoxe\.[A-Za-z0-9-]+/g, REDACT],
   [/\bxox[pbsec]-[A-Za-z0-9-]{8,}/g, REDACT],
   [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, REDACT],
-  [/\bsk-[A-Za-z0-9]{20,}/g, REDACT],
+  [/\bsk-[A-Za-z0-9_-]{20,}/g, REDACT],
   [/\bAIza[0-9A-Za-z_-]{20,}/g, REDACT],
   [/\bBearer\s+[A-Za-z0-9._\-+/=]{8,}/gi, `Bearer ${REDACT}`],
   [/Authorization:\s*\S+/gi, `Authorization: ${REDACT}`],

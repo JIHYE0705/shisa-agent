@@ -51,6 +51,13 @@ export function spawnDecision({ daemonDir, hasEntry, env = {}, launchd = false, 
   return { spawn: true, reason: 'spawn' };
 }
 
+// 데몬 자식 프로세스의 인자. 윈도우·맥: --use-system-ca 로 OS 인증서 저장소도 믿는다
+// (회사 프록시·백신(AhnLab V3 등)이 TLS 를 가로채 자기 루트 인증서를 OS 에만 넣어 두면, 없을 때 fetch 가 인증서 오류로 실패한다).
+// Electron 44 의 Node 24.21 에서 플래그가 먹는 것을 확인했다(ELECTRON_RUN_AS_NODE=1)
+export function daemonArgs(entry, platform = process.platform) {
+  return platform === 'win32' || platform === 'darwin' ? ['--use-system-ca', entry] : [entry];
+}
+
 // 데몬 자식 프로세스의 환경. 앱이 받은 CY_AGENT_HOME·CY_AGENT_PORT 등은 그대로 넘기고,
 // ELECTRON_RUN_AS_NODE 로 앱 실행 파일을 Node 로 쓰며, CY_AGENT_SUPERVISED 로 "연결이 바뀌면 스스로 다시 켜기"를 켠다(앱이 다시 띄운다)
 export function daemonEnv(env = {}, { port, home, platform = 'darwin' } = {}) {

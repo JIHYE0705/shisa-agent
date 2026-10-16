@@ -312,7 +312,7 @@ export async function ask<T>(
       .finally(() => (opts.interactive?.broker ?? getBroker())?.locks.release(run.id)));
 }
 
-const TEXT_SCHEMA = { type: "object", additionalProperties: false, required: ["reply"], properties: { reply: { type: "string", description: "사용자에게 보낼 답(마크다운)" } } } as const;
+export const TEXT_SCHEMA = { type: "object", additionalProperties: false, required: ["reply"], properties: { reply: { type: "string", description: "사용자에게 보낼 답(마크다운)" } } } as const;
 
 // local·gemini·openai·codex: SDK·도구 없이 JSON만. 키가 없으면 여기서 실패하고 local로 넘어가지 않는다
 async function askOther<T>(provider: string, cfg: Config, prompt: string, schema: unknown, onStep: ((s: string) => void) | undefined, opts: AskOpts, spec: AskRun): Promise<T> {

@@ -1,6 +1,6 @@
 // 데스크톱 마스코트 — 메인 프로세스.
 // 데몬 SSE 를 여기서 받고 IPC 로 렌더러에 넘긴다. 렌더러는 네트워크 접근 없음.
-import { app, BrowserWindow, Menu, Tray, clipboard, dialog, globalShortcut, ipcMain, nativeImage, net, protocol, screen, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, clipboard, dialog, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,7 +28,7 @@ import { disconnectBrainBody, withBrainBody, withConnectorOff, withoutHubDone, r
 import { ATTACH_SCHEME, resolveAttachUrl, cleanAttachIds, cleanUpload, okStoredName } from './src/attachments.js';
 import { agentLogin } from './src/agent-login.js';
 import { createCapsProbe, hasCoder, sameCaps, coderHint } from './src/caps.js';
-import { checkLlm, listModels } from './src/llm-check.js';
+import { checkLlm, listModels, KEY_REQ } from './src/llm-check.js';
 import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, withoutProvider, activeProvider, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
 import { personaFor } from './src/persona.js';
 import { okCharacter, characterName, appName } from './src/character.js';
@@ -38,7 +38,7 @@ import { isFocusCmd, DAY_RE } from './src/focus.js';
 import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
 import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
-import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, loginItemPlan, loginItemHint, defaultLoginPref, daemonStatusKind, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
+import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, daemonArgs, loginItemPlan, loginItemHint, defaultLoginPref, daemonStatusKind, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
 import { createDaemonHost } from './src/daemon-host.js';
 import { RELEASES_API, checkDue, newestRelease, shouldNotify, updateBubble } from './src/update-check.js';
 import { denied } from './src/denied.js';
@@ -1188,10 +1188,13 @@ function setupIPC() {
     return agentLogin(agent);
   });
   ipcMain.handle('sisa-get', (e) => (fromOurs(e) ? sisaPublic(readSisa()) : denied()));
+  // 키를 싣는 요청: 리다이렉트 안 따라감·쿠키 안 보냄(llm-check.js 도 덧붙인다)
+  const keyNetFetch = (u, o) => net.fetch(u, { ...o, ...KEY_REQ });
   ipcMain.handle('sisa-check', async (e, provider, apiKey) => {
     if (!fromOurs(e) || !AI_IDS.has(provider) || typeof apiKey !== 'string' || apiKey.length > 500) return denied();
     const key = apiKey.trim();
-    const result = await checkLlm(provider, key);
+    // net.fetch: OS 인증서 저장소·프록시 설정을 따른다(회사 프록시·백신이 TLS 를 가로채도 키 확인이 된다)
+    const result = await checkLlm(provider, key, keyNetFetch);
     if (!result.ok) return { ok: false, error: result.error || '확인에 실패했습니다.' };
     const next = withKey(readSisa(), provider, key);
     writeSisa(next);
@@ -1237,7 +1240,7 @@ function setupIPC() {
     if (!fromOurs(e) || typeof provider !== 'string') return denied();
     const data = normalizeSisa(readSisa());
     if (!connectedProviders(data).includes(provider)) return { ok: false, error: '연결되어 있지 않습니다.' };
-    return listModels(provider, data.keys[provider]);
+    return listModels(provider, data.keys[provider], keyNetFetch);
   });
   // { chat: {provider, model} | 'none', code: 모델 } 중 온 것만 바꾼다
   ipcMain.handle('sisa-set-models', async (e, pick) => {
@@ -1740,7 +1743,7 @@ function spawnDaemon(entry, dir) {
   fs.mkdirSync(logs, { recursive: true });
   const fd = fs.openSync(path.join(logs, DAEMON_LOG), 'a', 0o600);
   try {
-    return spawn(process.execPath, [entry], {
+    return spawn(process.execPath, daemonArgs(entry, process.platform), {
       cwd: dir,
       env: daemonEnv(process.env, { port: PORT, home: os.homedir(), platform: process.platform }),
       // 윈도우: IPC 채널을 열어 끌 때 "shutdown" 을 보낸다(앱이 갑자기 죽으면 연결이 끊겨 데몬도 스스로 끈다)
@@ -1902,7 +1905,11 @@ if (SQUIRREL) {
 } else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  // 맞춤법 검사는 안 쓴다(창마다 spellcheck:false). 그래도 세션의 검사기는 첫 실행에 사전(ko-3-0.bdic, 11MB)을
+  // redirector.gvt1.com 에서 받는다 → 세션 단위로 끈다. 나중에 생기는 세션(fromPartition 등)도 같게
+  app.on('session-created', (s) => s.setSpellCheckerEnabled(false));
   app.whenReady().then(() => {
+    session.defaultSession.setSpellCheckerEnabled(false); // 창보다 먼저
     const firstRun = !fs.existsSync(statePath()); // 이 앱 저장소를 처음 쓴다 → 마법사를 바로 연다
     loadState();
     registerAssetProtocol();

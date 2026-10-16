@@ -481,7 +481,7 @@ export function mergeAskPrompt(rec: MergeRec, info: string, question: string): s
   ].join("\n");
 }
 
-const MERGE_ASK_SCHEMA = {
+export const MERGE_ASK_SCHEMA = {
   type: "object", additionalProperties: false, required: ["reply"],
   properties: { reply: { type: "string", description: "정해진 캐릭터 말투로 1–3줄(150자 안팎). 위 정보로만 답하고 모르면 모른다고." } },
 } as const;

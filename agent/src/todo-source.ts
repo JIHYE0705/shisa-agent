@@ -88,7 +88,7 @@ export function originOf(store: Store, t: Todo, gitShow?: GitShow): TodoSource |
   return resolveOrigin(store, t.id, { link: t.link, gitShow }) ?? viaRef;
 }
 
-const DESC_SCHEMA = {
+export const DESC_SCHEMA = {
   type: "object", additionalProperties: false, required: ["description"],
   properties: { description: { type: "string", description: "이 할 일이 무엇인지 한두 문장(80자 안팎). 누가·무엇을·왜. 존댓말(~요)로 담백하게, 말끝 늘이기·감정 표시 없이." } },
 } as const;

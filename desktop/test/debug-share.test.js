@@ -184,3 +184,11 @@ test('formatLogLine 에 시각·단계가 있다', () => {
   assert.match(s, /\[warn\] hi 1/);
   assert.match(s, /2026-10-12/);
 });
+
+// 새 OpenAI 키 모양(sk-proj-·sk-svcacct-, 밑줄·하이픈 섞임)도 가린다. 진짜 키 아님
+test('redact: sk-proj-·sk-svcacct-·sk-ant- 키도 가린다', () => {
+  for (const k of ['sk-proj-unitTEST_not-real_0000aaaa', 'sk-svcacct-unit_TEST-not-real-0000bbbb', 'sk-ant-api03-unit_TEST-not-real-cccc', 'sk-unitTESTnotreal0000dddd']) {
+    assert.equal(redact(`key=${k} 끝`).includes(k.slice(3, 15)), false, k);
+  }
+  assert.match(redact('task-notification 은 그대로'), /task-notification/);
+});

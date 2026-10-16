@@ -14,7 +14,18 @@ export const PROVIDER_TITLE = {
   codexcli: 'Codex',
 };
 
-const DEFAULT_OPTION = { id: 'default', label: '기본값' };
+// 목록 오류: 본문이 JSON(OpenAI 등 {error:{message}})이면 message 만. 아니면 그대로
+export function listErrorText(error) {
+  const s = String(error ?? '');
+  try {
+    const e = JSON.parse(s)?.error;
+    const msg = typeof e === 'string' ? e : e?.message;
+    if (msg) return String(msg);
+  } catch { /* JSON 아님 */ }
+  return s;
+}
+
+const DEFAULT_OPTION ={ id: 'default', label: '기본값' };
 
 export function optionsFor(provider, list, current) {
   const base = list?.status === 'ok' ? list.models : [];
@@ -188,7 +199,7 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
       !l || l.status === 'loading'
         ? h('p.muted.small', { text: '목록을 가져오는 중…' })
         : l.status === 'error'
-          ? h('p.muted.small', { text: `목록을 못 가져왔어요. ${l.error}` })
+          ? h('p.muted.small', { text: `목록을 못 가져왔어요. ${listErrorText(l.error)}` })
           : h('ul.model-list', null, l.models.map((m) => h('li', null, h('code', { text: m.id }), m.label ? h('span.muted.small', { text: ` ${m.label}` }) : null))));
   }
 

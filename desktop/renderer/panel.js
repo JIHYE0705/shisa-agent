@@ -517,6 +517,7 @@ function keyFail(error) {
   if (/credit|balance|billing|quota|크레딧/i.test(e) && !/RESOURCE_EXHAUSTED/.test(e)) {
     return '키는 맞을 수 있지만 **크레딧이 없습니다.** 결제 크레딧을 산 뒤 다시 **확인**을 누르세요.';
   }
+  if (/권한이 모자랍니다/.test(e)) return e; // OpenAI 제한 키: 어디서 무엇을 켜야 하는지 그대로(llm-check.js)
   if (/RESOURCE_EXHAUSTED|429|rate.?limit/i.test(e)) {
     return '키는 맞지만 **지금은 한도가 찼습니다.** 조금 뒤에 **확인**을 다시 누르세요.';
   }

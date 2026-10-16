@@ -297,6 +297,7 @@ export function openaiStrict(raw: unknown): unknown {
   }
   return out;
 }
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 export function openaiUnstrict(value: unknown, raw: unknown): any {
   if (!raw || typeof raw !== "object" || value === null || typeof value !== "object") return value;
   const s = raw as Sch;
@@ -307,6 +308,7 @@ export function openaiUnstrict(value: unknown, raw: unknown): any {
   }
   const req = new Set<string>(s.required ?? []), out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (UNSAFE_KEYS.has(k)) continue; // 모델 답은 믿지 않는다: out[k] 로 쓰면 프로토타입이 바뀌는 키는 버린다
     const prop = s.properties[k];
     if (prop && !req.has(k)) {
       if (v === null && !nullable(prop)) continue;

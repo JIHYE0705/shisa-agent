@@ -12,20 +12,66 @@ import { execBin } from './win-exec.js';
 const MODELS = {
   gemini: 'gemini-3.8-flash',
   claude: 'claude-3-5-haiku-latest',
-  openai: 'gpt-4o-mini',
+  openai: 'gpt-4.1-mini', // 데몬 기본(agent/src/providers.ts OPENAI_DEFAULT_MODEL)과 같게
 };
+
+export const OPENAI_NO_CREDIT = '키는 맞을 수 있지만 크레딧이 없습니다. 플랫폼 결제에서 크레딧을 사야 합니다.';
+export const OPENAI_NO_PERMISSION = '키에 권한이 모자랍니다. OpenAI 플랫폼의 API keys 에서 이 키의 권한을 All 로 바꾸거나, Restricted 면 Model capabilities(Chat completions) 를 Write 로 켜 주세요.';
+
+export const OPENAI_NO_MODEL_LIST = '이 키에는 모델 목록을 볼 권한(Models: Read)이 없습니다. 대화는 기본 모델로 됩니다.';
+
+// 키를 싣는 요청은 리다이렉트를 따라가지 않고(다른 곳으로 키가 새지 않게) 쿠키·자격 증명도 안 보낸다.
+// OpenAI·Gemini·Anthropic API 는 정상 응답에 리다이렉트를 쓰지 않는다. Node fetch·Electron net.fetch 둘 다 받는 옵션
+export const KEY_REQ = Object.freeze({ redirect: 'error', credentials: 'omit' });
+export const keyFetch = (fetchImpl) => (url, init = {}) => fetchImpl(url, { ...init, ...KEY_REQ });
 
 function clip(text, key) {
   return String(text ?? '').replaceAll(key, '…').slice(0, 280);
 }
 
+// 오류 본문이 JSON 이면({error:{message,code,status,type}}) 사람이 읽을 message 와 코드만. 아니면 본문 그대로
+export function errorText(text) {
+  try {
+    const err = JSON.parse(text)?.error;
+    const msg = typeof err === 'string' ? err : err?.message;
+    if (msg) {
+      const code = typeof err === 'object' ? (err.status || err.code || err.type) : '';
+      return code && !String(msg).includes(code) ? `${msg} (${code})` : String(msg);
+    }
+  } catch { /* JSON 아님 */ }
+  return String(text ?? '');
+}
+
 async function readBody(res, key) {
   const text = await res.text();
   if (res.ok) return { ok: true, text };
-  return { ok: false, error: clip(text, key) || `HTTP ${res.status}` };
+  return { ok: false, status: res.status, error: clip(errorText(text), key) || `HTTP ${res.status}` };
 }
 
-export async function checkLlm(provider, apiKey, fetchImpl = globalThis.fetch) {
+const isQuota = (e) => /insufficient_quota|billing_hard_limit|billing_not_active/i.test(e);
+const isPermission = (status, e) => status === 403 || /insufficient permissions|missing scopes?|insufficient_permissions/i.test(e);
+
+// OpenAI 키 확인. 목록(GET /models)이 403 이면 제한 키(api.model.read 없음)일 수 있다 → 아주 짧은 대화 한 번으로 다시 본다
+async function checkOpenai(key, fetchImpl) {
+  const res = await fetchImpl('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${key}` } });
+  const body = await readBody(res, key);
+  if (body.ok) return { ok: true };
+  if (isQuota(body.error)) return { ok: false, error: OPENAI_NO_CREDIT };
+  if (!isPermission(body.status, body.error)) return { ok: false, error: body.error };
+  const chat = await fetchImpl('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model: MODELS.openai, max_completion_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  const cb = await readBody(chat, key);
+  if (cb.ok) return { ok: true };
+  if (isQuota(cb.error)) return { ok: false, error: OPENAI_NO_CREDIT };
+  if (isPermission(cb.status, cb.error)) return { ok: false, error: OPENAI_NO_PERMISSION };
+  return { ok: false, error: cb.error };
+}
+
+export async function checkLlm(provider, apiKey, rawFetch = globalThis.fetch) {
+  const fetchImpl = keyFetch(rawFetch);
   const key = String(apiKey ?? '').trim();
   if (!key) return { ok: false, error: '키가 비어 있습니다.' };
   try {
@@ -34,14 +80,7 @@ export async function checkLlm(provider, apiKey, fetchImpl = globalThis.fetch) {
       const body = await readBody(res, key);
       return body.ok ? { ok: true } : { ok: false, error: body.error };
     }
-    if (provider === 'openai') {
-      const res = await fetchImpl('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${key}` } });
-      const body = await readBody(res, key);
-      if (!body.ok && /quota|billing|insufficient/i.test(body.error)) {
-        return { ok: false, error: '키는 맞을 수 있지만 크레딧이 없습니다. 플랫폼 결제에서 크레딧을 사야 합니다.' };
-      }
-      return body.ok ? { ok: true } : { ok: false, error: body.error };
-    }
+    if (provider === 'openai') return await checkOpenai(key, fetchImpl);
     if (provider === 'claude') {
       const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -152,9 +191,10 @@ export function completeCodex({ system, messages, model }, { exec = execFile, bi
   });
 }
 
-export async function completeLlm(provider, apiKey, { system, messages, model }, fetchImpl = globalThis.fetch) {
+export async function completeLlm(provider, apiKey, { system, messages, model }, rawFetch = globalThis.fetch) {
   if (provider === 'claudecode') return completeCli({ system, messages, model });
   if (provider === 'codexcli') return completeCodex({ system, messages, model });
+  const fetchImpl = keyFetch(rawFetch);
   const key = String(apiKey ?? '').trim();
   if (provider === 'gemini') {
     const contents = messages.map((m) => ({
@@ -260,8 +300,9 @@ export function pickModels(provider, json) {
   return [];
 }
 
-export async function listModels(provider, apiKey, fetchImpl = globalThis.fetch) {
+export async function listModels(provider, apiKey, rawFetch = globalThis.fetch) {
   if (CLI_MODELS[provider]) return { ok: true, models: CLI_MODELS[provider] };
+  const fetchImpl = keyFetch(rawFetch);
   const key = String(apiKey ?? '').trim();
   if (!key) return { ok: false, error: '키가 없습니다.' };
   try {
@@ -276,6 +317,8 @@ export async function listModels(provider, apiKey, fetchImpl = globalThis.fetch)
       return { ok: false, error: '알 수 없는 AI입니다.' };
     }
     const body = await readBody(res, key);
+    if (!body.ok && provider === 'openai' && isQuota(body.error)) return { ok: false, error: OPENAI_NO_CREDIT };
+    if (!body.ok && provider === 'openai' && isPermission(body.status, body.error)) return { ok: false, error: OPENAI_NO_MODEL_LIST };
     if (!body.ok) return { ok: false, error: body.error };
     return { ok: true, models: pickModels(provider, JSON.parse(body.text)).slice(0, 60) };
   } catch (e) {

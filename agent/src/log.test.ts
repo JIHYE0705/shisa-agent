@@ -46,3 +46,10 @@ test("[stall]: 단조 시계로만 잰다 — 잠자기(벽시계만 크게 뜀)
   assert.ok(stallLag(1001, 8 * 3600e3) <= 0); // 맥이 8시간 잠듦
   assert.ok(stallLag(1000, 1000 + 60e3) <= 0); // 시계 맞춤
 });
+
+// 새 OpenAI 키 모양(sk-proj-·sk-svcacct-, 밑줄·하이픈 섞임)도 가린다. 진짜 키 아님
+const SK_SHAPES = ["sk-proj-unitTEST_not-real_0000aaaa", "sk-svcacct-unit_TEST-not-real-0000bbbb", "sk-ant-api03-unit_TEST-not-real-cccc", "sk-unitTESTnotreal0000dddd"];
+test("redactLog: sk-proj-·sk-svcacct-·sk-ant- 키도 가린다", () => {
+  for (const k of SK_SHAPES) assert.equal(redactLog(`key=${k} 끝`).includes(k.slice(3, 15)), false, k);
+  assert.match(redactLog("task-notification 은 그대로"), /task-notification/);
+});
