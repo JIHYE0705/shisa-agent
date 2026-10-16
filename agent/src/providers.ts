@@ -273,6 +273,50 @@ export async function geminiJson(
   return parseModelJson(text, "Gemini 응답에서 JSON을 읽지 못했어요.");
 }
 
+// OpenAI strict 출력은 모든 속성이 required · additionalProperties false 여야 한다(아니면 400 — 우리 스키마엔 선택 속성이 많다).
+// 선택 속성은 "없음" 자리를 더해 required 로 바꾸고, 답을 받은 뒤 그 자리를 지워 원래 모양으로 되돌린다(openaiUnstrict).
+// 원래 null 이 "지우기"인 속성(할 일 link·note)은 null 과 구분하려고 따로 표식 {"_omit":true} 를 쓴다
+const OMIT = { type: "object", additionalProperties: false, required: ["_omit"], properties: { _omit: { type: "boolean", enum: [true] } } };
+type Sch = Record<string, any>;
+const nullable = (s: Sch | undefined): boolean => !!s && (s.type === "null" || (Array.isArray(s.type) && s.type.includes("null")) || (s.anyOf ?? []).some(nullable));
+export function openaiStrict(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const s = raw as Sch, out: Sch = { ...s };
+  if (s.items) out.items = openaiStrict(s.items);
+  for (const k of ["anyOf", "oneOf", "allOf"]) if (Array.isArray(s[k])) out[k] = s[k].map(openaiStrict);
+  if (s.properties) {
+    const req = new Set<string>(s.required ?? []);
+    out.properties = Object.fromEntries(Object.entries<Sch>(s.properties).map(([k, v]) => {
+      const sv = openaiStrict(v) as Sch;
+      if (req.has(k)) return [k, sv];
+      const none = nullable(v) ? OMIT : { type: "null" };
+      return [k, { anyOf: [sv, none], description: `${v.description ? `${v.description} ` : ""}(안 줄 때는 ${nullable(v) ? '{"_omit":true}' : "null"})` }];
+    }));
+    out.required = Object.keys(s.properties);
+    out.additionalProperties = false;
+  }
+  return out;
+}
+export function openaiUnstrict(value: unknown, raw: unknown): any {
+  if (!raw || typeof raw !== "object" || value === null || typeof value !== "object") return value;
+  const s = raw as Sch;
+  if (Array.isArray(value)) return s.items ? value.map((v) => openaiUnstrict(v, s.items)) : value;
+  if (!s.properties) {
+    const obj = (s.anyOf ?? s.oneOf ?? []).find((b: Sch) => b?.properties);
+    return obj ? openaiUnstrict(value, obj) : value;
+  }
+  const req = new Set<string>(s.required ?? []), out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const prop = s.properties[k];
+    if (prop && !req.has(k)) {
+      if (v === null && !nullable(prop)) continue;
+      if (nullable(prop) && v && typeof v === "object" && (v as Sch)._omit === true) continue;
+    }
+    out[k] = openaiUnstrict(v, prop);
+  }
+  return out;
+}
+
 export async function openaiJson(
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
   opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; env?: NodeJS.ProcessEnv } = {},
@@ -294,7 +338,7 @@ export async function openaiJson(
       body: JSON.stringify({
         model,
         messages,
-        response_format: { type: "json_schema", json_schema: { name: "cy_brain", strict: true, schema } },
+        response_format: { type: "json_schema", json_schema: { name: "cy_brain", strict: true, schema: openaiStrict(schema) } },
       }),
     });
   } catch {
@@ -307,7 +351,7 @@ export async function openaiJson(
   const text = typeof content === "string"
     ? content
     : Array.isArray(content) ? content.map((p) => (asRecord(p)?.text as string) ?? "").join("") : "";
-  return parseModelJson(text, "OpenAI 응답에서 JSON을 읽지 못했어요.");
+  return openaiUnstrict(parseModelJson(text, "OpenAI 응답에서 JSON을 읽지 못했어요."), schema);
 }
 
 export async function anthropicJson(

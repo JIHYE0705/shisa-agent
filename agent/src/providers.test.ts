@@ -4,14 +4,15 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HOME_DIR, loadConfig } from "./config.ts";
-import { SCHEMA, ask, think } from "./brain.ts";
+import { REQUEST_SCHEMA, SCHEMA, ask, think } from "./brain.ts";
+import { TODO_OPS_SCHEMA, parseOps } from "./todos.ts";
 import { Store } from "./store.ts";
 import { converse } from "./chat.ts";
 import { inlineContext } from "./ctx-tools.ts";
 import type { ContentBlock } from "./attachments.ts";
 import {
   ANTHROPIC_URL, MISSING_ANTHROPIC_KEY, GEMINI_DEFAULT_MODEL, bestGeminiFlash, MISSING_CODEX, MISSING_GEMINI_KEY, MISSING_OPENAI_KEY, OPENAI_DEFAULT_MODEL, OPENAI_URL,
-  type ExecFileLike, type FetchLike, parseCodexStdout, resolveHttpModel, brainAuthFailed, resetBrainAuth, onBrainAuthChange, BrainAuthError,
+  type ExecFileLike, type FetchLike, openaiStrict, openaiUnstrict, parseCodexStdout, resolveHttpModel, brainAuthFailed, resetBrainAuth, onBrainAuthChange, BrainAuthError,
 } from "./providers.ts";
 
 const KEY = "unit-test-gemini-key";
@@ -409,4 +410,33 @@ test("Claude Code 가 아닌 뇌는 contextMode tools 여도 맥락을 프롬프
   assert.ok(body.includes("DB_TODO_MARK"));
   assert.ok(body.includes("이 AI 연결은 파일을 열 수 없어 내용을 못 받았다"));
   assert.ok(!body.includes("Read(글·그림·PDF·ipynb)"));
+});
+
+test("openai strict: 선택 속성도 전부 required 로 보내고, 받은 답은 원래 모양으로(생략 ≠ null 지우기)", async () => {
+  const strictOk = (s: any, at = "$"): void => {
+    if (!s || typeof s !== "object") return;
+    if (s.properties) {
+      assert.deepEqual([...s.required].sort(), Object.keys(s.properties).sort(), at);
+      assert.equal(s.additionalProperties, false, at);
+      for (const [k, v] of Object.entries(s.properties)) strictOk(v, `${at}.${k}`);
+    }
+    if (s.items) strictOk(s.items, `${at}[]`);
+    for (const k of ["anyOf", "oneOf", "allOf"]) (s[k] ?? []).forEach((x: any) => strictOk(x, at));
+  };
+  for (const s of [SCHEMA, REQUEST_SCHEMA, TODO_OPS_SCHEMA]) {
+    const before = JSON.stringify(s);
+    strictOk(openaiStrict(s));
+    assert.equal(JSON.stringify(s), before); // 원본은 그대로
+  }
+  // 우선순위만 바꾸는 edit: 생략 자리(null · {"_omit":true})는 지우고, note: null(메모 지우기)은 남는다
+  const got = [{ op: "edit", id: "user:1", title: null, priority: 1, link: { _omit: true }, note: null, description: null, source_ref: null }];
+  const ops = openaiUnstrict(got, TODO_OPS_SCHEMA);
+  assert.deepEqual(ops, [{ op: "edit", id: "user:1", priority: 1, note: null }]);
+  assert.equal(parseOps(ops).ok, true);
+  // 실제 요청·응답 경로
+  let sent: any;
+  const fetch: FetchLike = async (_u, init) => { sent = JSON.parse(init?.body ?? "{}"); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ bubble: "b", reply_md: "r", todos: [], done_todo_ids: [], proposals: [], todo_ops: got, plan_ops: [], memory_ops: [], rule: null }) } }] }), { status: 200 }); };
+  const out: any = await ask(cfgOf("openai"), "x", REQUEST_SCHEMA, undefined, { deps: { fetch, env: { OPENAI_API_KEY: OAI } } });
+  strictOk(sent.response_format.json_schema.schema);
+  assert.deepEqual(out.todo_ops, [{ op: "edit", id: "user:1", priority: 1, note: null }]);
 });
