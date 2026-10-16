@@ -19,6 +19,7 @@ import { cleanupWorktree } from "./worktree-keep.ts";
 import { repoGit, shAsync } from "./git-mutex.ts";
 import { WorktreeIsolation } from "./agent-worktrees.ts";
 import { IS_WIN, pathWithin, spawnSpec, type Plat, type SpawnSpec } from "./plat.ts";
+import { configSetsAlias, isGitName, shellSegments, shellWordsNorm, shellWrapper, substsOf } from "./permissions.ts";
 
 export type FixResult = {
   ok: boolean; summary: string; prUrl?: string; branch?: string; log: string[];
@@ -91,17 +92,48 @@ export function detectTestCommand(dir: string, mainDir?: string): string[] | und
   return undefined;
 }
 
-// 에이전트가 직접 커밋·푸시·머지하지 못하게
+// 에이전트가 직접 커밋·푸시·머지하지 못하게. 글 정규식만으로는 git -C . push · git -c … commit · 'git' push · gh -R o/r pr merge ·
+// bash -c 'git push' 가 빠져서, 대화형 권한(permissions.ts)과 같은 낱말 풀기로 git·gh 의 앞 옵션을 건너뛰고 하위 명령을 본다
 const BLOCKED_BASH = /\bgit\s+(commit|push|merge|rebase|reset\s+--hard|checkout\s+(main|master))\b|\bgh\s+pr\s+(merge|create)\b|\brm\s+-rf\s+[\/~]/;
+const SHIP_WORDS = /\b(push|commit|merge|rebase|reset|checkout|switch|pr|alias)\b/i;
+const GIT_OPT_VAL = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--exec-path"]);
+const GH_OPT_VAL = new Set(["-R", "--repo", "--hostname"]);
+const binOf = (w: string) => basename(w.replace(/\\/g, "/")).toLowerCase().replace(/\.exe$/, "");
+function shipBlocked(cmd: string): boolean {
+  if (BLOCKED_BASH.test(cmd)) return true;
+  // sh -c · eval · xargs · 명령 치환 안의 git·gh 는 안을 확인할 수 없다 — 배포 동작 낱말이 같이 있으면 막는다
+  if (/\b(git|gh)\b/i.test(cmd) && SHIP_WORDS.test(cmd) && (shellWrapper(cmd) || substsOf(cmd).some((x) => /\b(git|gh)\b/i.test(x)))) return true;
+  for (const seg of shellSegments(cmd)) {
+    const w = shellWordsNorm(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+    let at = 0;
+    while (at < w.length && ["sudo", "env", "command", "exec", "nohup", "time", "builtin"].includes(w[at])) at++;
+    const bin = binOf(w[at] ?? "");
+    if (bin === "rm" && w.slice(at + 1).some((a) => /^-[A-Za-z]*r/i.test(a)) && w.slice(at + 1).some((a) => /^[~/]/.test(a))) return true;
+    if (!isGitName(w[at] ?? "") && bin !== "gh") continue;
+    let i = at + 1;
+    for (; i < w.length && w[i].startsWith("-"); i++) {
+      const a = w[i];
+      const v = (bin === "gh" ? GH_OPT_VAL : GIT_OPT_VAL).has(a) ? w[++i] ?? "" : a.startsWith("-c") ? a.slice(2) : "";
+      if (bin !== "gh" && (a === "-c" || /^-c./.test(a)) && /^alias\./i.test(v)) return true; // git -c alias.ship=push ship
+    }
+    const sub = (w[i] ?? "").toLowerCase(), args = w.slice(i + 1);
+    if (bin === "gh") { if (sub === "pr" && /^(merge|create)$/.test(args[0] ?? "")) return true; continue; }
+    if (["commit", "push", "merge", "rebase"].includes(sub)) return true;
+    if (sub === "reset" && args.includes("--hard")) return true;
+    if ((sub === "checkout" || sub === "switch") && args.some((a) => /^(main|master)$/.test(a))) return true;
+    if (sub === "config" && configSetsAlias(args)) return true; // git config alias.ship push → git ship
+  }
+  return false;
+}
 // 서브에이전트 안의 Bash 도 이 훅을 거친다(SDK BaseHookInput.agent_id — subagents.ts). agent_id 로 건너뛰지 않는다
 export const noShipHook: HookCallback = async (input) => {
   if (input.hook_event_name !== "PreToolUse" || input.tool_name !== "Bash") return {};
   const cmd = String((input.tool_input as any)?.command ?? "");
-  return BLOCKED_BASH.test(cmd)
+  return shipBlocked(cmd)
     ? { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "커밋·푸시·머지는 cy-agent가 직접 한다. 파일 수정과 테스트까지만 해." } }
     : {};
 };
-export const isBlockedBash = (cmd: string) => BLOCKED_BASH.test(cmd);
+export const isBlockedBash = (cmd: string) => shipBlocked(cmd);
 
 const FIX_SCHEMA = {
   type: "object",
