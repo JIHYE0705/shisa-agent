@@ -1,5 +1,5 @@
 // 사용자 캐릭터와 기본 캐릭터 대사 고치기(덮어쓰기). 파일은 사용자 데이터 폴더에만 쓴다(레포·앱 번들은 건드리지 않는다).
-//   ~/.cy-agent/characters/<id>/character.json  사용자가 만든 캐릭터 하나: { id, name, from, created, updated, frame, media: { 칸: 저장 이름 }, lines }
+//   ~/.cy-agent/characters/<id>/character.json  사용자가 만든 캐릭터 하나: { id, name, from, created, updated, frames: { 칸: 테두리 }, media: { 칸: 저장 이름 }, lines }
 //   ~/.cy-agent/characters/<id>/<칸>-<무작위>.<확장자>  올린 그림·영상(이름은 여기서 새로 짓는다)
 //   ~/.cy-agent/characters/overrides/<기본 id>.json  기본 캐릭터(시사·하치와레·랏코·모몽가)에서 고친 칸만
 // 대사 모양은 assets/characters/lines.json 의 캐릭터 하나와 같다(characters.ts LinesEntry). 칸 이름은 점으로 잇는다(phrases.dance, flair.lead.happy).
@@ -65,11 +65,24 @@ export function newUserId(taken: (id: string) => boolean, rand: () => string = (
     if (isUserId(id) && !isBuiltinId(id) && !taken(id)) return id;
   }
 }
+// 칸마다 테두리(둥근 네모 카드) 기본값: 투명 배경이 흔한 png·webm 은 끔, 그 밖(jpg·gif·webp·mp4 — 배경이 있는 것)은 켬
+export const defaultFrame = (file: string): boolean => !/\.(png|webm)$/i.test(file);
+// 사용자가 고른 테두리(칸 → 켬/끔) 다듬기. 모르는 칸·불리언이 아닌 값이면 오류
+function cleanFrames(v: unknown): Partial<Record<MediaSlot, boolean>> | { error: string } {
+  if (!isObj(v)) return { error: "frames 는 { 칸: true|false } 여야 해요" };
+  const out: Partial<Record<MediaSlot, boolean>> = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (!isMediaSlot(k) || typeof x !== "boolean") return { error: `frames 칸이 이상해요: ${k}` };
+    out[k] = x;
+  }
+  return out;
+}
 // 저장 파일 이름: <칸>-<무작위 8자>.<확장자>. cy-asset 도 이 모양만 준다
 export const STORED_FILE = /^(eyes_open|eyes_closed|cheer|dance|study|plan)-[a-z0-9]{8}\.(png|jpg|webp|gif|webm|mp4)$/;
 
 // ---- 대사 칸(스키마) ----
 const MOODS: Mood[] = ["happy", "excited", "calm", "busy"];
+export const CANNED_VARS = ["next", "open", "done", "total", "rest"] as const;
 type Value = string | string[];
 export type FieldDef = { path: string; kind: "text" | "list"; vars: string[]; oneLine?: boolean; label?: string };
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -137,6 +150,8 @@ export function linesSchema(): FieldDef[] {
     d.label = p.label;
   }
   for (const k of ["name", "prompt.intro", "prompt.tone"]) defs.get(k)!.oneLine = true;
+  // 정해진 답(canned)은 데스크톱 canned.js fillCanned 가 어느 칸에서나 이 다섯을 채운다(시사 기본값은 데스크톱에만 있어 여기선 못 모은다)
+  for (const d of defs.values()) if (d.path.startsWith("canned.")) d.vars = [...CANNED_VARS];
   schemaCache = [...defs.values()];
   return schemaCache;
 }
@@ -204,7 +219,7 @@ export function renameLines(e: LinesPatch, from: string, to: string): LinesPatch
 // ---- 저장소 ----
 export type UserCharacter = {
   id: string; name: string; from: string; created: string; updated: string;
-  frame: boolean; // 그림·영상을 둥근 네모 카드로(배경이 있는 그림)
+  frames: Partial<Record<MediaSlot, boolean>>; // 사용자가 칸마다 고른 테두리(없는 칸은 파일 종류로 defaultFrame)
   media: Partial<Record<MediaSlot, string>>;
   lines: LinesPatch;
 };
@@ -217,6 +232,13 @@ function writeJson(path: string, v: unknown) {
   renameSync(tmp, path);
 }
 const readJson = (path: string): unknown => { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; } };
+
+// 칸마다 지금 테두리(그림이 있는 칸만): 사용자가 고른 값 > 파일 종류 기본값
+export function framesOf(c: Pick<UserCharacter, "media" | "frames">): Partial<Record<MediaSlot, boolean>> {
+  const out: Partial<Record<MediaSlot, boolean>> = {};
+  for (const [slot, file] of Object.entries(c.media) as [MediaSlot, string][]) out[slot] = c.frames[slot] ?? defaultFrame(file);
+  return out;
+}
 
 export class CharacterStore {
   readonly dir: string;
@@ -264,7 +286,7 @@ export class CharacterStore {
       id, name, from: typeof raw.from === "string" ? raw.from : "shisa",
       created: typeof raw.created === "string" ? raw.created : this.now().toISOString(),
       updated: typeof raw.updated === "string" ? raw.updated : this.now().toISOString(),
-      frame: raw.frame === true, media, lines: { ...v.lines, name },
+      frames: (() => { const f = cleanFrames(raw.frames ?? {}); return "error" in f ? {} : f; })(), media, lines: { ...v.lines, name },
     };
   }
 
@@ -298,7 +320,7 @@ export class CharacterStore {
         lines: this.linesOf(id), defaults: builtinDefaults(id), override: this.overrides[id] ?? null,
       })),
       ...[...this.users.values()].sort((a, b) => a.created.localeCompare(b.created) || a.id.localeCompare(b.id)).map((u) => ({
-        id: u.id, name: u.name, custom: true, from: u.from, frame: u.frame, media: { ...u.media }, lines: u.lines, created: u.created, updated: u.updated,
+        id: u.id, name: u.name, custom: true, from: u.from, frames: framesOf(u), media: { ...u.media }, lines: u.lines, created: u.created, updated: u.updated,
       })),
     ];
     return {
@@ -308,15 +330,16 @@ export class CharacterStore {
     };
   }
 
-  // POST /characters { name, from?, lines?, frame? } — from(기본 시사)의 대사 전부를 복사해서 시작, 이름은 새 이름으로
+  // POST /characters { name, from?, lines?, frames? } — from(기본 시사)의 대사 전부를 복사해서 시작, 이름은 새 이름으로
   create(body: unknown): Result {
     if (!isObj(body)) return fail(400, "json object required");
-    for (const k of Object.keys(body)) if (!["name", "from", "lines", "frame"].includes(k)) return fail(400, `unknown key: ${k}`);
+    for (const k of Object.keys(body)) if (!["name", "from", "lines", "frames"].includes(k)) return fail(400, `unknown key: ${k}`);
     const name = typeof body.name === "string" ? body.name.replace(/\s+/g, " ").trim() : "";
     if (!name) return fail(400, "이름을 적어 주세요");
     const from = body.from === undefined ? "shisa" : body.from;
     if (typeof from !== "string" || !this.has(from)) return fail(400, "가져올 캐릭터가 없어요");
-    if (body.frame !== undefined && typeof body.frame !== "boolean") return fail(400, "frame must be boolean");
+    let frames: UserCharacter["frames"] = {};
+    if (body.frames !== undefined) { const f = cleanFrames(body.frames); if ("error" in f) return fail(400, f.error); frames = f; }
     let extra: LinesPatch = {};
     if (body.lines !== undefined) {
       const v = validateLines(body.lines);
@@ -330,7 +353,7 @@ export class CharacterStore {
     if (!v.ok) return fail(400, v.error);
     const id = newUserId((x) => this.users.has(x) || existsSync(join(this.dir, x)));
     const at = this.now().toISOString();
-    const c: UserCharacter = { id, name, from, created: at, updated: at, frame: body.frame === true, media: {}, lines: v.lines };
+    const c: UserCharacter = { id, name, from, created: at, updated: at, frames, media: {}, lines: v.lines };
     try { this.saveUser(c); } catch (e: any) { return fail(500, `저장하지 못했어요(${e?.code ?? "오류"})`); }
     this.users.set(id, c);
     this.changed();
@@ -342,7 +365,7 @@ export class CharacterStore {
     writeJson(join(this.dir, c.id, "character.json"), c);
   }
 
-  // PUT /characters/:id — 사용자 캐릭터: { name?, lines?, frame? }(lines 는 통째로 바뀐다)
+  // PUT /characters/:id — 사용자 캐릭터: { name?, lines?, frames? }(lines 는 통째로 바뀐다, frames 는 준 칸만)
   //                       기본 캐릭터: { lines }(고친 칸 묶음, 통째로 바뀐다 — 기본값과 같은 칸은 빠진다. 다 같으면 덮어쓰기 파일을 지운다)
   update(id: string, body: unknown): Result {
     if (!isObj(body)) return fail(400, "json object required");
@@ -363,7 +386,7 @@ export class CharacterStore {
     }
     const c = this.users.get(id);
     if (!c) return fail(404, "no such character");
-    for (const k of Object.keys(body)) if (!["name", "lines", "frame"].includes(k)) return fail(400, `unknown key: ${k}`);
+    for (const k of Object.keys(body)) if (!["name", "lines", "frames"].includes(k)) return fail(400, `unknown key: ${k}`);
     const next: UserCharacter = { ...c, updated: this.now().toISOString() };
     if (body.lines !== undefined) {
       const v = validateLines(body.lines);
@@ -377,9 +400,10 @@ export class CharacterStore {
     }
     next.name = (typeof next.lines.name === "string" && next.lines.name) || c.name;
     next.lines = { ...next.lines, name: next.name };
-    if (body.frame !== undefined) {
-      if (typeof body.frame !== "boolean") return fail(400, "frame must be boolean");
-      next.frame = body.frame;
+    if (body.frames !== undefined) {
+      const f = cleanFrames(body.frames);
+      if ("error" in f) return fail(400, f.error);
+      next.frames = { ...c.frames, ...f };
     }
     try { this.saveUser(next); } catch (e: any) { return fail(500, `저장하지 못했어요(${e?.code ?? "오류"})`); }
     this.users.set(id, next);
@@ -442,7 +466,9 @@ export class CharacterStore {
     if (!old) return { status: 200, body: { character: this.view().characters.find((x) => x.id === id) } };
     const media = { ...c.media };
     delete media[slot];
-    const next = { ...c, media, updated: this.now().toISOString() };
+    const frames = { ...c.frames };
+    delete frames[slot];
+    const next = { ...c, media, frames, updated: this.now().toISOString() };
     try { this.saveUser(next); rmSync(join(this.dir, id, old), { force: true }); } catch (e: any) { return fail(500, `지우지 못했어요(${e?.code ?? "오류"})`); }
     this.users.set(id, next);
     this.changed();
