@@ -1,4 +1,4 @@
-// 브리핑·채팅용 JSON만 받는 뇌. Gemini·OpenAI는 공식 HTTP, Codex는 CLI 한 번.
+// 브리핑·채팅용 JSON만 받는 뇌. Gemini·OpenAI·Genspark는 공식 HTTP, Codex는 CLI 한 번.
 // 도구·MCP·코드 수정 요청은 붙이지 않는다. 키는 로그와 오류 문장에 넣지 않는다.
 // 키가 없거나 codex가 없으면 한국어로 실패한다. local로 조용히 넘어가지 않는다.
 //
@@ -6,14 +6,15 @@
 // 도구·사용자 MCP 는 붙이지 않는다(CODEX_ARGS). 코드 고치기(fixer.ts)·MCP 읽기는 provider 와 상관없이 Claude Code 경로다.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { accessSync, constants } from "node:fs";
-import { tmpdir } from "node:os";
+import { accessSync, constants, readFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { findOnPath, spawnSpec } from "./plat.ts";
 import type { ContentBlock } from "./attachments.ts";
 import { DEFAULT_GENERAL_MODEL, type BrainProvider, type Config } from "./config.ts";
 
-export type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
+// redirect: 키를 싣는 요청은 "error"(리다이렉트를 따라가 다른 곳에 키를 보내지 않는다)
+export type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string; redirect?: "error" | "follow" | "manual" }) => Promise<Response>;
 
 export type ExecFileLike = (
   file: string,
@@ -43,6 +44,7 @@ export const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
 
 export const MISSING_GEMINI_KEY = "Gemini API 키가 없어요. CY_AGENT_GEMINI_API_KEY, GEMINI_API_KEY, 또는 설정의 brain.geminiApiKey를 넣어 주세요.";
 export const MISSING_OPENAI_KEY = "OpenAI API 키가 없어요. CY_AGENT_OPENAI_API_KEY, OPENAI_API_KEY, 또는 설정의 brain.openaiApiKey를 넣어 주세요.";
+export const MISSING_GENSPARK_KEY = "Genspark 키가 없어요. 터미널에서 gsk login 을 하거나, 설정에서 키를 붙여 넣어 주세요(CY_AGENT_GENSPARK_API_KEY 도 돼요).";
 export const MISSING_ANTHROPIC_KEY = "Claude API 키가 없어요. CY_AGENT_ANTHROPIC_API_KEY, 또는 설정의 brain.anthropicApiKey를 넣어 주세요.";
 export const MISSING_CODEX = "codex 명령을 찾을 수 없어요. Codex CLI를 설치한 뒤 다시 시도해 주세요.";
 export const LOCAL_ONLY = "로컬 뇌는 브리핑·채팅만 답해요.";
@@ -54,6 +56,10 @@ export const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 // Claude API(Messages). 헤더 x-api-key · anthropic-version, JSON 은 output_config.format(json_schema)로 받는다
 export const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 export const ANTHROPIC_VERSION = "2023-06-01";
+// Genspark LLM 프록시(OpenAI 호환). Authorization: Bearer gsk-… · GET /models · POST /chat/completions
+// 출처: 공식 CLI @genspark/cli 의 `gsk init-pi` 설정(provider genspark-llm-proxy, api openai-completions, maxTokensField max_tokens)
+export const GENSPARK_URL = "https://www.genspark.ai/api/llm_proxy/v1";
+export const GENSPARK_PRICING = "https://www.genspark.ai/pricing";
 
 function nonempty(v: unknown): string | undefined {
   if (typeof v !== "string") return undefined;
@@ -69,6 +75,29 @@ export function openaiKey(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv): s
   return nonempty(env.CY_AGENT_OPENAI_API_KEY) ?? nonempty(env.OPENAI_API_KEY) ?? nonempty(cfg.brain?.openaiApiKey);
 }
 
+// gsk login(공식 CLI)이 남긴 키: ~/.genspark-tool-cli/config.json 의 api_key. 읽기만 하고 그 파일은 고치지 않는다.
+// 설정에 복사해 두지 않고 쓸 때마다 읽는다(다시 로그인해 키가 바뀌어도 따라간다)
+// 홈은 넘겨받은 env 의 HOME(테스트는 임시 홈). HOME 이 없는 env 를 따로 넘기면 진짜 홈을 읽지 않는다
+export function gskLoginPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const home = nonempty(env.HOME) ?? nonempty(env.USERPROFILE) ?? (env === process.env ? homedir() : undefined);
+  return home ? join(home, ".genspark-tool-cli", "config.json") : undefined;
+}
+export function gskLoginKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const path = gskLoginPath(env);
+  if (!path) return undefined;
+  try {
+    const v = JSON.parse(readFileSync(path, "utf8"))?.api_key;
+    return typeof v === "string" && /^gsk-\S+$/.test(v.trim()) ? v.trim() : undefined;
+  } catch {
+    return undefined; // 없거나 깨졌으면 없는 것과 같다(내용은 오류 글에 넣지 않는다)
+  }
+}
+
+// 환경변수 > 설정 > gsk login 파일
+export function gensparkKey(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv): string | undefined {
+  return nonempty(env.CY_AGENT_GENSPARK_API_KEY) ?? nonempty(cfg.brain?.gensparkApiKey) ?? gskLoginKey(env);
+}
+
 export function anthropicKey(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv): string | undefined {
   return nonempty(env.CY_AGENT_ANTHROPIC_API_KEY) ?? nonempty(cfg.brain?.anthropicApiKey);
 }
@@ -79,6 +108,7 @@ export function brainKeyReady(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv
   if (p === "gemini") return !!geminiKey(cfg, env);
   if (p === "openai") return !!openaiKey(cfg, env);
   if (p === "anthropic") return !!anthropicKey(cfg, env);
+  if (p === "genspark") return !!gensparkKey(cfg, env);
   if (p === "codex") return commandOnPath("codex", env);
   if (p === "local") return true;
   return undefined;
@@ -120,30 +150,54 @@ export function parseModelJson(text: string, fail: string): unknown {
 
 // ---- 잘못된 키(401·403) 기억 ----
 // 키 지문(해시 앞부분)만 남긴다. 키가 바뀌면 지문이 달라져 저절로 풀린다. 성공하면 바로 지운다
-type KeyProvider = "gemini" | "openai" | "anthropic";
-const KEY_LABEL: Record<KeyProvider, string> = { gemini: "Gemini", openai: "OpenAI", anthropic: "Claude" };
+export type KeyProvider = "gemini" | "openai" | "anthropic" | "genspark";
+const KEY_PROVIDERS: readonly string[] = ["gemini", "openai", "anthropic", "genspark"];
+const KEY_LABEL: Record<KeyProvider, string> = { gemini: "Gemini", openai: "OpenAI", anthropic: "Claude", genspark: "Genspark" };
 const badKeys = new Map<KeyProvider, string>();
+const noCredit = new Map<KeyProvider, string>(); // 키는 맞는데 크레딧이 없다고 답한 키(Genspark 무료 플랜)
 let onAuthChange: (() => void) | undefined;
 const fingerprint = (key: string) => createHash("sha256").update(key).digest("hex").slice(0, 16);
 export class BrainAuthError extends Error {}
-export const authFailText = (p: KeyProvider) => `${KEY_LABEL[p]} API 키가 맞지 않아요. 키를 확인해 주세요`;
+export const authFailText = (p: KeyProvider) => p === "genspark" ? "Genspark 키가 맞지 않아요(gsk login 을 다시 해 주세요)" : `${KEY_LABEL[p]} API 키가 맞지 않아요. 키를 확인해 주세요`;
+// 키는 맞지만 쓸 크레딧이 없음(Genspark 는 무료 플랜이면 API·LLM 프록시를 못 쓴다)
+export class BrainCreditError extends Error {}
+export const GENSPARK_NO_CREDIT = `Genspark 크레딧이 필요해요(무료 플랜은 API를 못 써요). 요금제: ${GENSPARK_PRICING}`;
+export const creditFailText = (p: KeyProvider) => p === "genspark" ? "Genspark 키는 맞지만 크레딧이 필요해요" : `${KEY_LABEL[p]} 키는 맞지만 크레딧이 필요해요`;
 // 상태가 바뀌면(키가 틀림 ↔ 다시 됨) 부른다(main 이 SSE status 로 알린다)
 export function onBrainAuthChange(fn: (() => void) | undefined) { onAuthChange = fn; }
-function markAuth(p: KeyProvider, key: string, bad: boolean) {
+function markIn(map: Map<KeyProvider, string>, p: KeyProvider, key: string, bad: boolean): boolean {
   const fp = fingerprint(key);
-  const was = badKeys.get(p) === fp;
-  if (bad) badKeys.set(p, fp);
-  else if (was) badKeys.delete(p);
-  if (was !== bad) try { onAuthChange?.(); } catch { /* 알림 실패는 무시 */ }
+  const was = map.get(p) === fp;
+  if (bad) map.set(p, fp);
+  else if (was) map.delete(p);
+  return was !== bad;
+}
+function markAuth(p: KeyProvider, key: string, bad: boolean) {
+  // 401·403 이면 키가 틀린 것이고, 크레딧 표시는 그 키로 다시 확인될 때까지 내려 둔다. 성공하면 둘 다 푼다
+  const changed = [markIn(badKeys, p, key, bad), ...(bad ? [] : [markIn(noCredit, p, key, false)])].some(Boolean);
+  if (changed) try { onAuthChange?.(); } catch { /* 알림 실패는 무시 */ }
+}
+function markCredit(p: KeyProvider, key: string) {
+  const changed = [markIn(badKeys, p, key, false), markIn(noCredit, p, key, true)].some(Boolean);
+  if (changed) try { onAuthChange?.(); } catch { /* 알림 실패는 무시 */ }
+}
+function activeKey(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv): { p: KeyProvider; key: string } | undefined {
+  const p = cfg.brain?.provider;
+  if (!p || !KEY_PROVIDERS.includes(p)) return undefined;
+  const key = p === "gemini" ? geminiKey(cfg, env) : p === "openai" ? openaiKey(cfg, env) : p === "genspark" ? gensparkKey(cfg, env) : anthropicKey(cfg, env);
+  return key ? { p: p as KeyProvider, key } : undefined;
 }
 // 지금 쓰는 키가 인증 오류를 받은 그 키인가(뇌가 키 방식이 아니면 false)
 export function brainAuthFailed(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv = process.env): boolean {
-  const p = cfg.brain?.provider;
-  if (p !== "gemini" && p !== "openai" && p !== "anthropic") return false;
-  const key = p === "gemini" ? geminiKey(cfg, env) : p === "openai" ? openaiKey(cfg, env) : anthropicKey(cfg, env);
-  return !!key && badKeys.get(p) === fingerprint(key);
+  const a = activeKey(cfg, env);
+  return !!a && badKeys.get(a.p) === fingerprint(a.key);
 }
-export function resetBrainAuth() { badKeys.clear(); }
+// 지금 쓰는 키가 「크레딧이 필요해요」를 받은 그 키인가
+export function brainCreditNeeded(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv = process.env): boolean {
+  const a = activeKey(cfg, env);
+  return !!a && noCredit.get(a.p) === fingerprint(a.key);
+}
+export function resetBrainAuth() { badKeys.clear(); noCredit.clear(); }
 
 async function readError(res: Response, fail: string, auth?: { provider: KeyProvider; key: string }): Promise<never> {
   await res.text().catch(() => "");
@@ -319,6 +373,63 @@ export function openaiUnstrict(value: unknown, raw: unknown): any {
   return out;
 }
 
+// OpenAI 모양(chat/completions) 한 번: 시스템 글 + strict json_schema. OpenAI·Genspark 가 함께 쓴다(주소·키·이름만 다르다).
+// 키는 헤더에만, 리다이렉트는 따라가지 않는다. 답의 글(choices[0].message.content)만 돌려준다
+type ChatSpec = {
+  url: string; label: string; provider: KeyProvider; key: string; model: string;
+  // 실패 응답 → 사람이 읽을 글(없으면 「<label> 요청이 실패했어요」). 본문은 오류 글에 그대로 넣지 않는다
+  failText?: (status: number, body: string) => string | undefined;
+  retry?: { sleep?: (ms: number) => Promise<void> }; // 붐비면(429·500·503) GEMINI_RETRY_MS 대로 다시
+};
+type ChatOpts = { system?: string; blocks?: ContentBlock[]; fetch?: FetchLike };
+async function chatCompletionsText(spec: ChatSpec, prompt: string, schema: unknown, opts: ChatOpts): Promise<string> {
+  const fetchImpl = opts.fetch ?? fetch;
+  const messages = [
+    ...(opts.system ? [{ role: "system", content: opts.system }] : []),
+    { role: "user", content: opts.blocks?.length ? [{ type: "text", text: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }, ...opts.blocks.map(openaiPart)] : `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` },
+  ];
+  const body = JSON.stringify({
+    model: spec.model,
+    messages,
+    response_format: { type: "json_schema", json_schema: { name: "cy_brain", strict: true, schema: openaiStrict(schema) } },
+  });
+  const send = async () => {
+    try {
+      return await fetchImpl(spec.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${spec.key}` },
+        body,
+        redirect: "error",
+      });
+    } catch {
+      throw new Error(`${spec.label} 요청을 보내지 못했어요.`);
+    }
+  };
+  let res = await send();
+  if (spec.retry) {
+    const sleep = spec.retry.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    for (const wait of GEMINI_RETRY_MS) {
+      if (!BUSY.has(res.status)) break;
+      const after = Number(res.headers.get("retry-after"));
+      await res.text().catch(() => "");
+      await sleep(after > 0 ? Math.min(after * 1000, 30_000) : wait);
+      res = await send();
+    }
+  }
+  if (!res.ok) {
+    if (spec.failText && res.status !== 401 && res.status !== 403) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${spec.failText(res.status, text) ?? `${spec.label} 요청이 실패했어요`} (HTTP ${res.status}).`);
+    }
+    return readError(res, `${spec.label} 요청이 실패했어요`, { provider: spec.provider, key: spec.key });
+  }
+  const data = asRecord(parseModelJson(await res.text(), `${spec.label} 응답에서 JSON을 읽지 못했어요.`));
+  const content = (data?.choices as { message?: { content?: unknown } }[] | undefined)?.[0]?.message?.content;
+  return typeof content === "string"
+    ? content
+    : Array.isArray(content) ? content.map((p) => (asRecord(p)?.text as string) ?? "").join("") : "";
+}
+
 export async function openaiJson(
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
   opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; env?: NodeJS.ProcessEnv } = {},
@@ -327,33 +438,88 @@ export async function openaiJson(
   const key = openaiKey(cfg, env);
   if (!key) throw new Error(MISSING_OPENAI_KEY);
   const model = resolveHttpModel("openai", cfg.models?.general, opts.model);
+  const text = await chatCompletionsText({ url: OPENAI_URL, label: "OpenAI", provider: "openai", key, model }, prompt, schema, opts);
+  markAuth("openai", key, false);
+  return openaiUnstrict(parseModelJson(text, "OpenAI 응답에서 JSON을 읽지 못했어요."), schema);
+}
+
+// ---- Genspark ----
+// 무료 플랜 키는 200 에 JSON 대신 안내문을 준다("Free-plan credits can't be used with the Genspark API / LLM proxy…").
+// 출처: 2026-10 무료 키로 시험 · genspark-ai/genoffice 의 크레딧 안내 판정(genspark.ai/pricing, credit + exhausted/insufficient)
+export function isGensparkCreditNotice(text: string): boolean {
+  return /free-plan credits|credit_exhausted|genspark\.ai\/pricing|credits?\b[^.]{0,40}\b(exhausted|insufficient)|insufficient credits?/i.test(text);
+}
+
+// 고를 수 있는 모델은 GET /models 목록에 있는 것만(무료 키도 열린다). 키 지문마다 잠깐 기억한다(디스크에 쓰지 않는다)
+export const GENSPARK_MODELS_TTL_MS = 10 * 60_000;
+const gensparkModelCache = new Map<string, { ids: string[]; at: number }>();
+export function resetGensparkModels() { gensparkModelCache.clear(); }
+
+export async function gensparkModels(key: string, opts: { fetch?: FetchLike; now?: () => number; fresh?: boolean } = {}): Promise<string[]> {
+  const now = (opts.now ?? Date.now)();
+  const fp = fingerprint(key);
+  const hit = gensparkModelCache.get(fp);
+  if (hit && !opts.fresh && now - hit.at < GENSPARK_MODELS_TTL_MS) return hit.ids;
   const fetchImpl = opts.fetch ?? fetch;
-  const messages = [
-    ...(opts.system ? [{ role: "system", content: opts.system }] : []),
-    { role: "user", content: opts.blocks?.length ? [{ type: "text", text: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }, ...opts.blocks.map(openaiPart)] : `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` },
-  ];
   let res: Response;
   try {
-    res = await fetchImpl(OPENAI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model,
-        messages,
-        response_format: { type: "json_schema", json_schema: { name: "cy_brain", strict: true, schema: openaiStrict(schema) } },
-      }),
-    });
+    res = await fetchImpl(`${GENSPARK_URL}/models`, { method: "GET", headers: { Authorization: `Bearer ${key}` }, redirect: "error" });
   } catch {
-    throw new Error("OpenAI 요청을 보내지 못했어요.");
+    throw new Error("Genspark 모델 목록을 받지 못했어요. 인터넷 연결을 확인해 주세요.");
   }
-  if (!res.ok) return readError(res, "OpenAI 요청이 실패했어요", { provider: "openai", key });
-  markAuth("openai", key, false);
-  const data = asRecord(parseModelJson(await res.text(), "OpenAI 응답에서 JSON을 읽지 못했어요."));
-  const content = (data?.choices as { message?: { content?: unknown } }[] | undefined)?.[0]?.message?.content;
-  const text = typeof content === "string"
-    ? content
-    : Array.isArray(content) ? content.map((p) => (asRecord(p)?.text as string) ?? "").join("") : "";
-  return openaiUnstrict(parseModelJson(text, "OpenAI 응답에서 JSON을 읽지 못했어요."), schema);
+  if (!res.ok) return readError(res, "Genspark 모델 목록을 받지 못했어요", { provider: "genspark", key });
+  const data = asRecord(tryParse(await res.text()));
+  const ids = (Array.isArray(data?.data) ? data!.data as unknown[] : [])
+    .map((m) => asRecord(m)?.id)
+    .filter((id): id is string => typeof id === "string" && !!id.trim());
+  if (!ids.length) throw new Error("Genspark 모델 목록이 비어 있어요. 잠시 뒤 다시 해 주세요.");
+  gensparkModelCache.set(fp, { ids, at: now });
+  return ids;
+}
+
+// 기본 모델: 목록에 있는 것 중 claude-sonnet-5-5 → gpt-5.4-mini → 첫 번째(이름을 박아 두고 없는 모델로 보내지 않는다)
+export const GENSPARK_PREFERRED = ["claude-sonnet-5-5", "gpt-5.4-mini"];
+export function pickGensparkModel(ids: string[]): string {
+  return GENSPARK_PREFERRED.find((m) => ids.includes(m)) ?? ids[0]!;
+}
+
+function gensparkFailText(status: number, body: string): string | undefined {
+  if (status === 400 && /not allowed/i.test(body)) return "그 모델은 Genspark 에서 못 써요. 모델을 다시 골라 주세요";
+  if (status === 422) {
+    const errs = asRecord(tryParse(body))?.errors;
+    console.warn(`[genspark] 요청 형식 오류(422): ${redactKeys(JSON.stringify(errs ?? null)).slice(0, 400)}`);
+    return "Genspark 가 요청 형식을 받지 않았어요";
+  }
+  if (status === 429) return "Genspark 사용량 한도에 걸렸어요. 잠시 뒤 다시 보내 주세요";
+  if (status >= 500) return "Genspark 가 지금 답하지 못했어요. 잠시 뒤 다시 보내 주세요";
+  return undefined;
+}
+const redactKeys = (s: string) => s.replace(/\bgsk-[\w-]+/g, "***");
+
+export async function gensparkJson(
+  cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
+  opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; sleep?: (ms: number) => Promise<void>; env?: NodeJS.ProcessEnv } = {},
+): Promise<unknown> {
+  const env = opts.env ?? process.env;
+  const key = gensparkKey(cfg, env);
+  if (!key) throw new Error(MISSING_GENSPARK_KEY);
+  const ids = await gensparkModels(key, { fetch: opts.fetch });
+  // 모델: 따로 준 것 > models.general. Claude Code 기본 이름(DEFAULT_GENERAL_MODEL)이면 고른 게 아니라 기본값으로 본다
+  const chosen = (opts.model ?? "").trim() || (cfg.models?.general ?? "").trim();
+  const asked = chosen && chosen !== DEFAULT_GENERAL_MODEL ? chosen : "";
+  if (asked && !ids.includes(asked)) throw new Error(`그 모델(${asked.slice(0, 60)})은 Genspark 에서 못 써요. 모델 탭에서 목록에 있는 모델을 골라 주세요.`);
+  const model = asked || pickGensparkModel(ids);
+  const text = await chatCompletionsText(
+    { url: `${GENSPARK_URL}/chat/completions`, label: "Genspark", provider: "genspark", key, model, failText: gensparkFailText, retry: { sleep: opts.sleep } },
+    prompt, schema, opts,
+  );
+  // 200 인데 JSON 이 아니고 요금 안내문이면 크레딧이 없는 것(무료 플랜)
+  if (tryParse(text.trim()) === undefined && isGensparkCreditNotice(text)) {
+    markCredit("genspark", key);
+    throw new BrainCreditError(GENSPARK_NO_CREDIT);
+  }
+  markAuth("genspark", key, false);
+  return openaiUnstrict(parseModelJson(text, "Genspark 응답에서 JSON을 읽지 못했어요."), schema);
 }
 
 export async function anthropicJson(
@@ -504,12 +670,13 @@ export async function codexJson(prompt: string, schema: unknown, opts: CodexOpts
 }
 
 export async function remoteJson(
-  provider: Extract<BrainProvider, "gemini" | "openai" | "anthropic" | "codex">,
+  provider: Extract<BrainProvider, "gemini" | "openai" | "anthropic" | "genspark" | "codex">,
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
   opts: { system?: string; model?: string; blocks?: ContentBlock[] } & ProviderDeps = {},
 ): Promise<unknown> {
   if (provider === "gemini") return geminiJson(cfg, prompt, schema, opts);
   if (provider === "openai") return openaiJson(cfg, prompt, schema, opts);
   if (provider === "anthropic") return anthropicJson(cfg, prompt, schema, opts);
+  if (provider === "genspark") return gensparkJson(cfg, prompt, schema, opts);
   return codexJson(prompt, schema, opts);
 }

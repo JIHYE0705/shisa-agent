@@ -5,7 +5,7 @@
 //   MCP 커넥터(메일·이슈·Slack·캘린더 MCP)는 Claude Code 뇌일 때만 읽는다 — features.mcp, connectors[].needs
 // 비밀값(키·토큰·ICS 주소)은 넣지 않는다. 있나 없나만.
 import type { Config } from "./config.ts";
-import { authFailText, brainAuthFailed, brainKeyReady, commandOnPath } from "./providers.ts";
+import { authFailText, brainAuthFailed, brainCreditNeeded, brainKeyReady, commandOnPath, creditFailText, type KeyProvider } from "./providers.ts";
 import { CAPABILITIES, CONNECTORS, connectorStatus, type Capability } from "./connectors.ts";
 import { BRAIN_LABEL } from "./connections.ts";
 import { NEEDS_CODER, featureBrain, type FeatureBrain } from "./feature-brain.ts";
@@ -51,12 +51,15 @@ export function statusOf(cfg: Pick<Config, "brain" | "connectors" | "user" | "on
   const claude = deps.claude?.();
   const keyReady = brainKeyReady(cfg, env);
   const badKey = !!keyReady && brainAuthFailed(cfg, env); // 키는 있는데 401·403 을 받음
-  const ready = provider === "claude-code" ? (claude === undefined ? null : claude) : !!keyReady && !badKey;
+  const noCredit = !!keyReady && !badKey && brainCreditNeeded(cfg, env); // 키는 맞는데 크레딧이 없다고 받음(Genspark 무료 플랜)
+  const ready = provider === "claude-code" ? (claude === undefined ? null : claude) : !!keyReady && !badKey && !noCredit;
   const label = BRAIN_LABEL[provider] ?? provider;
   const detail = provider === "local" ? "로컬 — 할 일 읽기·정해진 말만"
     : ready === null ? `${label} — 확인 중`
     : ready ? `${label} 연결됨`
-    : badKey ? authFailText(provider as "gemini" | "openai" | "anthropic")
+    : badKey ? authFailText(provider as KeyProvider)
+    : noCredit ? creditFailText(provider as KeyProvider)
+    : provider === "genspark" ? "Genspark 키가 없어요(gsk login 을 하거나 키를 붙여 넣어 주세요)"
     : provider === "claude-code" ? "Claude Code 로그인이 필요해요"
     : provider === "codex" ? "Codex 를 찾을 수 없어요"
     : `${KEY_LABEL[provider] ?? label} API 키가 없어요`;

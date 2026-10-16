@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { isAbsolute } from "node:path";
 import { BRAIN_PROVIDERS, DEFAULT_GENERAL_MODEL, HOME_DIR, configErrorText, type BrainProvider, type Config } from "./config.ts";
 import { modelLabel } from "./models.ts";
+import { gskLoginKey } from "./providers.ts";
 import { AUTO_MERGE_MAX, inAutoMerge, normSlug } from "./auto-merge.ts";
 import { STEP_HEAD } from "./briefing-sources.ts";
 import { PHRASES, defaultLines, phraseDef, phraseLines, setPhrases, unknownVars } from "./phrases.ts";
@@ -68,8 +69,8 @@ export type SettingsView = {
   readSessions: boolean;
   configPath: string;
 };
-export type BrainKey = "gemini" | "openai" | "anthropic";
-const BRAIN_KEY_FIELD: Record<BrainKey, "geminiApiKey" | "openaiApiKey" | "anthropicApiKey"> = { gemini: "geminiApiKey", openai: "openaiApiKey", anthropic: "anthropicApiKey" };
+export type BrainKey = "gemini" | "openai" | "anthropic" | "genspark";
+const BRAIN_KEY_FIELD: Record<BrainKey, "geminiApiKey" | "openaiApiKey" | "anthropicApiKey" | "gensparkApiKey"> = { gemini: "geminiApiKey", openai: "openaiApiKey", anthropic: "anthropicApiKey", genspark: "gensparkApiKey" };
 // 뇌 바꾸기: provider · 키(null = 지우기) · model(null = 기본으로). 바로 반영(데몬 재시작 불필요)
 export type BrainPatch = { provider?: BrainProvider; keys?: Partial<Record<BrainKey, string | null>>; model?: string | null };
 export type PhraseView = { key: string; group: string; label: string; vars: string[]; default: string[]; value: string[] | null };
@@ -334,7 +335,8 @@ export class Settings {
       calendarAlert: calendarAlertOf(c.calendarAlert),
       brain: {
         provider: c.brain?.provider ?? "claude-code", model: c.models.general,
-        keys: { gemini: !!c.brain?.geminiApiKey, openai: !!c.brain?.openaiApiKey, anthropic: !!c.brain?.anthropicApiKey },
+        // genspark: 설정에 키가 있거나 gsk login 파일에 키가 있으면 true(키 값은 내보내지 않는다)
+        keys: { gemini: !!c.brain?.geminiApiKey, openai: !!c.brain?.openaiApiKey, anthropic: !!c.brain?.anthropicApiKey, genspark: !!c.brain?.gensparkApiKey || !!gskLoginKey(this.env) },
       },
       character: isCharacterId(c.character) ? c.character : DEFAULT_CHARACTER,
       characters: characterOptions(),

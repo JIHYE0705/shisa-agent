@@ -44,7 +44,7 @@ import { featureBrain, NEEDS_CLAUDE_MCP, NEEDS_CODER, withMcpBrain } from "./fea
 import { mergePr } from "./fixer.ts";
 import { askBtw } from "./btw.ts";
 import { Focus, focusApi, focusDoneText } from "./focus.ts";
-import { brainAuthFailed, onBrainAuthChange } from "./providers.ts";
+import { brainAuthFailed, brainCreditNeeded, onBrainAuthChange } from "./providers.ts";
 import { briefingHours } from "./calendar.ts";
 import { performance } from "node:perf_hooks";
 
@@ -335,8 +335,8 @@ let authSkipLogged = false;
 const brief = asRoutine(safe("briefing", async () => {
   if (!modelWorkAllowed(cfg)) return; // 설치 마법사를 마치기 전(정기 브리핑은 말풍선도 없이 조용히)
   // API 키가 401·403 을 받았으면 정기 브리핑은 쉰다(실패 말풍선을 매번 띄우지 않게). 키를 바꾸면 지문이 달라져 다시 돈다
-  if (brainAuthFailed(cfg)) {
-    if (!authSkipLogged) console.warn("[briefing] API 키가 맞지 않아 정기 브리핑을 쉬어요. 키를 바꾸면 다시 해요");
+  if (brainAuthFailed(cfg) || brainCreditNeeded(cfg)) {
+    if (!authSkipLogged) console.warn("[briefing] API 키가 맞지 않거나 크레딧이 없어 정기 브리핑을 쉬어요. 키를 바꾸거나 대화가 한 번 되면 다시 해요");
     authSkipLogged = true;
     return;
   }

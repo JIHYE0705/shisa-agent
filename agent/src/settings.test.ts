@@ -204,7 +204,7 @@ test("Settings: 뇌·이름·레포 폴더 — 바로 반영, 키 지우기·모
   writeFileSync(p, JSON.stringify({ slackAppToken: "xapp-keep", brain: { provider: "openai", openaiApiKey: "sk-old-key-1234567890abcdef" }, user: { aliases: ["gildong"] } }));
   const cfg = cfgOf({ brain: { provider: "openai", openaiApiKey: "sk-old-key-1234567890abcdef" } });
   const s = new Settings(cfg, { path: p, env: {} });
-  assert.deepEqual(s.view().brain.keys, { gemini: false, openai: true, anthropic: false });
+  assert.deepEqual(s.view().brain.keys, { gemini: false, openai: true, anthropic: false, genspark: false });
   const r = s.put({ brain: { provider: "anthropic", keys: { anthropic: " sk-ant-new-1234567890 ", openai: null }, model: "claude-haiku-5-5" }, user: { name: "  홍  길동 " }, repoRoots: ["/Users/me/code/", "/Users/me/code"] });
   assert.ok(r.ok);
   assert.equal(cfg.brain.provider, "anthropic");

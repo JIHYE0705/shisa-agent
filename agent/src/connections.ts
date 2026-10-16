@@ -15,7 +15,7 @@ import { classify, connectorServerUrls } from "./mcp-health.ts";
 import { argv as ghArgv, runGh } from "./gh.ts";
 import { CAPABILITIES, CONNECTORS, connectorStatus, type Capability } from "./connectors.ts";
 import { hasUserMcpServer } from "./mcp.ts";
-import { brainKeyReady } from "./providers.ts";
+import { authFailText, brainAuthFailed, brainCreditNeeded, brainKeyReady, creditFailText, type KeyProvider } from "./providers.ts";
 import { NEEDS_CLAUDE_MCP } from "./feature-brain.ts";
 import { sessionsAllowed } from "./onboarding.ts";
 import { BRIEFING_SOURCES, type BriefingSource } from "./settings.ts";
@@ -50,6 +50,7 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   [/\bxox[abposrce]-[\w-]+/gi, "***"],                                // Slack 토큰
   [/\bxapp-[\w-]+/gi, "***"],
   [/\bsk-ant-[\w-]+/gi, "***"],                                       // Anthropic 키
+  [/\bgsk-[\w-]+/g, "***"],                                          // Genspark 키
   [/\bsk-[A-Za-z0-9_-]{16,}/g, "***"],                               // OpenAI 키
   [/\bAIza[\w-]{20,}/g, "***"],                                       // Google(Gemini) 키
   [/\bgh[pousr]_[A-Za-z0-9_]{10,}/g, "***"],                          // GitHub 토큰
@@ -88,7 +89,7 @@ const ago = (iso: string | undefined, now: Date) => {
   const m = Math.round((now.getTime() - Date.parse(iso)) / 60e3);
   return m < 1 ? "방금" : m < 60 ? `${m}분 전` : m < 48 * 60 ? `${Math.round(m / 60)}시간 전` : `${Math.round(m / 1440)}일 전`;
 };
-export const BRAIN_LABEL: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", anthropic: "Claude API", gemini: "Gemini", openai: "OpenAI", local: "로컬(모델 없음)" };
+export const BRAIN_LABEL: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", anthropic: "Claude API", gemini: "Gemini", openai: "OpenAI", genspark: "Genspark", local: "로컬(모델 없음)" };
 
 // SDK 확인 결과 → Claude 로그인 됐나
 export function sdkLoggedIn(s: Pick<SdkProbe, "account" | "error">): boolean {
@@ -180,10 +181,13 @@ export class Connections {
     const provider = this.cfg.brain?.provider ?? "claude-code";
     const env = this.d.env;
     const brainOk = brainKeyReady(this.cfg, env) ?? true;
-    rows.push({
+    // 키는 있는데 마지막 답이 401·403(키 틀림) 또는 크레딧 안내였으면 그 말로
+    const keyIssue = !brainOk ? undefined : brainAuthFailed(this.cfg, env) ? authFailText(provider as KeyProvider) : brainCreditNeeded(this.cfg, env) ? creditFailText(provider as KeyProvider) : undefined;
+    if (keyIssue) rows.push({ id: "brain", label: "뇌(브리핑·채팅 모델)", group: "core", check: "local", checkedAt: at, state: "warn", detail: keyIssue });
+    else rows.push({
       id: "brain", label: "뇌(브리핑·채팅 모델)", group: "core", check: "local", checkedAt: at, state: brainOk ? "ok" : "error",
       detail: brainOk ? `${BRAIN_LABEL[provider] ?? provider}${provider === "local" ? " — 할 일 정리만, 도구 없음" : provider === "codex" ? " — 브리핑·채팅·뒤에서 하는 정리(MCP·코드 고치기는 Claude Code)" : ""}`
-        : provider === "codex" ? "codex 명령을 찾을 수 없어요" : `${BRAIN_LABEL[provider] ?? provider} API 키가 없어요`,
+        : provider === "codex" ? "codex 명령을 찾을 수 없어요" : provider === "genspark" ? "Genspark 키가 없어요(gsk login 을 하거나 키를 붙여 넣어 주세요)" : `${BRAIN_LABEL[provider] ?? provider} API 키가 없어요`,
     });
 
     // Claude 로그인(채팅 도구·코드 작업은 Claude Code 경로를 쓴다)

@@ -314,9 +314,10 @@ export async function ask<T>(
 
 export const TEXT_SCHEMA = { type: "object", additionalProperties: false, required: ["reply"], properties: { reply: { type: "string", description: "사용자에게 보낼 답(마크다운)" } } } as const;
 
-// local·gemini·openai·codex: SDK·도구 없이 JSON만. 키가 없으면 여기서 실패하고 local로 넘어가지 않는다
+// local·gemini·openai·genspark·codex: SDK·도구 없이 JSON만. 키가 없으면 여기서 실패하고 local로 넘어가지 않는다
 async function askOther<T>(provider: string, cfg: Config, prompt: string, schema: unknown, onStep: ((s: string) => void) | undefined, opts: AskOpts, spec: AskRun): Promise<T> {
-  const model = provider === "local" ? "local" : provider === "codex" ? "codex" : provider === "anthropic" ? resolveAnthropicModel(cfg.models?.general, opts.model) : resolveHttpModel(provider as "gemini" | "openai", cfg.models?.general, opts.model);
+  // genspark: 실제 모델은 GET /models 목록을 받은 뒤 정한다(providers.ts gensparkJson) — 기록엔 고른 이름이나 "genspark"
+  const model = provider === "local" ? "local" : provider === "codex" ? "codex" : provider === "genspark" ? ((opts.model ?? "").trim() || "genspark") : provider === "anthropic" ? resolveAnthropicModel(cfg.models?.general, opts.model) : resolveHttpModel(provider as "gemini" | "openai", cfg.models?.general, opts.model);
   return withRun({ kind: spec.kind, title: spec.title, model, cwd: join(HOME_DIR, "brain"), ...(spec.ref ? { ref: spec.ref } : {}) }, async (run) => {
     run.log({ type: "user", text: prompt });
     onStep?.(provider);

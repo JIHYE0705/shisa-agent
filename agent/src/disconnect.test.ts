@@ -99,7 +99,7 @@ test("AI 연결 해제: PUT /settings brain 으로 키를 지우고 로컬로, �
   const file = JSON.parse(readFileSync(path, "utf8"));
   assert.deepEqual(file.brain, { provider: "local", openaiApiKey: "sk-keep" });
   assert.equal(file.slackBotToken, "xoxb-keep");
-  if (r.ok) assert.deepEqual(r.settings.brain.keys, { gemini: false, openai: true, anthropic: false });
+  if (r.ok) assert.deepEqual(r.settings.brain.keys, { gemini: false, openai: true, anthropic: false, genspark: false });
   // 쓰지 않는 키만 지우면 provider 는 그대로
   const r2 = s.put({ brain: { keys: { openai: null } } });
   assert.equal(r2.ok, true);

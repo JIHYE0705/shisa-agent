@@ -77,13 +77,15 @@ export type Config = {
   configNotes?: string[];
 };
 
-export const BRAIN_PROVIDERS = ["claude-code", "codex", "anthropic", "gemini", "openai", "local"] as const;
+export const BRAIN_PROVIDERS = ["claude-code", "codex", "anthropic", "gemini", "openai", "genspark", "local"] as const;
 export type BrainProvider = (typeof BRAIN_PROVIDERS)[number];
 export type BrainConfig = {
   provider: BrainProvider;
   geminiApiKey?: string;
   openaiApiKey?: string;
   anthropicApiKey?: string; // Claude API 키(Claude Code 없이 Claude 와 이야기 — providers.ts anthropicJson)
+  // Genspark 키(gsk-…). 없으면 gsk login 이 남긴 ~/.genspark-tool-cli/config.json 을 쓸 때마다 읽는다(providers.ts gensparkKey)
+  gensparkApiKey?: string;
 };
 
 export const DEFAULT_GENERAL_MODEL = "claude-sonnet-5-5";
@@ -96,13 +98,13 @@ function nonempty(v: unknown): string | undefined {
 
 // provider 오타에 키를 넣은 경우에도 문장에 키를 남기지 않는다
 function safeLabel(raw: string): string {
-  if (raw.length > 40 || /sk-|AIza|key-|bearer/i.test(raw)) return "(값은 숨겼어요)";
+  if (raw.length > 40 || /sk-|gsk-|AIza|key-|bearer/i.test(raw)) return "(값은 숨겼어요)";
   return raw;
 }
 
 // notes: 모르는 provider 면 여기에 한 줄(GET /status configNotes). 데몬은 죽지 않고 local 로 뜬다
 export function pickBrain(env: NodeJS.ProcessEnv, file: Record<string, unknown>, notes: string[] = []): BrainConfig {
-  const rawBrain = (file.brain && typeof file.brain === "object" ? file.brain : {}) as { provider?: unknown; geminiApiKey?: unknown; openaiApiKey?: unknown; anthropicApiKey?: unknown };
+  const rawBrain = (file.brain && typeof file.brain === "object" ? file.brain : {}) as { provider?: unknown; geminiApiKey?: unknown; openaiApiKey?: unknown; anthropicApiKey?: unknown; gensparkApiKey?: unknown };
   // 새 설치(onboarded 키가 있음)는 마법사에서 고르기 전까지 "아직 안 고름" = local(모델 없음). 예전 설정은 claude-code
   let providerRaw = nonempty(env.CY_AGENT_BRAIN) ?? nonempty(rawBrain.provider) ?? (isNewStyle(file) ? "local" : "claude-code");
   if (!(BRAIN_PROVIDERS as readonly string[]).includes(providerRaw)) {
@@ -116,11 +118,13 @@ export function pickBrain(env: NodeJS.ProcessEnv, file: Record<string, unknown>,
   const openaiApiKey = nonempty(env.CY_AGENT_OPENAI_API_KEY) ?? nonempty(env.OPENAI_API_KEY) ?? nonempty(rawBrain.openaiApiKey);
   // ANTHROPIC_API_KEY 는 Claude Code 도 쓰는 이름이라 일부러 안 읽는다(뇌를 anthropic 으로 고른 사람만 키를 넣는다)
   const anthropicApiKey = nonempty(env.CY_AGENT_ANTHROPIC_API_KEY) ?? nonempty(rawBrain.anthropicApiKey);
+  const gensparkApiKey = nonempty(env.CY_AGENT_GENSPARK_API_KEY) ?? nonempty(rawBrain.gensparkApiKey);
   return {
     provider: providerRaw as BrainProvider,
     ...(geminiApiKey ? { geminiApiKey } : {}),
     ...(openaiApiKey ? { openaiApiKey } : {}),
     ...(anthropicApiKey ? { anthropicApiKey } : {}),
+    ...(gensparkApiKey ? { gensparkApiKey } : {}),
   };
 }
 
