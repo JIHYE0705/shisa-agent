@@ -42,6 +42,7 @@ import { isAbsPath } from "./plat.ts";
 import { BackgroundAgents, type BgPorts } from "./bg-agents.ts";
 import { addAgentWorktree, agentBranch, finishAgentWorktree, isolationSource, worktreeNote, worktreeRecords } from "./agent-worktrees.ts";
 import { runBackgroundAgent } from "./chat.ts";
+import { inlineContext } from "./ctx-tools.ts";
 import { AttachmentStore, type Attachment } from "./attachments.ts";
 import { Guidelines, applyGuidelineOp, guidelinesApi, setGuidelineStore, type GuidelineCtx, type GuidelinesApi } from "./guidelines.ts";
 import { WAIT_SETUP, modelWorkAllowed, sessionsAllowed } from "./onboarding.ts";
@@ -634,7 +635,7 @@ export class Agent {
         `사용자가 Slack DM으로 말했다:\n"""${text}"""\n질문이면 reply_md로 답하라. 코드 구현/수정 요청이면 대상 레포(프로젝트 목록·세션 맥락으로 판단)와 구체적 계획을 proposals에 하나 넣어라(이 경우 크기 제한 없음, 사용자가 실행 버튼으로 확정한다). 레포가 애매하면 proposals는 비우고 reply_md로 되물어라.\n할 일을 추가·수정·완료·되살리기·삭제해 달라는 말이면 todo_ops에 넣고(이때 todos·done_todo_ids는 비운다) reply_md로 무엇을 바꿨는지 한 줄로 말하라. 어느 할 일인지 애매하면 todo_ops는 비우고 되물어라.\n자기 정보("내 이름은 홍길동이야, 기억해줘")는 memory_ops remember에 사실 문장만 넣는다. 이미 저장됐으면 memory_ops는 비우고 짧게 확인만 한다.\n${RULE_GUIDE} 규칙은 바로 저장되고 맞는 기존 할 일에도 적용된다. 오늘 할 일(할 일 중 오늘로 고른 것)은 plan_ops로 채운다.
 ${WRITE_GUIDE} 승인 카드는 이 Slack 스레드에 [허용]/[항상 허용]/[거부] 버튼으로 간다.
 ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없음 — 필요하면 연결된 캘린더 도구로 읽는다)"}`,
-        undefined, { todoOps: true, context: this.cfg.contextMode === "inline" ? "inline" : "tools", ctx: { dashboard: () => this.dashboard() }, interactive: { origin: { via: "slack", ...(threadTs ? { slackTs: threadTs } : {}) } } });
+        undefined, { todoOps: true, context: inlineContext(this.cfg) ? "inline" : "tools", ctx: { dashboard: () => this.dashboard() }, interactive: { origin: { via: "slack", ...(threadTs ? { slackTs: threadTs } : {}) } } });
       await this.absorb(t, threadTs, true);
     } finally {
       this.bus.setMood("idle");

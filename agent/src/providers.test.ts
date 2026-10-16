@@ -1,11 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HOME_DIR, loadConfig } from "./config.ts";
 import { SCHEMA, ask, think } from "./brain.ts";
 import { Store } from "./store.ts";
+import { converse } from "./chat.ts";
+import { inlineContext } from "./ctx-tools.ts";
+import type { ContentBlock } from "./attachments.ts";
 import {
   ANTHROPIC_URL, MISSING_ANTHROPIC_KEY, GEMINI_DEFAULT_MODEL, bestGeminiFlash, MISSING_CODEX, MISSING_GEMINI_KEY, MISSING_OPENAI_KEY, OPENAI_DEFAULT_MODEL, OPENAI_URL,
   type ExecFileLike, type FetchLike, parseCodexStdout, resolveHttpModel, brainAuthFailed, resetBrainAuth, onBrainAuthChange, BrainAuthError,
@@ -362,4 +365,48 @@ test("잘못된 API 키(401·403): 그 키만 기억 → /status brain.ready=fal
     onBrainAuthChange(undefined);
     resetBrainAuth();
   }
+});
+
+test("API 키·Codex 연결도 첨부(글·그림·PDF)를 받는다 — 예전엔 블록을 버려 본 척했다", async () => {
+  const blocks: ContentBlock[] = [
+    { type: "text", text: "<첨부>TEXT_MARK</첨부>" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "PNG_MARK" } },
+    { type: "document", source: { type: "base64", media_type: "application/pdf", data: "PDF_MARK" }, title: "memo.pdf" },
+  ];
+  const reply = (p: string, text: string) => new Response(JSON.stringify(p === "gemini" ? { candidates: [{ content: { parts: [{ text }] } }] } : p === "openai" ? { choices: [{ message: { content: text } }] } : { content: [{ type: "text", text }], stop_reason: "end_turn" }), { status: 200 });
+  for (const p of ["gemini", "openai", "anthropic"] as const) {
+    let body: any;
+    const fetch: FetchLike = async (_u, init) => { body = JSON.parse(init?.body ?? "{}"); return reply(p, thoughtJson()); };
+    await ask(cfgOf(p), "첨부 봐 줘", SCHEMA, undefined, { blocks, deps: { fetch, env: { GEMINI_API_KEY: KEY, OPENAI_API_KEY: OAI, CY_AGENT_ANTHROPIC_API_KEY: "sk-ant-unit" } } });
+    const parts = p === "gemini" ? body.contents[0].parts.slice(1) : p === "openai" ? body.messages.at(-1).content.slice(1) : body.messages[0].content.slice(1);
+    assert.deepEqual(parts.map((x: any) => x.text !== undefined ? "text" : x.inlineData?.mimeType ?? x.type), p === "gemini" ? ["text", "image/png", "application/pdf"] : p === "openai" ? ["text", "image_url", "file"] : ["text", "image", "document"], p);
+    for (const m of ["TEXT_MARK", "PNG_MARK", "PDF_MARK"]) assert.ok(JSON.stringify(body).includes(m), `${p} ${m}`);
+  }
+  let input = "";
+  const execFile: ExecFileLike = async (_f, _a, o: any) => { input = o.input; return { stdout: JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: thoughtJson() } }) }; };
+  await ask(cfgOf("codex"), "첨부 봐 줘", SCHEMA, undefined, { blocks, deps: { commandExists: () => true, execFile, env: {} } });
+  assert.ok(input.includes("TEXT_MARK") && !input.includes("PNG_MARK"));
+  assert.match(input, /memo\.pdf — 이 AI 연결\(Codex\)로는 그림·PDF 내용을 받지 못했다/);
+});
+
+test("Claude Code 가 아닌 뇌는 contextMode tools 여도 맥락을 프롬프트에(도구를 못 부른다) · 못 붙인 첨부는 열어 보라고 하지 않는다", async () => {
+  assert.equal(inlineContext({ contextMode: "tools", brain: { provider: "gemini" } }), true);
+  assert.equal(inlineContext({ contextMode: "tools", brain: { provider: "claude-code" } }), false);
+  assert.equal(inlineContext({ contextMode: "tools" }), false);
+  const store = new Store(":memory:");
+  store.addTodo({ title: "DB_TODO_MARK", priority: 1 });
+  const thread = store.createThread({ title: "t" });
+  const dir = mkdtempSync(join(tmpdir(), "cy-att-")), path = join(dir, "report.docx");
+  writeFileSync(path, "PK-fake");
+  const original = globalThis.fetch;
+  let body = "";
+  globalThis.fetch = (async (_u: any, init: any) => { body = String(init?.body); return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ reply_md: "ok", bubble: "ok", show: null }) }] } }] }), { status: 200 }); }) as any;
+  try {
+    const cfg = { ...cfgOf("gemini"), brain: { provider: "gemini" as const, geminiApiKey: KEY }, contextMode: "tools" as const, repoRoots: [], claudeProjectsDir: "/none", codexSessionsDir: "/none" };
+    await converse(cfg, store, [], "할 일 알려줘", () => {}, undefined, undefined, thread.id, undefined, undefined, undefined,
+      [{ id: "a1", name: "report.docx", mime: "application/octet-stream", size: 7, kind: "file", file: "report.docx", path }]);
+  } finally { globalThis.fetch = original; }
+  assert.ok(body.includes("DB_TODO_MARK"));
+  assert.ok(body.includes("이 AI 연결은 파일을 열 수 없어 내용을 못 받았다"));
+  assert.ok(!body.includes("Read(글·그림·PDF·ipynb)"));
 });
