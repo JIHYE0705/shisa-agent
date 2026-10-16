@@ -15,11 +15,32 @@
 | Gemini | `gemini` | Google AI Studio 키 | 대화·브리핑 |
 | OpenAI | `openai` | OpenAI 플랫폼 키(크레딧 필요) | 대화·브리핑 |
 | Claude API | `anthropic` | Anthropic 콘솔 키(크레딧 필요) | 대화·브리핑 |
+| Genspark | `genspark` | Genspark 유료 플랜 + `gsk login` 한 키 또는 붙여 넣은 `gsk-` 키 | 대화·브리핑 |
 | 없음(AI 없이 쓰기) | `local` | 없음 | 정해진 말, 할 일, 오늘 할 일 표, 회의 알림 |
 
 코드 고치기, 워크트리, 백그라운드 에이전트, 작업 세션의 「새 작업」·「이어서 하기」, 자동 머지는 뇌를 무엇으로 골랐든 Claude Code로 돌아갑니다. Claude Code가 없으면 이 버튼들은 아예 보이지 않습니다.
 
-Gemini·OpenAI·Claude API 뇌는 도구를 쓰지 못하고 답만 받습니다. 그래서 브리핑도 Slack(api)이나 캘린더(ICS)처럼 시사가 직접 모아 둔 자료만 가지고 합니다.
+Gemini·OpenAI·Claude API·Genspark 뇌는 도구를 쓰지 못하고 답만 받습니다. 그래서 브리핑도 Slack(api)이나 캘린더(ICS)처럼 시사가 직접 모아 둔 자료만 가지고 합니다.
+
+## Genspark
+
+Genspark의 LLM 프록시(OpenAI 호환)로 Claude·GPT 등 여러 회사 모델을 키 하나로 씁니다.
+
+1. [genspark.ai](https://www.genspark.ai)에 가입하고 [요금제](https://www.genspark.ai/pricing)에서 유료 플랜을 고릅니다. 무료 플랜 키로는 모델 목록만 열리고 대답은 하지 않습니다.
+2. 터미널에서 공식 CLI를 깔고 로그인합니다.
+
+   ```bash
+   npm install -g @genspark/cli
+   gsk login
+   ```
+
+3. 설치 마법사의 「뇌 고르기」에서 Genspark를 고르고 「gsk login 한 키 쓰기」를 누릅니다. 키를 직접 붙여 넣어도 됩니다.
+
+「gsk login 한 키 쓰기」를 고르면 시사는 키를 따로 저장하지 않고, 쓸 때마다 `~/.genspark-tool-cli/config.json`의 키를 읽습니다. 다시 로그인해서 키가 바뀌어도 그대로 따라갑니다. 시사는 이 파일을 읽기만 하고 고치지 않습니다.
+
+모델은 프록시의 모델 목록(`GET /models`)에 있는 것만 고를 수 있습니다. 패널 [모델] 탭에 그 목록이 그대로 나옵니다. 기본값은 목록에 있으면 `claude-sonnet-5-5`, 없으면 `gpt-5.4-mini`, 그것도 없으면 목록의 첫 모델입니다. 목록에 없는 모델을 고르면 요청을 보내기 전에 막고 알려 줍니다.
+
+연결 상태에 「Genspark 키는 맞지만 크레딧이 필요해요」가 보이면 키는 맞은 것입니다. 유료 플랜을 고른 뒤 다시 말을 걸면 바로 됩니다. 「Genspark 키가 맞지 않아요」가 보이면 `gsk login`을 다시 해 주세요.
 
 ## 파일로 직접 넣기
 
@@ -33,6 +54,7 @@ Gemini·OpenAI·Claude API 뇌는 도구를 쓰지 못하고 답만 받습니다
 | `brain.geminiApiKey` | `CY_AGENT_GEMINI_API_KEY`, `GEMINI_API_KEY` |
 | `brain.openaiApiKey` | `CY_AGENT_OPENAI_API_KEY`, `OPENAI_API_KEY` |
 | `brain.anthropicApiKey` | `CY_AGENT_ANTHROPIC_API_KEY`(`ANTHROPIC_API_KEY`는 Claude Code도 쓰는 이름이라 읽지 않습니다) |
+| `brain.gensparkApiKey` | `CY_AGENT_GENSPARK_API_KEY`(둘 다 없으면 `gsk login`이 남긴 `~/.genspark-tool-cli/config.json`) |
 | `models.general` | `CY_AGENT_MODEL_GENERAL`(대화·브리핑 모델. 비우면 뇌마다 기본 모델) |
 
 파일을 직접 고쳤다면 데몬을 다시 켜 주세요.
