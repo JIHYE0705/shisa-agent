@@ -5,7 +5,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { HOME_DIR, type Config } from "./config.ts";
 import { findRepos } from "./git.ts";
-import { IS_WIN, pathKey, pathWithin, realish, winLocalPath } from "./plat.ts";
+import { IS_WIN, isRealishUnknown, pathKey, pathWithin, realish, winLocalPath } from "./plat.ts";
 import type { Store, Todo, ChatTurn } from "./store.ts";
 import type { Verdict } from "./guard.ts";
 
@@ -23,9 +23,11 @@ export function isSecretPath(p: string): boolean {
     if (pathWithin(real, home)) return true;
     return pathKey(real).split("\\").some((part) => SECRET_NAMES.some((re) => re.test(part)));
   }
-  const abs = resolve(p);
-  if (abs === resolve(HOME_DIR, "config.json") || abs.startsWith(resolve(HOME_DIR) + sep)) return true; // ~/.cy-agent(토큰·DB)
-  return abs.split(sep).some((part) => SECRET_NAMES.some((re) => re.test(part)));
+  // 글 경로와 실제 경로(심볼릭 링크 notes.txt → .env · 링크 폴더 → ~/.cy-agent)를 둘 다 본다. 실제 경로를 모르면 비밀로
+  const abs = resolve(p), real = realish(abs);
+  if (isRealishUnknown(real)) return true;
+  return [[abs, resolve(HOME_DIR)], [real, realish(HOME_DIR)]].some(([x, home]) =>
+    x === join(home, "config.json") || x.startsWith(home + sep) || x.split(sep).some((part) => SECRET_NAMES.some((re) => re.test(part)))); // ~/.cy-agent(토큰·DB)
 }
 
 // 심볼릭 링크로 빠져나가지 못하게: 있는 데까지 실제 경로로 바꾼 뒤(plat.ts realish) 루트 안인지. Windows 는 대소문자 무시
