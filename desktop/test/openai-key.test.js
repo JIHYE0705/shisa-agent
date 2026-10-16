@@ -1,7 +1,8 @@
 // OpenAI 키 확인: 제한 키(모델 목록 권한 없음)도 대화가 되면 통과, 크레딧·권한 오류는 따로 알린다. 진짜 키·네트워크 없음
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkLlm, errorText, listModels, OPENAI_NO_CREDIT, OPENAI_NO_PERMISSION, OPENAI_NO_MODEL_LIST } from '../src/llm-check.js';
+import http from 'node:http';
+import { checkLlm, completeLlm, errorText, keyFetch, KEY_REQ, listModels, OPENAI_NO_CREDIT, OPENAI_NO_PERMISSION, OPENAI_NO_MODEL_LIST } from '../src/llm-check.js';
 import { listErrorText } from '../renderer/models-view.js';
 import { daemonArgs } from '../src/bundle.js';
 
@@ -74,4 +75,48 @@ test('daemonArgs: 윈도우·맥은 --use-system-ca(OS 인증서 저장소), 리
   assert.deepEqual(daemonArgs('main.ts', 'win32'), ['--use-system-ca', 'main.ts']);
   assert.deepEqual(daemonArgs('main.ts', 'darwin'), ['--use-system-ca', 'main.ts']);
   assert.deepEqual(daemonArgs('main.ts', 'linux'), ['main.ts']);
+});
+
+test('키를 싣는 요청은 모두 redirect:error·credentials:omit (OpenAI·Gemini·Anthropic)', async () => {
+  const ok = { 'https://api.openai.com/v1/models': res(200, { data: [] }), 'https://api.openai.com/v1/chat/completions': res(200, { choices: [{ message: { content: 'h' } }] }), 'https://api.anthropic.com/v1/messages': res(200, { content: [{ text: 'h' }] }), 'https://api.anthropic.com/v1/models?limit=100': res(200, { data: [] }) };
+  const f = async (url, init = {}) => {
+    f.calls.push({ url, init });
+    return ok[url] ?? res(200, { models: [], candidates: [{ content: { parts: [{ text: 'h' }] } }] });
+  };
+  f.calls = [];
+  const msg = { system: 's', messages: [{ role: 'user', content: 'hi' }] };
+  for (const p of ['openai', 'gemini', 'claude']) {
+    await checkLlm(p, KEY, f);
+    await listModels(p, KEY, f);
+    await completeLlm(p, KEY, { ...msg, model: p === 'gemini' ? 'gemini-x' : '' }, f);
+  }
+  // 제한 키 경로(/models 403 → 대화)도
+  const r = fake({ 'https://api.openai.com/v1/models': res(403, PERM), 'https://api.openai.com/v1/chat/completions': res(200, {}) });
+  await checkLlm('openai', KEY, r);
+  assert.equal(r.calls.length, 2);
+  assert.ok(f.calls.length >= 9);
+  for (const c of [...f.calls, ...r.calls]) {
+    assert.equal(c.init.redirect, 'error', c.url);
+    assert.equal(c.init.credentials, 'omit', c.url);
+  }
+  assert.deepEqual(KEY_REQ, { redirect: 'error', credentials: 'omit' });
+});
+
+test('keyFetch: Node fetch 도 옵션을 받고, 리다이렉트는 따라가지 않는다(로컬 서버, 네트워크 없음)', async () => {
+  let hits = 0;
+  const srv = http.createServer((req, r) => {
+    hits += 1;
+    if (req.url === '/go') { r.writeHead(302, { location: '/elsewhere' }); r.end(); return; }
+    r.writeHead(200, { 'content-type': 'text/plain' }); r.end('ok');
+  });
+  await new Promise((done) => srv.listen(0, '127.0.0.1', done));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const f = keyFetch(globalThis.fetch);
+    assert.equal(await (await f(`${base}/plain`, { headers: { Authorization: `Bearer ${KEY}` } })).text(), 'ok');
+    await assert.rejects(f(`${base}/go`, { headers: { Authorization: `Bearer ${KEY}` } }));
+    assert.equal(hits, 2, '/elsewhere 로 키를 다시 보내지 않았다');
+  } finally {
+    srv.close();
+  }
 });

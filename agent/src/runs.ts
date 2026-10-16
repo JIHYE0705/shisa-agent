@@ -143,7 +143,7 @@ const SECRET_PATTERNS: RegExp[] = [
   /xox[abposr]-[A-Za-z0-9-]{8,}/g,
   /xapp-[A-Za-z0-9-]{8,}/g,
   /sk-ant-[A-Za-z0-9_-]{8,}/g,
-  /\bsk-[A-Za-z0-9]{20,}/g,
+  /\bsk-[A-Za-z0-9_-]{20,}/g,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
   /github_pat_[A-Za-z0-9_]{20,}/g,
   /\bAKIA[0-9A-Z]{16}\b/g,

@@ -20,6 +20,11 @@ export const OPENAI_NO_PERMISSION = '키에 권한이 모자랍니다. OpenAI �
 
 export const OPENAI_NO_MODEL_LIST = '이 키에는 모델 목록을 볼 권한(Models: Read)이 없습니다. 대화는 기본 모델로 됩니다.';
 
+// 키를 싣는 요청은 리다이렉트를 따라가지 않고(다른 곳으로 키가 새지 않게) 쿠키·자격 증명도 안 보낸다.
+// OpenAI·Gemini·Anthropic API 는 정상 응답에 리다이렉트를 쓰지 않는다. Node fetch·Electron net.fetch 둘 다 받는 옵션
+export const KEY_REQ = Object.freeze({ redirect: 'error', credentials: 'omit' });
+export const keyFetch = (fetchImpl) => (url, init = {}) => fetchImpl(url, { ...init, ...KEY_REQ });
+
 function clip(text, key) {
   return String(text ?? '').replaceAll(key, '…').slice(0, 280);
 }
@@ -65,7 +70,8 @@ async function checkOpenai(key, fetchImpl) {
   return { ok: false, error: cb.error };
 }
 
-export async function checkLlm(provider, apiKey, fetchImpl = globalThis.fetch) {
+export async function checkLlm(provider, apiKey, rawFetch = globalThis.fetch) {
+  const fetchImpl = keyFetch(rawFetch);
   const key = String(apiKey ?? '').trim();
   if (!key) return { ok: false, error: '키가 비어 있습니다.' };
   try {
@@ -185,9 +191,10 @@ export function completeCodex({ system, messages, model }, { exec = execFile, bi
   });
 }
 
-export async function completeLlm(provider, apiKey, { system, messages, model }, fetchImpl = globalThis.fetch) {
+export async function completeLlm(provider, apiKey, { system, messages, model }, rawFetch = globalThis.fetch) {
   if (provider === 'claudecode') return completeCli({ system, messages, model });
   if (provider === 'codexcli') return completeCodex({ system, messages, model });
+  const fetchImpl = keyFetch(rawFetch);
   const key = String(apiKey ?? '').trim();
   if (provider === 'gemini') {
     const contents = messages.map((m) => ({
@@ -293,8 +300,9 @@ export function pickModels(provider, json) {
   return [];
 }
 
-export async function listModels(provider, apiKey, fetchImpl = globalThis.fetch) {
+export async function listModels(provider, apiKey, rawFetch = globalThis.fetch) {
   if (CLI_MODELS[provider]) return { ok: true, models: CLI_MODELS[provider] };
+  const fetchImpl = keyFetch(rawFetch);
   const key = String(apiKey ?? '').trim();
   if (!key) return { ok: false, error: '키가 없습니다.' };
   try {

@@ -324,3 +324,10 @@ test("서브에이전트 기록: Agent 줄 아래 parent 로 지시·글·도구
   const bad = r.logEvent(run2.id, { type: "assistant", text: "x", parent: "../../etc" as any });
   assert.equal(bad!.parent, undefined);
 });
+
+// 새 OpenAI 키 모양(sk-proj-·sk-svcacct-, 밑줄·하이픈 섞임)도 가린다. 진짜 키 아님
+const SK_SHAPES = ["sk-proj-unitTEST_not-real_0000aaaa", "sk-svcacct-unit_TEST-not-real-0000bbbb", "sk-ant-api03-unit_TEST-not-real-cccc", "sk-unitTESTnotreal0000dddd"];
+test("redact: sk-proj-·sk-svcacct-·sk-ant- 키도 가린다", () => {
+  for (const k of SK_SHAPES) assert.equal(redact(`key=${k} 끝`).includes(k.slice(3, 15)), false, k);
+  assert.match(redact("task-notification 은 그대로"), /task-notification/);
+});

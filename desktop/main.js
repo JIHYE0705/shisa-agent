@@ -28,7 +28,7 @@ import { disconnectBrainBody, withBrainBody, withConnectorOff, withoutHubDone, r
 import { ATTACH_SCHEME, resolveAttachUrl, cleanAttachIds, cleanUpload, okStoredName } from './src/attachments.js';
 import { agentLogin } from './src/agent-login.js';
 import { createCapsProbe, hasCoder, sameCaps, coderHint } from './src/caps.js';
-import { checkLlm, listModels } from './src/llm-check.js';
+import { checkLlm, listModels, KEY_REQ } from './src/llm-check.js';
 import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, withoutProvider, activeProvider, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
 import { personaFor } from './src/persona.js';
 import { okCharacter, characterName, appName } from './src/character.js';
@@ -1188,11 +1188,13 @@ function setupIPC() {
     return agentLogin(agent);
   });
   ipcMain.handle('sisa-get', (e) => (fromOurs(e) ? sisaPublic(readSisa()) : denied()));
+  // 키를 싣는 요청: 리다이렉트 안 따라감·쿠키 안 보냄(llm-check.js 도 덧붙인다)
+  const keyNetFetch = (u, o) => net.fetch(u, { ...o, ...KEY_REQ });
   ipcMain.handle('sisa-check', async (e, provider, apiKey) => {
     if (!fromOurs(e) || !AI_IDS.has(provider) || typeof apiKey !== 'string' || apiKey.length > 500) return denied();
     const key = apiKey.trim();
     // net.fetch: OS 인증서 저장소·프록시 설정을 따른다(회사 프록시·백신이 TLS 를 가로채도 키 확인이 된다)
-    const result = await checkLlm(provider, key, (u, o) => net.fetch(u, o));
+    const result = await checkLlm(provider, key, keyNetFetch);
     if (!result.ok) return { ok: false, error: result.error || '확인에 실패했습니다.' };
     const next = withKey(readSisa(), provider, key);
     writeSisa(next);
@@ -1238,7 +1240,7 @@ function setupIPC() {
     if (!fromOurs(e) || typeof provider !== 'string') return denied();
     const data = normalizeSisa(readSisa());
     if (!connectedProviders(data).includes(provider)) return { ok: false, error: '연결되어 있지 않습니다.' };
-    return listModels(provider, data.keys[provider], (u, o) => net.fetch(u, o));
+    return listModels(provider, data.keys[provider], keyNetFetch);
   });
   // { chat: {provider, model} | 'none', code: 모델 } 중 온 것만 바꾼다
   ipcMain.handle('sisa-set-models', async (e, pick) => {

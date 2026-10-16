@@ -1,6 +1,7 @@
 // OpenAI 구조화 출력(strict: true)용 스키마 변환과 그 반대(답에서 덧붙인 null 빼기).
 // strict 는 모든 객체에 additionalProperties:false, properties 의 키를 전부 required 로 요구한다(중첩까지).
 // 선택 필드는 null 을 허용하는 꼴로 바꾸고, 답의 그 null 은 원래 스키마를 보고 지운다 → Gemini·Claude 와 같은 모양.
+// 단, 원래 null 이 '지우기'인 문자열 필드는 문자열만 받고 '지우기'는 CLEAR("-") 로 따로 받는다.
 // 출처: https://platform.openai.com/docs/guides/structured-outputs#supported-schemas
 // Gemini·Claude 는 원래 스키마 그대로 보낸다(여기는 OpenAI 경로에서만 쓴다).
 
@@ -37,6 +38,25 @@ function nullable(s: Json): Json {
   return { anyOf: [rest, { type: "null" }], ...(description !== undefined ? { description } : {}) };
 }
 
+// OpenAI 사본에서 '지우기' 표시. 답에서 이 값이면 null 로 바꾼다
+export const CLEAR = "-";
+// 결과 객체에 그대로 쓰면 프로토타입이 바뀌는 키(모델 답은 믿지 않는다)
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+// 원래 문자열 또는 null(지우기)만 받는 필드(enum 없이)
+const STR_OR_NULL = (t: unknown) => t === "string" || t === "null";
+function isClearable(s: unknown): boolean {
+  if (!isObj(s) || !allowsNull(s) || !hasString(s) || s.enum !== undefined || s.const !== undefined) return false;
+  if (Array.isArray(s.anyOf)) return s.anyOf.every((a) => isObj(a) && STR_OR_NULL(a.type) && a.enum === undefined && a.const === undefined);
+  return Array.isArray(s.type) && s.type.every(STR_OR_NULL);
+}
+
+// null 을 뺀 문자열 꼴. 설명의 'null이면 …' 은 CLEAR 안내로 바꾼다
+function clearableString(s: Json): Json {
+  const desc = typeof s.description === "string" ? s.description.replace(/\s*null이면[^.]*\.?/g, "").trim() : "";
+  return { type: "string", description: `${desc ? `${desc} ` : ""}그대로 두려면 빈 문자열, 지우려면 "${CLEAR}".` };
+}
+
 function convert(s: unknown): unknown {
   if (Array.isArray(s)) return s.map(convert);
   if (!isObj(s)) return s;
@@ -50,9 +70,9 @@ function convert(s: unknown): unknown {
       for (const [pk, pv] of Object.entries(v)) {
         let c = convert(pv) as Json;
         if (!req.has(pk) && isObj(c)) {
-          // 원래 null 이 '지우기' 뜻인 선택 필드: 이제 늘 채워야 하니 '그대로'는 빈 문자열로(todos.ts opPatch 가 빈 문자열은 안 바꾼다)
-          if (allowsNull(pv) && hasString(pv)) c = { ...c, description: `${typeof c.description === "string" ? `${c.description} ` : ""}그대로 두려면 빈 문자열.` };
-          c = nullable(c);
+          // 원래 null 이 '지우기' 뜻인 선택 필드: 이제 늘 채워야 하니 null 은 빼고 문자열만. '그대로'는 빈 문자열(todos.ts opPatch 가 안 바꾼다),
+          // '지우기'는 CLEAR("-") → stripAddedNulls 가 null 로. 모델이 '모름'으로 null 을 채워 링크·메모가 지워지는 일을 막는다
+          c = isClearable(pv) ? clearableString(c) : nullable(c);
         }
         props[pk] = c;
       }
@@ -95,7 +115,7 @@ function fits(s: unknown, v: unknown): boolean {
 }
 
 // OpenAI 답에서 toOpenAiStrict 가 덧붙인 null 만 뺀다: 원래 선택 필드이고 원래 null 을 안 받던 키.
-// 원래 스키마가 null 을 받는 필드(todo_ops 의 link·note = 지우기)는 그대로 둔다
+// 원래 null(지우기)을 받던 문자열 필드(todo_ops 의 link·note)는 CLEAR → null, 모델의 null 은 뺀다(안 바꿈)
 export function stripAddedNulls(value: unknown, schema: unknown, root: unknown = schema): unknown {
   if (!isObj(schema)) return value;
   const s = resolveRef(schema, root);
@@ -110,8 +130,16 @@ export function stripAddedNulls(value: unknown, schema: unknown, root: unknown =
     const req = new Set(Array.isArray(s.required) ? s.required as string[] : []);
     const out: Json = {};
     for (const [k, v] of Object.entries(value)) {
+      if (UNSAFE_KEYS.has(k)) continue;
       const ps = props[k];
-      if (v === null && ps !== undefined && !req.has(k) && !allowsNull(isObj(ps) ? resolveRef(ps, root) : ps)) continue;
+      const rs = isObj(ps) ? resolveRef(ps, root) : ps;
+      if (ps !== undefined && !req.has(k) && isClearable(rs)) {
+        // 지우기는 CLEAR 로만. 모델이 채운 null 은 '모름'일 뿐이라 빼고(안 바꿈), 빈 문자열은 그대로(opPatch 가 안 바꾼다)
+        if (v === CLEAR) out[k] = null;
+        else if (v !== null) out[k] = v;
+        continue;
+      }
+      if (v === null && ps !== undefined && !req.has(k) && !allowsNull(rs)) continue;
       out[k] = ps === undefined ? v : stripAddedNulls(v, ps, root);
     }
     return out;
