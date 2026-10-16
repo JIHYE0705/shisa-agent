@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { findOnPath, spawnSpec } from "./plat.ts";
 import { DEFAULT_GENERAL_MODEL, type BrainProvider, type Config } from "./config.ts";
+import { stripAddedNulls, toOpenAiStrict } from "./openai-strict.ts";
 
 export type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
 
@@ -287,7 +288,8 @@ export async function openaiJson(
       body: JSON.stringify({
         model,
         messages,
-        response_format: { type: "json_schema", json_schema: { name: "cy_brain", strict: true, schema } },
+        // strict 는 모든 키 required·additionalProperties:false 를 요구한다 → 사본으로 바꿔 보낸다(안 그러면 400)
+        response_format: { type: "json_schema", json_schema: { name: "cy_brain", strict: true, schema: toOpenAiStrict(schema) } },
       }),
     });
   } catch {
@@ -300,7 +302,8 @@ export async function openaiJson(
   const text = typeof content === "string"
     ? content
     : Array.isArray(content) ? content.map((p) => (asRecord(p)?.text as string) ?? "").join("") : "";
-  return parseModelJson(text, "OpenAI 응답에서 JSON을 읽지 못했어요.");
+  // 선택 필드라서 채워 온 null 은 빼서 Gemini·Claude 답과 같은 모양으로
+  return stripAddedNulls(parseModelJson(text, "OpenAI 응답에서 JSON을 읽지 못했어요."), schema);
 }
 
 export async function anthropicJson(

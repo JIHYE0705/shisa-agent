@@ -38,7 +38,7 @@ import { isFocusCmd, DAY_RE } from './src/focus.js';
 import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
 import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
-import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, loginItemPlan, loginItemHint, defaultLoginPref, daemonStatusKind, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
+import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, daemonArgs, loginItemPlan, loginItemHint, defaultLoginPref, daemonStatusKind, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
 import { createDaemonHost } from './src/daemon-host.js';
 import { RELEASES_API, checkDue, latestRelease, shouldNotify, updateBubble } from './src/update-check.js';
 import { denied } from './src/denied.js';
@@ -1191,7 +1191,8 @@ function setupIPC() {
   ipcMain.handle('sisa-check', async (e, provider, apiKey) => {
     if (!fromOurs(e) || !AI_IDS.has(provider) || typeof apiKey !== 'string' || apiKey.length > 500) return denied();
     const key = apiKey.trim();
-    const result = await checkLlm(provider, key);
+    // net.fetch: OS 인증서 저장소·프록시 설정을 따른다(회사 프록시·백신이 TLS 를 가로채도 키 확인이 된다)
+    const result = await checkLlm(provider, key, (u, o) => net.fetch(u, o));
     if (!result.ok) return { ok: false, error: result.error || '확인에 실패했습니다.' };
     const next = withKey(readSisa(), provider, key);
     writeSisa(next);
@@ -1237,7 +1238,7 @@ function setupIPC() {
     if (!fromOurs(e) || typeof provider !== 'string') return denied();
     const data = normalizeSisa(readSisa());
     if (!connectedProviders(data).includes(provider)) return { ok: false, error: '연결되어 있지 않습니다.' };
-    return listModels(provider, data.keys[provider]);
+    return listModels(provider, data.keys[provider], (u, o) => net.fetch(u, o));
   });
   // { chat: {provider, model} | 'none', code: 모델 } 중 온 것만 바꾼다
   ipcMain.handle('sisa-set-models', async (e, pick) => {
@@ -1740,7 +1741,7 @@ function spawnDaemon(entry, dir) {
   fs.mkdirSync(logs, { recursive: true });
   const fd = fs.openSync(path.join(logs, DAEMON_LOG), 'a', 0o600);
   try {
-    return spawn(process.execPath, [entry], {
+    return spawn(process.execPath, daemonArgs(entry, process.platform), {
       cwd: dir,
       env: daemonEnv(process.env, { port: PORT, home: os.homedir(), platform: process.platform }),
       // 윈도우: IPC 채널을 열어 끌 때 "shutdown" 을 보낸다(앱이 갑자기 죽으면 연결이 끊겨 데몬도 스스로 끈다)
