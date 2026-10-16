@@ -1,7 +1,7 @@
 // 사용자 캐릭터와 기본 캐릭터 대사 고치기(덮어쓰기). 파일은 사용자 데이터 폴더에만 쓴다(레포·앱 번들은 건드리지 않는다).
 //   ~/.cy-agent/characters/<id>/character.json  사용자가 만든 캐릭터 하나: { id, name, from, created, updated, frames: { 칸: 테두리 }, media: { 칸: 저장 이름 }, lines }
 //   ~/.cy-agent/characters/<id>/<칸>-<무작위>.<확장자>  올린 그림·영상(이름은 여기서 새로 짓는다)
-//   ~/.cy-agent/characters/overrides/<기본 id>.json  기본 캐릭터(시사·하치와레·랏코·모몽가)에서 고친 칸만
+//   ~/.cy-agent/characters/overrides/<기본 id>.json  기본 캐릭터(시사·하치와레·랏코·모몽가·우사기)에서 고친 칸만
 // 대사 모양은 assets/characters/lines.json 의 캐릭터 하나와 같다(characters.ts LinesEntry). 칸 이름은 점으로 잇는다(phrases.dance, flair.lead.happy).
 // 자리표시({title} 등)는 그 칸에 원래 있던 것만 쓸 수 있다(모르는 건 저장 거절 — phrases.ts unknownVars 와 같은 검사).
 // 바뀌면 installCharacters 로 데몬 목록(characters.ts)을 바로 바꾸고 onChange 로 알린다(main 이 SSE characters 를 보낸다).

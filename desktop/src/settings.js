@@ -34,7 +34,7 @@ export function sanitizeSettingsPatch(p) {
   for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert' && k !== 'character') return null;
   // 캐릭터(src/character.js 의 id)
   if (p.character !== undefined) {
-    if (!okCharacterId(p.character)) return null; // 기본 넷 또는 사용자 캐릭터 모양(있는지는 데몬이)
+    if (!okCharacterId(p.character)) return null; // 기본 다섯 또는 사용자 캐릭터 모양(있는지는 데몬이)
     out.character = p.character;
   }
   // 이 맥의 Claude Code·Codex 작업 기록 읽기(켜고 끄기만)
@@ -114,7 +114,7 @@ export function parseAlertMinutes(text) {
   if (!okAlertMin(n)) return { error: '1 이상 숫자(분)로 적어 주세요. 예: 20, 하루 전은 1440' };
   return { mins: n };
 }
-// 칩으로 보일 분들: 기본 넷 + 지금 고른 것 중 그 밖의 것
+// 칩으로 보일 분들: 기본 다섯 + 지금 고른 것 중 그 밖의 것
 export const alertChoices = (list) => sortMins([...ALERT_PRESETS, ...(Array.isArray(list) ? list.filter(okAlertMin) : [])]).reverse();
 // 지금 설정을 한 줄로
 export function calendarAlertSummary(c) {

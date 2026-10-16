@@ -26,7 +26,7 @@ export const CHARACTERS = {
   usagi: { name: '우사기', blink: false, scenes: {}, clips: { plan: 'plan', dance: 'dance', cheer: 'cheer' } },
 };
 export const DANCE_CLIPS = ['plan', 'dance', 'cheer'];
-export const CHARACTER_IDS = Object.freeze(Object.keys(CHARACTERS)); // 기본 넷
+export const CHARACTER_IDS = Object.freeze(Object.keys(CHARACTERS)); // 기본 다섯
 export const characterIds = () => Object.keys(CHARACTERS); // 지금 고를 수 있는 것(사용자 캐릭터 포함)
 export const DEFAULT_CHARACTER = 'shisa';
 // 사용자 캐릭터 id 모양(데몬 character-store.ts USER_ID 와 같다). 있는지는 데몬이 다시 본다

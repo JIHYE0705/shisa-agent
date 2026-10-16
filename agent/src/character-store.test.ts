@@ -82,7 +82,7 @@ test("대사 칸: 모르는 칸·모르는 자리표시는 거절, 한 줄 칸�
   const paths = new Set(linesSchema().map((d) => d.path));
   for (const p of ["name", "prompt.intro", "prompt.tone", "prompt.persona", "flair.lead.happy", "flair.tail.busy", "phrases.dance", "local.calThen", "cheer", "canned.today:e", "setup.welcome", "overlay.quickAi", "tour.settings_noslack"]) assert.ok(paths.has(p), p);
   // lines.json 기본 대사는 다 검사를 통과한다
-  for (const id of ["hachi", "rakko", "momonga"]) {
+  for (const id of ["hachi", "rakko", "momonga", "usagi"]) {
     const e = JSON.parse(readFileSync(new URL("../../assets/characters/lines.json", import.meta.url), "utf8"))[id];
     assert.ok(validateLines(e).ok, id);
   }
@@ -318,7 +318,7 @@ test("HTTP: GET/POST/PUT/DELETE /characters, 그림 올리기(바이트), 쓰기
     const ev = await fetch(`${base}/events`, { signal: ac.signal });
     const reader = ev.body!.getReader();
     const g = await (await fetch(`${base}/characters`)).json();
-    assert.deepEqual(g.characters.map((c: any) => c.id), ["shisa", "hachi", "rakko", "momonga"]);
+    assert.deepEqual(g.characters.map((c: any) => c.id), ["shisa", "hachi", "rakko", "momonga", "usagi"]);
     assert.equal(g.current, "shisa");
     assert.ok(g.schema.length > 100 && g.help.prompt && g.slots.length === 6 && g.types.includes("gif"));
     assert.equal((await fetch(`${base}/characters`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "x" }) })).status, 403);
