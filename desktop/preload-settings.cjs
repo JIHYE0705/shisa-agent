@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('cy', {
   getSisa: () => ipcRenderer.invoke('settings-sisa'),
   disconnectBrain: (id) => ipcRenderer.invoke('settings-brain-disconnect', String(id || '')),
   disconnectConnector: (cap) => ipcRenderer.invoke('settings-connector-disconnect', String(cap || '')),
+  // 캘린더 여러 개: 목록 { ok, items: [{ id, kind, title, label }] }(주소는 없음) · 하나 빼기(id) → { ok, items, note?, error? }
+  getCalendars: () => ipcRenderer.invoke('settings-calendars'),
+  removeCalendar: (id) => ipcRenderer.invoke('settings-calendar-remove', String(id || '')),
   copyText: (text) => ipcRenderer.invoke('settings-copy', String(text || '')),
   openPanel: (section) => ipcRenderer.send('settings-open-panel', String(section)), // 'setup'(설치 안내) | 'models'(AI 고르기)
   getAppPrefs: () => ipcRenderer.invoke('settings-app-get'), // { version, openAtLogin: { available, on, hint }, updateCheck }

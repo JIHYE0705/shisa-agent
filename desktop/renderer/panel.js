@@ -5,7 +5,7 @@ import { createMarkdown } from '../src/markdown.js';
 import { shapeDashboard, overlayHidden, priorityLabel, SECTIONS, SECTION_LABELS, normalizeSection, relativeTime, clockTime, visibleSections } from '../src/dashboard.js';
 import { needsSetup, stepForCap } from '../src/setup.js';
 import { isFeature, isAgent, buildWalk, agentSteps } from '../src/setup-flow.js';
-import { renderSetup, clearApiDraft, readSlot } from './setup-view.js';
+import { renderSetup, clearApiDraft, readSlot, clearSlot } from './setup-view.js';
 import { mountModels } from './models-view.js';
 import { createFocusView } from './focus-view.js';
 import { connectorAction, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
@@ -127,6 +127,8 @@ let setupChoices = {};
 let setupLink = '';
 let keyStatus = '';
 let afterConnect = ''; // 'claudecode'·'codexcli': 그 도구 연결을 마치면 시사의 AI로 쓴다
+let setupCalendars = []; // 연결된 캘린더(main calendar-list: 가린 이름만, 주소 없음)
+let setupSlotError = null; // 저장하려다 막힌 칸 값({ id, value, text }, 예: 이미 연결된 캘린더)
 let cannedOpen = false; // 채팅: AI가 있을 때 ＋ 로 연 정해진 답 버튼 줄(renderChatLock)
 let sisa = { provider: '', hasKey: false, persona: '', canned: {}, done: {}, connected: [], chatModels: {}, codeModel: 'default' };
 // 예전 화면 위치(ai-offer·agent·pick·walk)는 불러오지 않는다
@@ -204,6 +206,17 @@ function stepsNow() {
   }
   if (setupPhase === 'walk') return buildWalk(setupPicked, setupChoices, setupAgent || 'none');
   return [];
+}
+
+// 연결된 캘린더 목록을 새로. 바뀌었을 때만 다시 그린다
+async function loadCalendars() {
+  let r = null;
+  try { r = await cy.calendarList?.(); } catch { /* 다음에 다시 */ }
+  const items = Array.isArray(r?.items) ? r.items : [];
+  if (JSON.stringify(items) === JSON.stringify(setupCalendars)) return;
+  setupCalendars = items;
+  setupKey = '';
+  if (section === 'setup') renderSetupView(false);
 }
 
 function clampSetupCursor() {
@@ -538,12 +551,13 @@ function renderSetupView(resetScroll) {
     return;
   }
   clampSetupCursor();
-  const key = `${whoId()}|${setupPhase}|${setupName}|${setupRepos.join(',')}|${setupReadSessions}|${JSON.stringify(detected)}|${JSON.stringify(brain)}|${(sisa.connected || []).join(',')}|${setupAgent}|${setupLink}|${setupCursor}|${keyStatus}|${JSON.stringify(sisa.done)}|${setupPicked.join(',')}|${JSON.stringify(setupChoices)}|${agentLoginState.loggedIn}|${agentLoginState.installed}`;
+  const key = `${whoId()}|${setupPhase}|${setupName}|${setupRepos.join(',')}|${setupReadSessions}|${JSON.stringify(detected)}|${JSON.stringify(brain)}|${(sisa.connected || []).join(',')}|${setupAgent}|${setupLink}|${setupCursor}|${keyStatus}|${JSON.stringify(sisa.done)}|${setupPicked.join(',')}|${JSON.stringify(setupChoices)}|${agentLoginState.loggedIn}|${agentLoginState.installed}|${JSON.stringify(setupCalendars)}|${JSON.stringify(setupSlotError)}`;
   if (!resetScroll && key === setupKey && $('sec-setup').childElementCount) {
     watchAgentLogin();
     return;
   }
   setupKey = key;
+  if (setupPhase === 'extras') loadCalendars();
   const top = resetScroll ? 0 : ($('sec-setup').querySelector('.setup-scroll')?.scrollTop ?? 0);
   const redraw = (scroll) => { setupKey = ''; renderSetupView(scroll); };
   renderSetup($('sec-setup'), {
@@ -637,6 +651,7 @@ function renderSetupView(resetScroll) {
     },
     onOpenExtra: (id) => {
       if (!EXTRAS.includes(id) || !hubItem(id)) return;
+      if (id === 'gcal' || id === 'outlook') { clearSlot(id); setupSlotError = null; } // 하나 더 추가할 때 앞 주소가 남지 않게
       setupLink = id;
       afterConnect = '';
       setupPhase = 'connect';
@@ -648,6 +663,33 @@ function renderSetupView(resetScroll) {
     // 더 연결하기의 [연결 해제]: 그 커넥터를 끄고(구글·Outlook 은 캘린더 하나) 「연결됨」 표시도 뗀다
     servers: Object.fromEntries((vm.connectors || []).filter((c) => c.server).map((c) => [c.cap, c.server])),
     onCopyText: (text) => cy.copyText(text),
+    // 연결된 캘린더: 하나 더 추가(같은 안내를 다시) · 하나 빼기(그 주소만, 마지막이면 캘린더 연결 해제)
+    calendars: setupCalendars,
+    slotError: setupSlotError,
+    onAddCalendar: (id) => {
+      if (id !== 'gcal' && id !== 'outlook') return;
+      clearSlot(id);
+      setupSlotError = null;
+      setupLink = id;
+      afterConnect = '';
+      setupPhase = 'connect';
+      setupCursor = 0;
+      saveSetup();
+      redraw(true);
+    },
+    onRemoveCalendar: async (id) => {
+      let r;
+      try { r = await cy.calendarRemove(id); } catch { r = { ok: false }; }
+      if (r?.ok) {
+        try {
+          const got = await cy.sisaGet();
+          if (got && typeof got === 'object') sisa = { ...sisa, ...got, done: got.done || {} };
+        } catch { /* 다음에 다시 읽는다 */ }
+        loadSoon();
+        setTimeout(() => { setupCalendars = Array.isArray(r.items) ? r.items : setupCalendars; redraw(false); }, 1500); // 뺐다는 글을 잠깐 보여 주고 목록을 다시
+      }
+      return r;
+    },
     onDisconnectExtra: async (_id, cap) => {
       let r;
       try { r = await cy.connectorDisconnect(cap); } catch { r = { ok: false }; }
@@ -758,7 +800,15 @@ function renderSetupView(resetScroll) {
           return;
         }
         const url = (setupLink === 'gcal' || setupLink === 'outlook') ? readSlot(setupLink) : '';
-        try { await cy.sisaMark(setupLink, url); } catch { /* 표시만 남긴다 */ }
+        let mark = null;
+        try { mark = await cy.sisaMark(setupLink, url); } catch { /* 표시만 남긴다 */ }
+        if (mark?.duplicate) {
+          // 같은 주소는 한 번만: 그 칸에 머물며 알린다(칸을 고치면 사라진다)
+          setupSlotError = { id: setupLink, value: url, text: mark.error || '이미 연결된 캘린더예요.' };
+          redraw(false);
+          return;
+        }
+        setupSlotError = null;
         if ((afterConnect === 'claudecode' && setupLink === 'claude') || (afterConnect === 'codexcli' && setupLink === 'codex')) {
           afterConnect = '';
           try { await cy.sisaUseCli(setupLink); } catch { /* 목록에서 다시 고르면 된다 */ }
@@ -3080,6 +3130,7 @@ cy.onSisa?.((v) => {
   if (v.done && typeof v.done === 'object') sisa.done = v.done;
   modelsView.update();
   if (section === 'setup') { setupKey = ''; renderSetupView(false); }
+  loadCalendars(); // 설정 창에서 캘린더를 뺐을 수도 있다
 });
 const modelsView = mountModels({ section: $('sec-models'), h, cy, getSisa: () => sisa, onSisa: applySisa, gotoSetup: () => openSetup() });
 

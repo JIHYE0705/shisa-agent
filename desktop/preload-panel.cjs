@@ -92,6 +92,9 @@ contextBridge.exposeInMainWorld('cy', {
   // [연결 해제]: AI(gemini|claude|openai|claudecode|codexcli) · 커넥터(slack|calendar|mail|issues)
   sisaDisconnect: (provider) => ipcRenderer.invoke('sisa-disconnect', String(provider || '')),
   connectorDisconnect: (cap) => ipcRenderer.invoke('connector-disconnect', String(cap || '')),
+  // 캘린더 여러 개: 목록 { ok, items: [{ id, kind, title, label }] }(주소는 없음) · 하나 빼기(id) → { ok, items, note?, error? }
+  calendarList: () => ipcRenderer.invoke('calendar-list'),
+  calendarRemove: (id) => ipcRenderer.invoke('calendar-remove', String(id || '')),
   // 뇌(말 거는 AI) 연결 상태(brain-state.js brainView) — 없으면 입력 대신 연결 안내 카드
   brain: () => ipcRenderer.invoke('brain-get'),
   onBrain: on('brain'),

@@ -1389,3 +1389,6 @@ button.focus-tab.on { background: var(--surface); color: var(--fg); box-shadow: 
 @media (prefers-reduced-motion: reduce) { .focus-dot { animation: none; } .fw-bar { transition: none; } }
 /* ＋ 정해진 답 버튼 줄을 열었을 때 */
 #chat-canned-btn.on { color: var(--accent, #2f80ed); }
+/* 연결된 캘린더: 줄마다 종류 · 가린 이름 · [빼기](묻는 칸은 줄 아래로) */
+.setup-cals .setup-repos li { flex-wrap: wrap; }
+.setup-cals .cal-kind { flex: none; color: var(--muted); font-size: 12px; }

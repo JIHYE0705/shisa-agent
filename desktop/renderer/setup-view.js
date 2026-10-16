@@ -5,6 +5,7 @@ import { AGENTS, FEATURES, agentSteps, buildWalk, featureTitle } from '../src/se
 import { sayFor, providerById, connectSteps, slotCheck, BRAIN_CHOICES, EXTRAS, SESSIONS_CONSENT, hubItem } from '../src/ai-onboard.js';
 import { setupSummary, okFolder } from '../src/setup-plan.js';
 import { HUB_CAP, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
+import { calendarRemoveCopy } from '../src/calendars.js';
 
 const slotValues = new Map();
 let redraw = null;
@@ -138,11 +139,16 @@ function slotState(step) {
   return { ok: true };
 }
 
-function slotStatus(step) {
+const slotBlocked = (step, slotError) => !!slotError && (step.slots || []).some((s) => s.id === slotError.id && readSlot(s.id) === slotError.value);
+
+// slotError: 저장하려다 막힌 값({ id, value, text }, 예: 이미 연결된 캘린더). 칸을 고치면 사라진다
+function slotStatus(step, slotError) {
   if (!step.slots?.length || !step.slotNote) return null;
   const st = slotState(step);
   if (st.empty) return null;
   if (st.bad) return h('p.setup-gate', null, ...richNodes(st.bad));
+  const err = slotBlocked(step, slotError) ? slotError.text : '';
+  if (err) return h('p.setup-gate', null, ...richNodes(err));
   return h('p.setup-gate.ok', null, ...richNodes('**맞는 주소입니다.** 다음으로 갈 수 있습니다.'));
 }
 
@@ -244,7 +250,7 @@ function pickView({ picked, agent, onToggle, onStart, onDone }) {
   });
 }
 
-function oneView(step, { phase, cursor, total, agent, login, onChoose, onCopy, onOpen, onList, onPrev, onBack, onSkip, onNext, nextLabel }) {
+function oneView(step, { phase, cursor, total, agent, login, slotError, onChoose, onCopy, onOpen, onList, onPrev, onBack, onSkip, onNext, nextLabel }) {
   rememberSlots(step);
   const { identity, rows } = identityAndRows(step);
   const choices = (step.choices ?? []).map((c) => h('button', {
@@ -269,7 +275,7 @@ function oneView(step, { phase, cursor, total, agent, login, onChoose, onCopy, o
       loginStatus(step, login),
       ...blocks,
       slotFields(step),
-      slotStatus(step),
+      slotStatus(step, slotError),
       step.details?.length ? h('details.setup-fold', null,
         h('summary', { text: '막히면' }),
         h('ul', null, step.details.map((d) => h('li', null, ...richNodes(d))))) : null),
@@ -277,7 +283,8 @@ function oneView(step, { phase, cursor, total, agent, login, onChoose, onCopy, o
       phase, cursor, total, onList, onPrev, onBack, onSkip, onNext, nextLabel,
       nextDisabled: (step.gate === 'login' && !login?.loggedIn)
         || step.gate === 'blocked'
-        || (!!step.slotNote && !slotState(step).ok),
+        || (!!step.slotNote && !slotState(step).ok)
+        || slotBlocked(step, slotError),
     }),
   });
 }
@@ -366,7 +373,30 @@ function extraItem(item, done, onOpen, onDisconnect, onCopy, servers) {
   }));
 }
 
-function extrasView({ done = {}, repos = [], coder = true, readSessions = false, servers = {}, onOpen, onDisconnect, onCopy, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish, onBack }) {
+// 연결된 캘린더(구글·Outlook 합쳐서): 가린 이름 줄마다 [빼기](그 자리에서 한 번 더 묻는다) + 하나 더 추가. 개수 상한 없음
+let calConfirming = '';
+function calendarsBlock(calendars, onAdd, onRemove) {
+  if (!calendars?.length) return null;
+  const last = calendars.length === 1;
+  return h('div.setup-folder.setup-cals', null,
+    h('span.setup-pick-title', { text: `연결된 캘린더 · ${calendars.length}개` }),
+    h('p.setup-blurb', { text: '주소는 비밀이라 앞부분만 보여 줘요. 여러 캘린더의 일정을 함께 읽어요.' }),
+    h('ul.setup-repos', null, calendars.map((c) => h('li', { dataset: { id: c.id } },
+      h('span.cal-kind', { text: c.title }),
+      h('code', { text: c.label }),
+      onRemove ? disconnectControl(document, {
+        ...calendarRemoveCopy(c, last),
+        open: calConfirming === c.id,
+        onOpen: () => { calConfirming = c.id; },
+        onClose: () => { if (calConfirming === c.id) calConfirming = ''; },
+        onConfirm: () => onRemove(c.id),
+      }) : null))),
+    onAdd ? h('div.setup-fields.row', null,
+      h('button.ghost', { type: 'button', text: '구글 캘린더 하나 더 추가', onclick: () => onAdd('gcal') }),
+      h('button.ghost', { type: 'button', text: 'Outlook 캘린더 하나 더 추가', onclick: () => onAdd('outlook') })) : null);
+}
+
+function extrasView({ done = {}, repos = [], coder = true, readSessions = false, servers = {}, calendars = [], onOpen, onDisconnect, onCopy, onAddCalendar, onRemoveCalendar, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish, onBack }) {
   const items = EXTRAS.filter((id) => id !== 'repos').map(hubItem).filter(Boolean);
   const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: '/Users/나/code', 'aria-label': '레포 폴더', value: repoDraft });
   input.addEventListener('input', () => { repoDraft = input.value; });
@@ -379,6 +409,7 @@ function extrasView({ done = {}, repos = [], coder = true, readSessions = false,
     identity: '하나를 누르면 그 안내로 들어가고, 끝나면 이 목록으로 돌아와요.',
     extra: h('div', null,
       h('div.setup-picks', null, items.map((item) => extraItem(item, done, onOpen, onDisconnect, onCopy, servers))),
+      calendarsBlock(calendars, onAddCalendar, onRemoveCalendar),
       h('div.setup-folder', null,
         h('span.setup-pick-title', { text: repos.length ? `${repo.title} · ${repos.length}개` : repo.title }),
         h('p.setup-blurb', { text: coder ? repo.blurb : `${repo.blurb} (지금은 Claude Code 가 없어서 커밋만 보여 줘요)` }),
@@ -456,6 +487,11 @@ export function readSlot(id) {
   return (slotValues.get(id) || '').trim();
 }
 
+// 캘린더를 하나 더 추가할 때: 앞에 붙였던 주소를 비운다
+export function clearSlot(id) {
+  slotValues.delete(id);
+}
+
 export function renderSetup(root, state) {
   redraw = () => renderSetup(root, state);
   const {
@@ -487,7 +523,7 @@ export function renderSetup(root, state) {
     return;
   }
   if (phase === 'extras') {
-    root.replaceChildren(extrasView({ done, repos, coder, readSessions, servers: state.servers, onOpen: onOpenExtra, onDisconnect: onDisconnectExtra, onCopy: state.onCopyText, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish: onFinishExtras, onBack }));
+    root.replaceChildren(extrasView({ done, repos, coder, readSessions, servers: state.servers, calendars: state.calendars, onAddCalendar: state.onAddCalendar, onRemoveCalendar: state.onRemoveCalendar, onOpen: onOpenExtra, onDisconnect: onDisconnectExtra, onCopy: state.onCopyText, onAddRepo, onPickFolder, onRemoveRepo, onToggleSessions, onFinish: onFinishExtras, onBack }));
     return;
   }
   if (phase === 'done') {
@@ -532,6 +568,7 @@ export function renderSetup(root, state) {
     onBack,
     onSkip,
     login,
+    slotError: state.slotError,
     onNext,
     nextLabel: phase === 'agentWalk' ? (last ? '기능 고르기' : '다음') : phase === 'connect' ? (last ? '완료' : '다음') : (last ? '개요로' : '다음'),
   }));

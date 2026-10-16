@@ -13,6 +13,7 @@ import { who, setWho, onWho } from './who.js';
 // 안내 글 속 이름(<span class="who">)도 캐릭터 이름으로
 onWho(() => { for (const n of document.querySelectorAll('.who')) n.textContent = who(); });
 import { brainRows, brainDisconnectCopy, connectorAction, capOfRow, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
+import { calendarRemoveCopy } from '../src/calendars.js';
 
 const cy = window.cy;
 const $ = (id) => document.getElementById(id);
@@ -35,7 +36,8 @@ let rows = [];
 let caps = { claude: true, codex: false }; // 모르면 있다고 본다(예전처럼 다 보임)
 const busy = new Set(); // 지금 도는 확인(check id)
 let sisaView = null; // 앱의 AI 저장(키 없음). 연결된 AI 줄
-let confirming = ''; // [연결 해제] 확인을 열어 둔 줄(brain:id · connector:cap). 다시 그려도 그대로
+let confirming = ''; // [연결 해제] 확인을 열어 둔 줄(brain:id · connector:cap · calendar:id). 다시 그려도 그대로
+let calendars = []; // 연결된 캘린더(가린 이름만, 주소 없음) — 캘린더 줄 아래 목록
 
 // ---- 저장 알림 ----
 let savedTimer = null;
@@ -457,6 +459,41 @@ function renderPhrases() {
 }
 
 // ---- 연결 상태 ----
+// 캘린더 줄 아래: 연결된 캘린더마다 가린 이름 + [빼기](그 주소만, 마지막이면 캘린더 연결 해제) · [하나 더 추가](패널 설치 탭)
+function calendarList() {
+  const box = el('div', 'cals');
+  if (calendars.length) {
+    const ul = el('ul', 'cal-list');
+    const last = calendars.length === 1;
+    for (const c of calendars) {
+      const li = el('li');
+      li.dataset.id = c.id;
+      li.append(el('span', 'cal-kind', c.title), el('code', null, c.label), disconnectControl(document, {
+        ...calendarRemoveCopy(c, last), ...confirmOpts(`calendar:${c.id}`),
+        onConfirm: async () => {
+          const res = await cy.removeCalendar(c.id).catch(() => null);
+          if (!res?.ok) return { ok: false, error: res?.error || `빼지 못했어요. ${who()}에 연결되지 않았어요` };
+          flash(['캘린더를 뺐어요.', res.note].filter(Boolean).join(' '));
+          if (Array.isArray(res.items)) calendars = res.items;
+          refreshRows();
+          return res;
+        },
+      }));
+      ul.append(li);
+    }
+    box.append(ul);
+  }
+  const add = el('button', 'small ghost', '캘린더 하나 더 추가');
+  add.type = 'button';
+  add.title = '패널의 설치 탭에서 같은 안내로 주소를 하나 더 붙여요';
+  add.addEventListener('click', () => cy.openPanel('setup'));
+  box.append(add);
+  return box;
+}
+function loadCalendars() {
+  return cy.getCalendars?.().then((r) => { if (r?.ok && Array.isArray(r.items)) { calendars = r.items; renderRows(); } }).catch(() => {});
+}
+
 function rowEl(r) {
   const n = el('div', 'conn');
   n.dataset.id = r.id;
@@ -496,6 +533,7 @@ function rowEl(r) {
         return res;
       },
     }));
+    if (cap === 'calendar') main.append(calendarList());
   }
   if (needsSetupHint(r)) {
     const b = el('button', 'small primary', '설치 안내');
@@ -540,6 +578,7 @@ async function runCheck(id) {
 
 // 끊은 뒤: 연결 줄을 새로(싼 확인만)
 function refreshRows() {
+  loadCalendars();
   cy.getConnections().then((c) => { if (c?.ok && Array.isArray(c.data?.rows)) { rows = mergeRows(rows, c.data.rows); renderRows(); } }).catch(() => {});
 }
 
@@ -555,6 +594,7 @@ async function load() {
   else banner(null);
   if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderAutoMerge(); renderPhrases(); renderCharacter(); }
   if (c?.ok) {
+    await loadCalendars();
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];
     renderRows();
     for (const id of pendingChecks(rows)) runCheck(id); // 처음 여는 거면 비싼 확인(Claude·서비스)도 한 번
@@ -581,5 +621,6 @@ window.addEventListener('focus', () => {
 });
 // 채팅에서 바꾼 자동 머지 레포도 보이게
 window.addEventListener('focus', () => { cy.getSettings().then((r) => { if (r?.ok && settings) { settings = { ...settings, autoMerge: r.data.autoMerge ?? [] }; renderAutoMerge(); } }).catch(() => {}); });
+window.addEventListener('focus', () => { loadCalendars(); }); // 패널에서 캘린더를 더하거나 뺐으면
 window.addEventListener('focus', () => { if (!busy.size) cy.getConnections().then((c) => { if (c?.ok && Array.isArray(c.data?.rows)) { rows = mergeRows(rows, c.data.rows); renderRows(); } }).catch(() => {}); });
 load();

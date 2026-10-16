@@ -2,6 +2,7 @@
 // 데몬 SSE 를 여기서 받고 IPC 로 렌더러에 넘긴다. 렌더러는 네트워크 접근 없음.
 import { app, BrowserWindow, Menu, Tray, clipboard, dialog, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,6 +43,7 @@ import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, daemonArgs, loginIt
 import { createDaemonHost } from './src/daemon-host.js';
 import { RELEASES_API, checkDue, newestRelease, shouldNotify, updateBubble } from './src/update-check.js';
 import { denied } from './src/denied.js';
+import { withCalendarAdded, withCalendarRemoved, calendarRows, calendarUrlById, calendarUrls, hubDoneFor, calendarReloadNote, okCalendarId, CALENDAR_DUP } from './src/calendars.js';
 import { squirrelPlan, loginItemTarget, appUserModelId } from './src/squirrel.js';
 
 // 윈도우 Squirrel 설치기가 --squirrel-* 로 띄운 실행이면 바로 가기만 고치고 끝낸다(맨 아래 시작 부분에서 갈린다)
@@ -103,7 +105,7 @@ function writeSisa(data) {
 }
 
 // 시사 데몬이 읽는 설정(~/.cy-agent/config.json)에 연결을 넣는다. 다른 칸은 건드리지 않는다.
-// 파일이 깨져 있으면 아무것도 쓰지 않는다.
+// 파일이 깨져 있으면 아무것도 쓰지 않는다. 캘린더는 덮어쓰지 않고 더한다(개수 상한 없음). 이미 있는 주소면 'dup'
 function writeConnector(id, url) {
   const home = process.env.CY_AGENT_HOME ?? path.join(os.homedir(), '.cy-agent');
   const file = path.join(home, 'config.json');
@@ -117,12 +119,9 @@ function writeConnector(id, url) {
   }
   const conns = cfg.connectors && typeof cfg.connectors === 'object' ? { ...cfg.connectors } : {};
   if (id === 'gcal' || id === 'outlook') {
-    const cal = conns.calendar && typeof conns.calendar === 'object' ? { ...conns.calendar } : {};
-    const have = [cal.icsUrl, ...(Array.isArray(cal.icsUrls) ? cal.icsUrls : [])].filter((u) => typeof u === 'string');
-    if (!have.includes(url)) cal.icsUrls = [...(Array.isArray(cal.icsUrls) ? cal.icsUrls : []), url];
-    cal.mode = 'api';
-    if (!cal.timeZone) cal.timeZone = 'Asia/Seoul';
-    conns.calendar = cal;
+    const r = withCalendarAdded({ connectors: conns }, url);
+    if (!r.added) return 'dup';
+    conns.calendar = r.cfg.connectors.calendar;
   } else if (id === 'jira') {
     if (conns.issues && typeof conns.issues === 'object' && conns.issues.mode) return false;
     conns.issues = { mode: 'mcp', server: 'atlassian' };
@@ -190,6 +189,43 @@ async function disconnectBrain(p) {
   const view = sisaPublic(next);
   sendPanel('sisa', view);
   return { ok: true, ...view, offline: !connected };
+}
+
+// 캘린더 여러 개: 화면에는 주소 대신 id(sha-256 앞 16글자)와 가린 이름만 준다
+const calendarId = (url) => createHash('sha256').update(url).digest('hex').slice(0, 16);
+function readDaemonConfig() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(process.env.CY_AGENT_HOME ?? path.join(os.homedir(), '.cy-agent'), 'config.json'), 'utf8'));
+    return cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? cfg : {};
+  } catch {
+    return {};
+  }
+}
+const calendarList = () => calendarRows(readDaemonConfig(), calendarId);
+
+// 캘린더 하나 빼기: 그 주소만 config.json 에서 지우고, 연결을 더할 때처럼 데몬에 다시 읽게 알린다.
+// 마지막 하나면 [연결 해제](캘린더 전체)와 같다
+async function removeCalendar(id) {
+  const url = calendarUrlById(readDaemonConfig(), id, calendarId);
+  if (!url) return { ok: false, error: '그 캘린더를 찾지 못했어요. 이미 빠졌을 수 있어요.', items: calendarList() };
+  const before = calendarUrls(readDaemonConfig());
+  if (before.length <= 1) {
+    const r = await disconnectConnector('calendar');
+    return { ...r, items: calendarList() };
+  }
+  const wrote = editDaemonConfig((cfg) => withCalendarRemoved(cfg, url));
+  if (wrote === null) return { ok: false, error: `${who()} 설정 파일에 쓰지 못했어요.`, items: calendarList() };
+  let reload = null;
+  if (wrote && connected) {
+    const r = await post('/connectors/reload');
+    reload = r.ok ? r.data : null;
+  }
+  const prev = normalizeSisa(readSisa());
+  const next = { ...prev, done: hubDoneFor(prev.done, calendarUrls(wrote || readDaemonConfig())) };
+  writeSisa(next);
+  sendPanel('sisa', sisaPublic(next));
+  sendPanel('dashboard', {});
+  return { ok: true, items: calendarList(), note: calendarReloadNote(reload, !connected) };
 }
 
 // [연결 해제] 커넥터(Slack·캘린더·메일·이슈): 그 기능만 off(토큰·ICS 주소도 지움) + 다시 읽기. 데몬이 꺼져 있으면 파일에 직접.
@@ -1129,6 +1165,8 @@ function setupIPC() {
     sisa: () => sisaPublic(readSisa()),
     disconnectBrain: (p) => disconnectBrain(p),
     disconnectConnector: (cap) => disconnectConnector(cap),
+    calendars: () => ({ ok: true, items: calendarList() }),
+    removeCalendar: (id) => removeCalendar(id),
     copyText: (text) => { clipboard.writeText(text); return { ok: true }; },
     appPrefs,
     preload: path.join(__dirname, 'preload-settings.cjs'),
@@ -1223,6 +1261,7 @@ function setupIPC() {
     const wrote = writeConnector(id, url);
     const done = { ...prev.done, [id]: true };
     writeSisa({ ...prev, done });
+    if (wrote === 'dup') return { ok: false, duplicate: true, error: CALENDAR_DUP, done };
     // 데몬은 커넥터를 시작 때 한 번 읽는다 — 다시 읽게 알린다(launchd 아래면 데몬이 스스로 다시 켜진다)
     let reload = null;
     if (wrote && connected) {
@@ -1235,6 +1274,9 @@ function setupIPC() {
   // [연결 해제] AI(provider = sisa id) · 커넥터(cap)
   ipcMain.handle('sisa-disconnect', (e, provider) => (fromOurs(e) && okBrainId(provider) ? disconnectBrain(provider) : denied()));
   ipcMain.handle('connector-disconnect', (e, cap) => (fromOurs(e) && okCap(cap) ? disconnectConnector(cap) : denied()));
+  // 연결된 캘린더 목록(가린 이름만) · 하나 빼기(id)
+  ipcMain.handle('calendar-list', (e) => (fromOurs(e) ? { ok: true, items: calendarList() } : denied()));
+  ipcMain.handle('calendar-remove', (e, id) => (fromOurs(e) && okCalendarId(id) ? removeCalendar(id) : denied()));
   // 연결된 AI의 쓸 수 있는 모델 목록. 키는 돌려주지 않는다.
   ipcMain.handle('sisa-models', async (e, provider) => {
     if (!fromOurs(e) || typeof provider !== 'string') return denied();
