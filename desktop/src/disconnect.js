@@ -12,11 +12,11 @@ const CAP_LABEL = { slack: 'Slack', calendar: '캘린더', mail: '메일', issue
 export const HUB_CAP = { gcal: 'calendar', outlook: 'calendar', slack: 'slack', jira: 'issues' };
 export const hubsOf = (cap) => Object.keys(HUB_CAP).filter((id) => HUB_CAP[id] === cap);
 
-export const BRAIN_TITLE = { claudecode: 'Claude Code', codexcli: 'Codex', gemini: 'Gemini', openai: 'OpenAI(GPT)', claude: 'Claude API 키' };
+export const BRAIN_TITLE = { claudecode: 'Claude Code', codexcli: 'Codex', gemini: 'Gemini', openai: 'OpenAI(GPT)', claude: 'Claude API 키', genspark: 'Genspark' };
 // 데몬 provider → 앱 id
 const FROM_DAEMON = Object.fromEntries(Object.entries(DAEMON_BRAIN).map(([k, v]) => [v, k]));
 // 데몬 brain.keys 이름 → 앱 id
-const KEY_OF = { gemini: 'gemini', openai: 'openai', claude: 'anthropic' };
+const KEY_OF = { gemini: 'gemini', openai: 'openai', claude: 'anthropic', genspark: 'genspark' };
 
 const okServer = (s) => typeof s === 'string' && /^[\w.@-]{1,64}$/.test(s);
 export const mcpRemoveCommand = (server) => (okServer(server) ? `claude mcp remove ${server}` : '');
@@ -35,7 +35,7 @@ export function disconnectBrainBody(p, daemonProvider = '', appActive = false) {
 }
 
 // 데몬이 꺼져 있을 때 앱이 config.json 에 직접 쓸 값: disconnectBrainBody 를 그대로 얹는다(다른 칸·다른 키는 그대로)
-const KEY_FIELD = { gemini: 'geminiApiKey', openai: 'openaiApiKey', anthropic: 'anthropicApiKey' };
+const KEY_FIELD = { gemini: 'geminiApiKey', openai: 'openaiApiKey', anthropic: 'anthropicApiKey', genspark: 'gensparkApiKey' };
 export function withBrainBody(cfg, body) {
   const c = cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? cfg : {};
   const b = body?.brain;
@@ -53,6 +53,7 @@ export function brainDisconnectCopy(p, active) {
   const ask = `${title} 연결을 끊을까요?`;
   const what = cli
     ? `시사에서 ${title}를 더 쓰지 않아요. ${title} 로그인은 이 맥에 그대로 남아요.`
+    : p === 'genspark' ? '저장해 둔 키를 시사에서 지우고 Genspark 를 더 쓰지 않아요. gsk login 키 파일은 그대로 남아요.'
     : '저장해 둔 키를 시사에서 지워요.';
   const after = active ? ' 지금 쓰는 AI라서 끊으면 「AI 없이 쓰기」로 바뀌어요.' : '';
   return { ask, note: `${what}${after}`, done: `${title} 연결을 끊었어요.` };

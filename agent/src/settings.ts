@@ -335,8 +335,9 @@ export class Settings {
       calendarAlert: calendarAlertOf(c.calendarAlert),
       brain: {
         provider: c.brain?.provider ?? "claude-code", model: c.models.general,
-        // genspark: 설정에 키가 있거나 gsk login 파일에 키가 있으면 true(키 값은 내보내지 않는다)
-        keys: { gemini: !!c.brain?.geminiApiKey, openai: !!c.brain?.openaiApiKey, anthropic: !!c.brain?.anthropicApiKey, genspark: !!c.brain?.gensparkApiKey || !!gskLoginKey(this.env) },
+        // genspark: 설정에 키가 있거나, Genspark 를 고른 채 gsk login 파일에 키가 있으면 true(키 값은 내보내지 않는다).
+        // 고르지 않았으면 gsk login 만 해 둔 것으로 「연결됨」이 되지 않게 파일은 보지 않는다
+        keys: { gemini: !!c.brain?.geminiApiKey, openai: !!c.brain?.openaiApiKey, anthropic: !!c.brain?.anthropicApiKey, genspark: !!c.brain?.gensparkApiKey || (c.brain?.provider === "genspark" && !!gskLoginKey(this.env)) },
       },
       character: isCharacterId(c.character) ? c.character : DEFAULT_CHARACTER,
       characters: characterOptions(),

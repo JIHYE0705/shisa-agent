@@ -10,6 +10,7 @@ export const PROVIDER_TITLE = {
   gemini: 'Gemini',
   claude: 'Claude (API 키)',
   openai: 'GPT',
+  genspark: 'Genspark',
   claudecode: 'Claude Code',
   codexcli: 'Codex',
 };

@@ -449,7 +449,8 @@ export function clearApiDraft() {
   apiDraft = '';
 }
 
-function aiKeyView({ provider, say, keyStatus, onOpen, onCopy, onCheck, onNext, onBack }) {
+// keyNote: 확인은 됐지만 알릴 말(Genspark 무료 플랜 → 크레딧 필요). gskFound: gsk login 한 Genspark 키가 이 맥에 있음
+function aiKeyView({ provider, say, keyStatus, keyNote, gskFound, onOpen, onCopy, onCheck, onUseGsk, onNext, onBack }) {
   const ok = keyStatus === 'ok';
   const input = h('input', {
     type: 'password',
@@ -471,6 +472,11 @@ function aiKeyView({ provider, say, keyStatus, onOpen, onCopy, onCheck, onNext, 
       h('small', { text: `키는 채팅에 붙이지 마세요. 확인을 누르면 ${provider.title}를 만든 회사에만 키가 맞는지 물어봅니다.` }),
       keyStatus && !ok ? h('p.setup-gate', null, ...richNodes(keyStatus)) : null,
       ok ? h('p.setup-gate.ok', null, ...richNodes('**완료.** 키가 확인되었습니다. 다음으로 갈 수 있습니다.')) : null,
+      ok && keyNote ? h('p.setup-gate', null, ...richNodes(keyNote)) : null,
+      provider.cli ? codeBlock('터미널', provider.cli, onCopy) : null,
+      provider.pricing || (provider.cli && gskFound && onUseGsk) ? h('div.setup-fields.row', null,
+        provider.cli && gskFound && onUseGsk ? h('button.primary', { type: 'button', text: 'gsk login 한 키 쓰기', onclick: onUseGsk }) : null,
+        provider.pricing ? h('button.ghost', { type: 'button', text: '요금제 열기', onclick: () => onOpen(provider.pricing) }) : null) : null,
       provider.stuck?.length ? h('details.setup-fold', null,
         h('summary', { text: '막히면' }),
         h('ul', null, provider.stuck.map((d) => h('li', null, ...richNodes(d))))) : null),
@@ -518,7 +524,7 @@ export function renderSetup(root, state) {
       return;
     }
     root.replaceChildren(aiKeyView({
-      provider, say: sayFor(whoId()).brain, keyStatus, onOpen, onCopy, onCheck: onCheckKey, onNext: onKeyNext, onBack,
+      provider, say: sayFor(whoId()).brain, keyStatus, keyNote: state.keyNote, gskFound: state.gskFound, onOpen, onCopy, onCheck: onCheckKey, onUseGsk: state.onUseGsk, onNext: onKeyNext, onBack,
     }));
     return;
   }

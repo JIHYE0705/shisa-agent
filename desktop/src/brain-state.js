@@ -85,7 +85,7 @@ export function connectCard(view) {
   return {
     title: view?.provider === 'claude-code' && view?.known ? 'Claude Code 로그인이 필요해요' : view?.local ? '지금은 AI 없이 쓰는 중이에요' : '아직 대화할 AI(뇌)가 연결되지 않았어요',
     lines: [
-      'AI는 선택이에요. 대화하고 싶으면 **Claude Code** 나 **Codex** 로그인, 또는 **Gemini·OpenAI·Claude API 키** 중 하나를 연결하면 돼요.',
+      'AI는 선택이에요. 대화하고 싶으면 **Claude Code** 나 **Codex** 로그인, 또는 **Gemini·OpenAI·Claude API·Genspark 키** 중 하나를 연결하면 돼요.',
       '연결하면: 캐릭터 더블클릭으로 말 걸기 · 이 채팅 · 브리핑 요약',
       '지금도 되는 것: 할 일 보기 · 오늘 할 일 표 · 회의 알림 · 아래 정해진 말',
     ],

@@ -18,6 +18,26 @@ const MODELS = {
 export const OPENAI_NO_CREDIT = '키는 맞을 수 있지만 크레딧이 없습니다. 플랫폼 결제에서 크레딧을 사야 합니다.';
 export const OPENAI_NO_PERMISSION = '키에 권한이 모자랍니다. OpenAI 플랫폼의 API keys 에서 이 키의 권한을 All 로 바꾸거나, Restricted 면 Model capabilities(Chat completions) 를 Write 로 켜 주세요.';
 
+// Genspark LLM 프록시(OpenAI 호환). 무료 플랜 키도 모델 목록(GET /models)은 열리지만, 대화는 200 에 요금 안내문을 준다
+// 출처: 공식 CLI @genspark/cli `gsk init-pi` 설정(openai-completions, maxTokensField max_tokens) · 2026-10 무료 키로 시험
+export const GENSPARK_URL = 'https://www.genspark.ai/api/llm_proxy/v1';
+export const GENSPARK_PRICING = 'https://www.genspark.ai/pricing';
+export const GENSPARK_NO_CREDIT = `Genspark 키는 맞지만 크레딧이 필요해요(무료 플랜은 API를 못 써요). 요금제: ${GENSPARK_PRICING}`;
+export const GENSPARK_BAD_KEY = 'Genspark 키가 맞지 않아요(gsk login 을 다시 해 주세요)';
+export const GENSPARK_PREFERRED = ['claude-sonnet-5-5', 'gpt-5.4-mini']; // 데몬(providers.ts)과 같은 순서
+export const isGensparkCreditNotice = (text) => /free-plan credits|credit_exhausted|genspark\.ai\/pricing|credits?\b[^.]{0,40}\b(exhausted|insufficient)|insufficient credits?/i.test(String(text ?? ''));
+export const pickGensparkModel = (ids) => GENSPARK_PREFERRED.find((m) => ids.includes(m)) ?? ids[0] ?? '';
+
+// gsk login(공식 CLI)이 남긴 키(~/.genspark-tool-cli/config.json 의 api_key). 읽기만 한다. 없으면 ''
+export function gskLoginKey(home = os.homedir(), read = fs.readFileSync) {
+  try {
+    const v = JSON.parse(read(path.join(home, '.genspark-tool-cli', 'config.json'), 'utf8'))?.api_key;
+    return typeof v === 'string' && /^gsk-\S+$/.test(v.trim()) ? v.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
 export const OPENAI_NO_MODEL_LIST = '이 키에는 모델 목록을 볼 권한(Models: Read)이 없습니다. 대화는 기본 모델로 됩니다.';
 
 // 키를 싣는 요청은 리다이렉트를 따라가지 않고(다른 곳으로 키가 새지 않게) 쿠키·자격 증명도 안 보낸다.
@@ -45,11 +65,44 @@ export function errorText(text) {
 async function readBody(res, key) {
   const text = await res.text();
   if (res.ok) return { ok: true, text };
-  return { ok: false, status: res.status, error: clip(errorText(text), key) || `HTTP ${res.status}` };
+  return { ok: false, status: res.status, error: clip(errorText(text), key) || `HTTP ${res.status}`, raw: clip(text, key) };
 }
 
 const isQuota = (e) => /insufficient_quota|billing_hard_limit|billing_not_active/i.test(e);
 const isPermission = (status, e) => status === 403 || /insufficient permissions|missing scopes?|insufficient_permissions/i.test(e);
+
+// Genspark 키 확인: 목록(GET /models) → 그 목록의 모델로 아주 짧은 대화 한 번(max_tokens 1). 무료 플랜이면 요금 안내문이 온다.
+// 키는 맞고 크레딧만 없으면 ok + warn(형식은 맞춰 두고, 결제하면 바로 쓰게)
+async function checkGenspark(key, fetchImpl) {
+  const auth = { Authorization: `Bearer ${key}` };
+  const res = await fetchImpl(`${GENSPARK_URL}/models`, { headers: auth });
+  const body = await readBody(res, key);
+  if (!body.ok) return { ok: false, error: gensparkError(body) };
+  const ids = (JSON.parse(body.text)?.data ?? []).map((m) => String(m?.id ?? '')).filter(Boolean);
+  const model = pickGensparkModel(ids);
+  if (!model) return { ok: false, error: 'Genspark 모델 목록이 비어 있어요. 잠시 뒤 다시 확인해 주세요.' };
+  const chat = await fetchImpl(`${GENSPARK_URL}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...auth },
+    body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  const cb = await readBody(chat, key);
+  if (!cb.ok) return { ok: false, error: gensparkError(cb) };
+  let content = '';
+  try { content = String(JSON.parse(cb.text)?.choices?.[0]?.message?.content ?? ''); } catch { /* 아래 */ }
+  if (isGensparkCreditNotice(content)) return { ok: true, warn: GENSPARK_NO_CREDIT };
+  return { ok: true };
+}
+
+// Genspark 오류 본문: {"detail": "..."} 또는 {"message": "...", "errors": [...]}
+function gensparkError(body) {
+  if (body.status === 401 || body.status === 403) return GENSPARK_BAD_KEY;
+  if (body.status === 400 && /not allowed/i.test(body.raw ?? body.error)) return '그 모델은 Genspark 에서 못 써요.';
+  if (body.status === 422) return 'Genspark 가 요청 형식을 받지 않았어요.';
+  if (body.status === 429) return 'Genspark 사용량 한도에 걸렸어요. 조금 뒤 다시 확인해 주세요.';
+  if (body.status >= 500) return 'Genspark 가 지금 답하지 못했어요. 조금 뒤 다시 확인해 주세요.';
+  return `Genspark 확인에 실패했어요 (HTTP ${body.status}).`;
+}
 
 // OpenAI 키 확인. 목록(GET /models)이 403 이면 제한 키(api.model.read 없음)일 수 있다 → 아주 짧은 대화 한 번으로 다시 본다
 async function checkOpenai(key, fetchImpl) {
@@ -81,6 +134,7 @@ export async function checkLlm(provider, apiKey, rawFetch = globalThis.fetch) {
       return body.ok ? { ok: true } : { ok: false, error: body.error };
     }
     if (provider === 'openai') return await checkOpenai(key, fetchImpl);
+    if (provider === 'genspark') return await checkGenspark(key, fetchImpl);
     if (provider === 'claude') {
       const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -290,6 +344,10 @@ export function pickModels(provider, json) {
   if (provider === 'claude') {
     return (json?.data ?? []).map((m) => ({ id: String(m.id), label: m.display_name || '' }));
   }
+  if (provider === 'genspark') {
+    // 프록시가 주는 목록 그대로(이 목록에 있는 것만 데몬이 보낸다)
+    return (json?.data ?? []).map((m) => String(m?.id ?? '')).filter(Boolean).map((id) => ({ id, label: '' }));
+  }
   if (provider === 'openai') {
     return (json?.data ?? [])
       .map((m) => String(m.id))
@@ -313,14 +371,18 @@ export async function listModels(provider, apiKey, rawFetch = globalThis.fetch) 
       res = await fetchImpl('https://api.anthropic.com/v1/models?limit=100', { headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } });
     } else if (provider === 'openai') {
       res = await fetchImpl('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${key}` } });
+    } else if (provider === 'genspark') {
+      res = await fetchImpl(`${GENSPARK_URL}/models`, { headers: { Authorization: `Bearer ${key}` } });
     } else {
       return { ok: false, error: '알 수 없는 AI입니다.' };
     }
     const body = await readBody(res, key);
     if (!body.ok && provider === 'openai' && isQuota(body.error)) return { ok: false, error: OPENAI_NO_CREDIT };
     if (!body.ok && provider === 'openai' && isPermission(body.status, body.error)) return { ok: false, error: OPENAI_NO_MODEL_LIST };
+    if (!body.ok && provider === 'genspark') return { ok: false, error: gensparkError(body) };
     if (!body.ok) return { ok: false, error: body.error };
-    return { ok: true, models: pickModels(provider, JSON.parse(body.text)).slice(0, 60) };
+    const models = pickModels(provider, JSON.parse(body.text));
+    return { ok: true, models: provider === 'genspark' ? models : models.slice(0, 60) }; // Genspark 는 다 보여 준다(고를 수 있는 건 이 목록뿐)
   } catch (e) {
     return { ok: false, error: clip(e?.message, key) || '목록을 못 가져왔습니다.' };
   }

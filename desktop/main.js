@@ -29,8 +29,8 @@ import { disconnectBrainBody, withBrainBody, withConnectorOff, withoutHubDone, r
 import { ATTACH_SCHEME, resolveAttachUrl, cleanAttachIds, cleanUpload, okStoredName } from './src/attachments.js';
 import { agentLogin } from './src/agent-login.js';
 import { createCapsProbe, hasCoder, sameCaps, coderHint } from './src/caps.js';
-import { checkLlm, listModels, KEY_REQ } from './src/llm-check.js';
-import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, withoutProvider, activeProvider, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
+import { checkLlm, listModels, gskLoginKey, KEY_REQ } from './src/llm-check.js';
+import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withGsk, withSkip, withoutProvider, activeProvider, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
 import { personaFor } from './src/persona.js';
 import { okCharacter, characterName, appName } from './src/character.js';
 import { applyCharacters } from './src/character-registry.js';
@@ -1267,7 +1267,20 @@ function setupIPC() {
     if (!result.ok) return { ok: false, error: result.error || '확인에 실패했습니다.' };
     const next = withKey(readSisa(), provider, key);
     writeSisa(next);
-    return { ok: true, brainSaved: await writeBrain(next) };
+    // warn: 키는 맞지만 쓸 수 없는 상태(Genspark 무료 플랜 → 크레딧 필요). 연결은 해 두고 그 말을 보여 준다
+    return { ok: true, ...(result.warn ? { warn: result.warn } : {}), brainSaved: await writeBrain(next) };
+  });
+  // Genspark 「gsk login 한 키 쓰기」: 키는 저장하지 않고(앱·데몬 모두) ~/.genspark-tool-cli/config.json 을 쓸 때마다 읽는다
+  ipcMain.handle('gsk-found', (e) => (fromOurs(e) ? { ok: true, found: !!gskLoginKey() } : denied()));
+  ipcMain.handle('sisa-use-gsk', async (e) => {
+    if (!fromOurs(e)) return denied();
+    const key = gskLoginKey();
+    if (!key) return { ok: false, error: 'gsk login 한 키를 찾지 못했어요. 터미널에서 gsk login 을 먼저 해 주세요.' };
+    const result = await checkLlm('genspark', key, keyNetFetch);
+    if (!result.ok) return { ok: false, error: result.error || '확인에 실패했습니다.' };
+    const next = withGsk(readSisa());
+    writeSisa(next);
+    return { ok: true, ...(result.warn ? { warn: result.warn } : {}), brainSaved: await writeBrain(next) };
   });
   ipcMain.handle('sisa-use-cli', async (e, agent) => {
     if (!fromOurs(e) || (agent !== 'claude' && agent !== 'codex')) return denied();
@@ -1313,7 +1326,8 @@ function setupIPC() {
     if (!fromOurs(e) || typeof provider !== 'string') return denied();
     const data = normalizeSisa(readSisa());
     if (!connectedProviders(data).includes(provider)) return { ok: false, error: '연결되어 있지 않습니다.' };
-    return listModels(provider, data.keys[provider], keyNetFetch);
+    const key = data.keys[provider] || (provider === 'genspark' && data.gsk ? gskLoginKey() : '');
+    return listModels(provider, key, keyNetFetch);
   });
   // { chat: {provider, model} | 'none', code: 모델 } 중 온 것만 바꾼다
   ipcMain.handle('sisa-set-models', async (e, pick) => {

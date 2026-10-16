@@ -133,6 +133,8 @@ let setupCursor = 0;
 let setupChoices = {};
 let setupLink = '';
 let keyStatus = '';
+let keyNote = ''; // 키는 맞지만 알릴 말(Genspark 무료 플랜 → 크레딧 필요)
+let gskFound = false; // gsk login 한 Genspark 키가 이 맥에 있나
 let afterConnect = ''; // 'claudecode'·'codexcli': 그 도구 연결을 마치면 시사의 AI로 쓴다
 let setupCalendars = []; // 연결된 캘린더(main calendar-list: 가린 이름만, 주소 없음)
 let setupSlotError = null; // 저장하려다 막힌 칸 값({ id, value, text }, 예: 이미 연결된 캘린더)
@@ -534,6 +536,7 @@ function watchAgentLogin() {
 
 function keyFail(error) {
   const e = String(error || '');
+  if (/^(Genspark|그 모델은 Genspark|gsk login)/.test(e)) return e; // Genspark 는 llm-check.js 의 말 그대로(무엇을 할지 들어 있다)
   if (/credit|balance|billing|quota|크레딧/i.test(e) && !/RESOURCE_EXHAUSTED/.test(e)) {
     return '키는 맞을 수 있지만 **크레딧이 없습니다.** 결제 크레딧을 산 뒤 다시 **확인**을 누르세요.';
   }
@@ -558,7 +561,7 @@ function renderSetupView(resetScroll) {
     return;
   }
   clampSetupCursor();
-  const key = `${whoId()}|${setupPhase}|${setupName}|${setupRepos.join(',')}|${setupReadSessions}|${JSON.stringify(detected)}|${JSON.stringify(brain)}|${(sisa.connected || []).join(',')}|${setupAgent}|${setupLink}|${setupCursor}|${keyStatus}|${JSON.stringify(sisa.done)}|${setupPicked.join(',')}|${JSON.stringify(setupChoices)}|${agentLoginState.loggedIn}|${agentLoginState.installed}|${JSON.stringify(setupCalendars)}|${JSON.stringify(setupSlotError)}`;
+  const key = `${whoId()}|${setupPhase}|${setupName}|${setupRepos.join(',')}|${setupReadSessions}|${JSON.stringify(detected)}|${JSON.stringify(brain)}|${(sisa.connected || []).join(',')}|${setupAgent}|${setupLink}|${setupCursor}|${keyStatus}|${keyNote}|${gskFound}|${JSON.stringify(sisa.done)}|${setupPicked.join(',')}|${JSON.stringify(setupChoices)}|${agentLoginState.loggedIn}|${agentLoginState.installed}|${JSON.stringify(setupCalendars)}|${JSON.stringify(setupSlotError)}`;
   if (!resetScroll && key === setupKey && $('sec-setup').childElementCount) {
     watchAgentLogin();
     return;
@@ -630,19 +633,37 @@ function renderSetupView(resetScroll) {
       }
       clearApiDraft();
       keyStatus = '';
+      keyNote = '';
       setupLink = id;
       setupPhase = phaseAfterBrain(id);
       saveSetup();
       redraw(true);
+      if (id === 'genspark') {
+        try { gskFound = !!(await cy.gskFound?.())?.found; } catch { gskFound = false; }
+        redraw(false);
+      }
     },
     onSkipBrain: () => {
       setupPhase = phaseAfterBrain('skip');
       saveSetup();
       redraw(true);
     },
+    keyNote,
+    gskFound,
+    onUseGsk: async () => {
+      let r = { ok: false, error: '확인에 실패했습니다.' };
+      try { r = (await cy.sisaUseGsk()) || r; } catch { /* 아래 문구 */ }
+      keyNote = r.ok && r.warn ? r.warn : '';
+      if (r.ok) {
+        keyStatus = 'ok';
+        try { sisa = { ...sisa, ...(await cy.sisaGet()) }; } catch { sisa = { ...sisa, provider: 'genspark', hasKey: true }; }
+      } else keyStatus = keyFail(r.error);
+      redraw(false);
+    },
     onCheckKey: async (apiKey) => {
       let r = { ok: false, error: '확인에 실패했습니다.' };
       try { r = (await cy.sisaCheck(setupLink, apiKey)) || r; } catch { /* 아래 문구 */ }
+      keyNote = r.ok && r.warn ? r.warn : '';
       if (r.ok) {
         keyStatus = 'ok';
         try { sisa = { ...sisa, ...(await cy.sisaGet()) }; } catch { sisa = { ...sisa, provider: setupLink, hasKey: true }; }

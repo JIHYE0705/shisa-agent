@@ -62,6 +62,27 @@ export const AI_PROVIDERS = [
     ],
     stuck: ['크레딧이 반영되기까지 몇 분 걸릴 수 있습니다. 확인이 실패하면 조금 있다가 다시 누르세요.'],
   },
+  {
+    id: 'genspark',
+    title: 'Genspark',
+    blurb: 'Genspark 의 LLM 프록시입니다. 여러 회사 모델(Claude·GPT 등)을 키 하나로 씁니다. 유료 플랜이 있어야 대답합니다.',
+    note: '무료 플랜으로는 대답하지 않습니다. 키는 맞아도 크레딧이 필요하다고 나옵니다.',
+    keyHint: 'gsk-',
+    url: 'https://www.genspark.ai',
+    pricing: 'https://www.genspark.ai/pricing',
+    cli: 'npm install -g @genspark/cli\ngsk login',
+    rows: [
+      { text: '브라우저에 **Genspark** 가 열립니다. 계정이 없으면 가입합니다.', link: true },
+      '아래 **요금제 열기**에서 유료 플랜을 고릅니다. 무료 플랜은 API 를 쓸 수 없습니다.',
+      '터미널에서 아래 명령으로 공식 CLI 를 깔고 로그인합니다. 키가 이 맥에 저장됩니다.',
+      '아래 **gsk login 한 키 쓰기**를 누르면 그 키를 씁니다. 키는 시사 설정에 따로 저장하지 않습니다.',
+      { keys: [MOD, 'V'], text: '키를 직접 붙여 넣어도 됩니다. **gsk-** 로 시작합니다. 붙인 뒤 **확인**을 누릅니다.' },
+    ],
+    stuck: [
+      '「크레딧이 필요해요」가 나오면 키는 맞은 것입니다. 유료 플랜을 고른 뒤 다시 **확인**을 누르세요.',
+      '「키가 맞지 않아요」가 나오면 터미널에서 **gsk login** 을 다시 하세요.',
+    ],
+  },
 ];
 
 // 키 없이, 이 맥에 로그인된 Claude Code로 말하는 길
@@ -87,6 +108,7 @@ export const BRAIN_CHOICES = [
   { id: 'gemini', title: 'Gemini 키', blurb: '구글 AI 키를 붙여 넣어요. 카드 없이 무료로 만들 수 있어요.' },
   { id: 'openai', title: 'OpenAI(GPT) 키', blurb: 'OpenAI 플랫폼 키를 붙여 넣어요. 크레딧이 있어야 대답해요.' },
   { id: 'claude', title: 'Claude API 키', blurb: 'Anthropic 콘솔 키를 붙여 넣어요. 크레딧이 있어야 대답해요.' },
+  { id: 'genspark', title: 'Genspark', blurb: 'gsk login 한 키를 쓰거나 키를 붙여 넣어요. Claude·GPT 등 여러 모델을 고를 수 있어요. 유료 플랜이 있어야 대답해요.' },
   { id: 'none', local: true, title: 'AI 없이 쓰기', blurb: '준비물도 결제도 필요 없어요. 할 일, 오늘 할 일 표, 캘린더(ICS) 회의 알림, 인사와 응원은 그대로 돼요. AI는 나중에 설정에서 언제든 연결할 수 있어요.' },
 ];
 // 「더 연결하기」(선택): 캘린더 ICS · Slack · 레포 폴더
