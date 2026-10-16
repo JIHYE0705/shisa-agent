@@ -229,12 +229,23 @@ export function occurrenceDates(start: IcsTime, rule: Record<string, string>, to
     if (dayNum(x) < startDay) return true;
     const ms = toUtc(x);
     if (ms > untilMs || made >= count || ms > stopAfterMs) return false;
+    // BYMONTH·BYMONTHDAY·BYDAY 는 거르기다 — COUNT 는 거른 뒤 남은 회차만 센다(DAILY 의 BYDAY · MONTHLY 의 BYDAY+BYMONTHDAY 도)
+    if (months.length && !months.includes(x.mo)) return true;
+    if (mdays.length && !mdays.some((d) => x.d === (d > 0 ? d : daysIn(x.y, x.mo) + d + 1))) return true;
+    if (days.length && freq === "DAILY" && !days.some((r) => r.wd === weekday(x))) return true;
     made++;
     if (ms >= startAfterMs) out.push(x);
     return out.length < max;
   };
   if (!["DAILY", "WEEKLY", "MONTHLY", "YEARLY"].includes(freq)) return [s0];
+  const endMs = Math.min(stopAfterMs, untilMs);
   for (let k = 0; k < 200000; k++) {
+    // 거르기에 맞는 날이 하나도 없는 규칙(BYMONTH=2;BYMONTHDAY=31)도 이 주기의 첫날이 창을 넘으면 멈춘다
+    const mi = start.mo - 1 + k * interval;
+    const first = freq === "DAILY" ? fromDayNum(startDay + k * interval)
+      : freq === "WEEKLY" ? fromDayNum(startDay - ((weekday(s0) + 6) % 7) + k * interval * 7)
+      : freq === "MONTHLY" ? { y: start.y + Math.floor(mi / 12), mo: (mi % 12) + 1, d: 1 } : { y: start.y + k * interval, mo: 1, d: 1 };
+    if (made >= count || toUtc(first) > endMs) return out;
     let cands: Ymd[] = [];
     if (freq === "DAILY") cands = [fromDayNum(startDay + k * interval)];
     else if (freq === "WEEKLY") {

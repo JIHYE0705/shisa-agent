@@ -230,7 +230,8 @@ export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string }; title?: string };
-export function attachmentInput(list: Attachment[], threadId: string, o: { dir?: string; read?: (p: string) => Buffer } = {}): { note: string; blocks: ContentBlock[] } {
+// tools: false = 파일을 열 도구가 없는 뇌(Claude Code 가 아닌 연결) — 못 붙인 파일은 "열어 봐라" 대신 못 받았다고 적는다
+export function attachmentInput(list: Attachment[], threadId: string, o: { dir?: string; read?: (p: string) => Buffer; tools?: boolean } = {}): { note: string; blocks: ContentBlock[] } {
   const read = o.read ?? ((p: string) => readFileSync(p));
   const dir = o.dir ?? ATTACH_DIR;
   const blocks: ContentBlock[] = [];
@@ -253,6 +254,8 @@ export function attachmentInput(list: Attachment[], threadId: string, o: { dir?:
       text += bytes.length;
       blocks.push({ type: "text", text: `<첨부 name="${a.name.replace(/"/g, "'")}" path="${p}">\n${bytes.toString("utf8")}\n</첨부>` });
       lines.push(`${head} — 아래에 내용을 붙였다`);
+    } else if (o.tools === false) {
+      lines.push(`${head} — 이 AI 연결은 파일을 열 수 없어 내용을 못 받았다. 내용을 봤다고 하지 말고, 작은 글·그림·PDF 로 다시 붙이거나 Claude Code 로 연결하면 볼 수 있다고 말하라`);
     } else {
       lines.push(`${head} — ${a.kind === "image" || a.kind === "pdf" ? "커서 직접 안 붙였다. Read 로 열어 봐라" : "Read(글·그림·PDF·ipynb)나 Bash(unzip -p·python 등 — docx/xlsx/pptx 는 압축 XML)로 열어 봐라"}`);
     }

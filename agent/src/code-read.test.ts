@@ -7,7 +7,7 @@ import { isCodeReadCall, isSecretPath, relatedRepo, repoOf, codeBlock, checkoutS
 import { execFileSync } from "node:child_process";
 import { readOnlyHookFor, stepName, toolOptions } from "./brain.ts";
 import { chatAskOpts, chatPrompt } from "./chat.ts";
-import { loadConfig } from "./config.ts";
+import { HOME_DIR, loadConfig } from "./config.ts";
 import { Store } from "./store.ts";
 
 function fixture() {
@@ -156,4 +156,15 @@ test("로컬 체크아웃 상태: 지금 브랜치 + origin/HEAD·origin/develop
   // 최신이면 확인하라는 말은 없다, git 레포가 아니면 메모 없음
   assert.doesNotMatch(checkoutNote({ branch: "main", behind: [{ ref: "origin/main", n: 0 }] })!, /git show/);
   assert.equal(checkoutState(mkdtempSync(join(tmpdir(), "cy-nogit-"))), undefined);
+});
+
+test("isSecretPath: 심볼릭 링크로 이름을 숨긴 .env·~/.cy-agent 도 비밀", { skip: process.platform === "win32" }, () => {
+  const f = fixture(), app = join(f.root, "app");
+  symlinkSync(join(app, ".env"), join(app, "notes.txt"));
+  assert.equal(isSecretPath(join(app, "notes.txt")), true);
+  assert.equal(isCodeReadCall("Read", { file_path: join(app, "notes.txt") }, { roots: f.roots, cwd: app }).allow, false);
+  mkdirSync(HOME_DIR, { recursive: true });
+  symlinkSync(HOME_DIR, join(app, "state"));
+  assert.equal(isSecretPath(join(app, "state", "config.json")), true);
+  assert.equal(isSecretPath(join(app, "README.md")), false);
 });

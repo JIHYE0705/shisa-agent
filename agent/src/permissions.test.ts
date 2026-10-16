@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Actions, PERMISSION } from "./actions.ts";
@@ -777,4 +777,21 @@ test("Windows: 실제 경로 조회는 한 판정 안에서 다시 쓰고, 풀�
   const t1 = performance.now();
   assert.ok(deny("Read", { file_path: deep }));
   assert.ok(performance.now() - t1 < 500);
+});
+test("POSIX 도 심볼릭 링크로 이름을 숨긴 비밀 파일(.env · ~/.cy-agent/config.json)을 하드 차단", { skip: process.platform === "win32" }, () => {
+  const d = join(repo, "linked");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, ".env"), "TOKEN=x");
+  symlinkSync(join(d, ".env"), join(d, "notes.txt"));
+  assert.ok(deny("Read", { file_path: join(d, "notes.txt") }));
+  assert.ok(!isAutoAllowed("Bash", { command: `cat ${join(d, "notes.txt")}` }, ctx)); // 셸은 글로 보니 하드 차단은 아니어도 묻지 않고 읽지는 않는다
+  mkdirSync(ctx.cyHome!, { recursive: true });
+  writeFileSync(join(ctx.cyHome!, "config.json"), "{}");
+  symlinkSync(join(ctx.cyHome!, "config.json"), join(d, "settings.txt"));
+  symlinkSync(ctx.cyHome!, join(d, "state"));
+  assert.ok(deny("Read", { file_path: join(d, "settings.txt") }));
+  assert.ok(deny("Read", { file_path: join(d, "state", "config.json") }));
+  writeFileSync(join(d, "plain.txt"), "ok");
+  assert.ok(!deny("Read", { file_path: join(d, "plain.txt") }));
+  assert.ok(isAutoAllowed("Bash", { command: `cat ${join(d, "plain.txt")}` }, ctx));
 });

@@ -1,6 +1,7 @@
 // 새 버전 알림: 하루 한 번 GitHub Releases 의 최신 릴리스를 보고(인증 없이), 지금보다 새로우면 캐릭터 말풍선. 순수 로직.
 export const REPO_SLUG = 'cheo0y/shisa-agent';
-export const RELEASES_API = `https://api.github.com/repos/${REPO_SLUG}/releases/latest`;
+// 목록으로 본다: 윈도우는 맥과 따로 v<버전>-windows 릴리스(--latest=false)라 /releases/latest 로는 윈도우 PC 가 늘 맥 릴리스만 봤다
+export const RELEASES_API = `https://api.github.com/repos/${REPO_SLUG}/releases?per_page=100`;
 export const RELEASES_PAGE = `https://github.com/${REPO_SLUG}/releases`;
 export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
 export const BUBBLE_ID = 'local-update';
@@ -54,7 +55,7 @@ export function pickAsset(assets, target) {
   return null;
 }
 
-// GET /releases/latest 응답 → { version, tag, url, asset } | null. 초안·미리보기판은 건너뛴다.
+// 릴리스 하나(GET /releases 목록의 한 항목) → { version, tag, url, asset } | null. 초안·미리보기판은 건너뛴다.
 // 열 주소는 이 레포의 릴리스 페이지만(아니면 릴리스 목록).
 // target { platform, arch, portable, checkout } 를 주면 이 PC 용 파일이 올라온 릴리스만 알린다(맥이 먼저 내고 윈도우가
 // 나중에 덧붙이는 사이엔 null → 알림 기록도 안 남아 다음 확인 때 다시 본다). 터미널 설치(checkout)는 파일이 필요 없다
@@ -63,11 +64,20 @@ export function latestRelease(json, target) {
   const tag = typeof json.tag_name === 'string' ? json.tag_name.trim() : '';
   const p = parseVersion(tag);
   if (!p) return null;
-  const version = tag.replace(/^v/, '');
+  // v<버전>-windows 는 미리보기판이 아니라 윈도우용 릴리스 — 윈도우 PC 만 본다
+  const win = p.pre === 'windows';
+  if (win && target?.platform !== 'win32') return null;
+  const version = tag.replace(/^v/, '').replace(/-windows$/, '');
   const url = okLink(json.html_url, `${RELEASES_PAGE}/`) ? json.html_url : RELEASES_PAGE;
   if (!target || target.checkout) return { version, tag, url, asset: null };
   const asset = pickAsset(json.assets, target);
   return asset ? { version, tag, url, asset } : null;
+}
+
+// GET /releases 목록 → 이 PC 가 받을 수 있는 것 중 가장 높은 버전(latestRelease 와 같은 결과 모양) | null
+export function newestRelease(list, target) {
+  if (!Array.isArray(list)) return null;
+  return list.map((r) => latestRelease(r, target)).filter(Boolean).sort((a, b) => compareVersions(b.version, a.version))[0] ?? null;
 }
 
 // 지금 확인할 때인가: 켜져 있고, 마지막 확인이 하루 전보다 오래됐거나 없거나 시계가 거꾸로 갔으면

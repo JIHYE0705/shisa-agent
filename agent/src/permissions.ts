@@ -29,7 +29,7 @@ import { isReadOnlyBash } from "./bash-readonly.ts";
 import { isSubagentTool, subagentCall } from "./subagents.ts";
 import type { ActionCard, ActionVia, PendingAction } from "./actions.ts";
 import { repoLocks, type RepoLocks } from "./repo-lock.ts";
-import { IS_WIN, bashPathWin, isFsRoot, msysToWin, pathKey, pathWithin, realish, samePath, winLocalPath, winNorm, winPathForms, winShellNorm, withFsMemo } from "./plat.ts";
+import { IS_WIN, isRealishUnknown, bashPathWin, isFsRoot, msysToWin, pathKey, pathWithin, realish, samePath, winLocalPath, winNorm, winPathForms, winShellNorm, withFsMemo } from "./plat.ts";
 
 export const PERMISSION_TTL_MS = 10 * 60e3;
 // 서비스·도구를 인자로 받는 MCP 중계 도구(이름이 …__invoke, 입력 { service, tool, args }) — 규칙·카드를 "서비스.도구" 단위로
@@ -103,16 +103,25 @@ const UNC_WHY = "UNC·장치 경로(\\\\서버\\… · \\\\?\\… · \\\\.\\…)
 function secretPathOne(raw0: string, c: PermCtx, env: boolean, bash: boolean): string | undefined {
   const raw = W ? winLocalPath(raw0) : raw0;
   if (raw === undefined) return UNC_WHY;
-  const p0 = real(resolve(c.cwd, expandHome(raw, c, bash)));
-  const p = W ? winLocalPath(p0) : p0;
-  if (p === undefined) return UNC_WHY;
+  const lex = resolve(c.cwd, expandHome(raw, c, bash));
+  if (W) {
+    const p = winLocalPath(realish(lex));
+    return p === undefined ? UNC_WHY : secretOf(p, c, env, realish);
+  }
+  // POSIX 도 심볼릭 링크(notes.txt → .env · 링크 → ~/.cy-agent/config.json)를 실제 경로로 한 번 더 본다. 둘 중 하나만 걸려도 막는다
+  const r = realish(lex);
+  if (isRealishUnknown(r)) return "실제 경로를 확인할 수 없음";
+  return secretOf(lex, c, env, (x) => x) ?? (r === lex ? undefined : secretOf(r, c, env, realish));
+}
+// rp: 비교할 집·~/.cy-agent 경로를 p 와 같은 꼴로(실제 경로면 그쪽도 실제 경로로 — macOS /var → /private/var)
+function secretOf(p: string, c: PermCtx, env: boolean, rp: (x: string) => string): string | undefined {
   for (const h0 of cyHomes(c)) {
-    const h = real(h0);
+    const h = rp(h0);
     if (samePath(p, resolve(h, "config.json"))) return "~/.cy-agent/config.json(토큰)";
     if (baseOf(p).startsWith("cy.db") && within(p, h)) return "cy.db(데몬 상태)";
   }
-  const home = real(homeOf(c));
-  if (within(p, real(resolve(home, ".claude"))) || baseOf(p).startsWith(".claude") && samePath(dirname(p), home)) return "~/.claude*(Claude 설정·자격 증명)";
+  const home = rp(homeOf(c));
+  if (within(p, rp(resolve(home, ".claude"))) || baseOf(p).startsWith(".claude") && samePath(dirname(p), home)) return "~/.claude*(Claude 설정·자격 증명)";
   if (env && (W ? pathKey(p).split("\\") : p.split(sep)).some((part) => /^\.env(\..*)?$/i.test(part) && !ENV_OK.test(part))) return `${basename(p)}(비밀일 수 있는 .env 파일)`;
   return undefined;
 }
@@ -484,7 +493,7 @@ function gitWriteRe(s: string): boolean {
 const CONFIG_READ = /^(--get|--get-all|--get-regexp|--get-urlmatch|--get-color|--get-colorbool|-l|--list)$/;
 const CONFIG_VAL = /^(-f|--file|--blob|--type|--default)$/;
 const CONFIG_SAFE = /^(--global|--system|--local|--worktree|--show-origin|--show-scope|--includes|--no-includes|-z|--null|--name-only|(--file|--blob|--type|--default)=.*)$/;
-function configSetsAlias(args: string[]): boolean {
+export function configSetsAlias(args: string[]): boolean {
   if (!args.some((a) => /^alias\./i.test(a))) return false;
   let read = false, other = false;
   const pos: string[] = [];
@@ -524,7 +533,7 @@ function gitAliasRe(s: string): boolean {
 // 판정하는 글 길이 상한 — 넘으면 확인하지 않고 승인 카드(quick)
 export const CHECK_MAX = 64 * 1024;
 const gitWriteText = (s: string) => { const n = normShell(s.replace(/\\\r?\n/g, "")); return gitWriteRe(s) || gitWriteRe(n) || gitAliasRe(n); }; // 줄 이음(\⏎)도 걷는다
-const isGitName = (w: string) => /^git(\.exe)?$/i.test(basename(w.replace(/\\/g, "/")));
+export const isGitName = (w: string) => /^git(\.exe)?$/i.test(basename(w.replace(/\\/g, "/")));
 
 // ── git 쓰기(commit·push·merge) ─────────────────────────────────────
 // 대화에서 되는 곳: cy-agent 가 만든 워크트리(~/.cy-agent/worktrees · 레포의 .claude/worktrees) 또는 cy/ 브랜치. 그래도 기본·보호 브랜치
@@ -589,7 +598,7 @@ function stripHeredocs(cmd: string): string {
   return out + cmd.slice(last);
 }
 // 명령 치환 $(…) · `…` 의 안쪽들(첫 ) · 다음 ` 까지 — 예전 정규식과 같게). 닫는 글자 위치를 기억해서 선형으로
-function substsOf(cmd: string): string[] {
+export function substsOf(cmd: string): string[] {
   const out: string[] = [];
   let close = -2, tick = -2;
   for (let i = 0; i < cmd.length; i++) {
@@ -603,7 +612,7 @@ function substsOf(cmd: string): string[] {
   }
   return out;
 }
-function shellSegments(cmd: string): string[] {
+export function shellSegments(cmd: string): string[] {
   const src = stripHeredocs(cmd);
   const out: string[] = [];
   let cur = "", q: string | null = null;
@@ -649,7 +658,7 @@ function pushWhy(args: string[], st: GitState): string | undefined {
 // 안을 볼 수 없게 감싸 부르기: eval · source · . · xargs · sh/bash -c(Windows: cmd /c · powershell · pwsh · wsl) · 명령 이름이 변수·치환.
 // 글 아무 데나가 아니라 낱말로 본다 — 커밋 메시지("support PowerShell" · "fix: source map")·파일 이름(docs/wsl.md · src/source.ts)은 아니다.
 // 명령 자리만이 아니라 아무 낱말 자리(timeout 5 sh -c … · find -exec sh -c …)도 본다(. 만 명령 자리)
-function shellWrapper(cmd: string): boolean {
+export function shellWrapper(cmd: string): boolean {
   for (const seg of shellSegments(cmd)) {
     const w = shellWordsNorm(seg);
     const at = cmdAt(w);

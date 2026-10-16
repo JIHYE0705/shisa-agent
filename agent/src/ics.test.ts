@@ -222,6 +222,15 @@ END:VCALENDAR`;
   assert.deepEqual(daily.map((x) => `${x.y}-${x.mo}-${x.d}`), ["2026-10-11", "2026-10-12"], "10년 된 매일 반복도 창 근처만");
   const monthly31 = occurrenceDates({ ...start, d: 31 }, { FREQ: "MONTHLY", COUNT: "3" }, toUtc, Infinity);
   assert.deepEqual(monthly31.map((x) => `${x.mo}/${x.d}`), ["1/31", "3/31", "5/31"], "31일 없는 달은 건너뜀");
+  // BYDAY·BYMONTH·BYMONTHDAY 는 거르기 — COUNT 는 거른 뒤 센다
+  const md = (r: Record<string, string>, d = start, stop = Infinity) => occurrenceDates(d, r, toUtc, stop).map((x) => `${x.mo}/${x.d}`);
+  assert.deepEqual(md({ FREQ: "DAILY", BYDAY: "MO,TU,WE,TH,FR", COUNT: "4" }), ["1/30", "2/2", "2/3", "2/4"], "평일만 매일(1/30 금 → 주말 건너뜀)");
+  assert.deepEqual(md({ FREQ: "DAILY", BYMONTH: "2", COUNT: "2" }), ["2/1", "2/2"], "매일이지만 2월만");
+  assert.deepEqual(md({ FREQ: "WEEKLY", BYMONTH: "3", COUNT: "2" }), ["3/6", "3/13"], "매주(금)지만 3월만");
+  assert.deepEqual(md({ FREQ: "MONTHLY", BYDAY: "FR", BYMONTHDAY: "13", COUNT: "2" }), ["2/13", "3/13"], "13일의 금요일");
+  const t0 = performance.now();
+  assert.deepEqual(md({ FREQ: "MONTHLY", BYMONTH: "2", BYMONTHDAY: "31" }, start, Date.parse("2027-01-01T00:00:00Z")), [], "맞는 날이 없는 규칙");
+  assert.ok(performance.now() - t0 < 200, "맞는 날이 없어도 창을 넘으면 멈춘다");
 });
 
 test("icsSource → CalendarSync: 창 안 회의만 저장, 실패하면 예전 것 유지, 주소는 로그에 안 남김", async () => {

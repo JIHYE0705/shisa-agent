@@ -10,8 +10,8 @@ import { accessSync, constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { findOnPath, spawnSpec } from "./plat.ts";
+import type { ContentBlock } from "./attachments.ts";
 import { DEFAULT_GENERAL_MODEL, type BrainProvider, type Config } from "./config.ts";
-import { stripAddedNulls, toOpenAiStrict } from "./openai-strict.ts";
 
 export type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
 
@@ -20,6 +20,12 @@ export type ExecFileLike = (
   args: readonly string[],
   opts?: { input?: string; timeout?: number; cwd?: string },
 ) => Promise<{ stdout: string; stderr?: string }>;
+
+// 첨부 블록(attachments.ts — 글·그림·PDF)을 공급자마다의 입력 모양으로. 예전엔 Claude Code 경로만 받고 API 키 연결은 버렸다
+const geminiPart = (b: ContentBlock) => (b.type === "text" ? { text: b.text } : { inlineData: { mimeType: b.source.media_type, data: b.source.data } });
+const openaiPart = (b: ContentBlock) => (b.type === "text" ? b
+  : b.type === "image" ? { type: "image_url", image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
+  : { type: "file", file: { filename: b.title ?? "attachment.pdf", file_data: `data:application/pdf;base64,${b.source.data}` } });
 
 export type ProviderDeps = {
   fetch?: FetchLike;
@@ -200,7 +206,7 @@ function geminiFailText(status: number): string {
 
 export async function geminiJson(
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
-  opts: { system?: string; model?: string; fetch?: FetchLike; sleep?: (ms: number) => Promise<void>; env?: NodeJS.ProcessEnv } = {},
+  opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; sleep?: (ms: number) => Promise<void>; env?: NodeJS.ProcessEnv } = {},
 ): Promise<unknown> {
   const env = opts.env ?? process.env;
   const key = geminiKey(cfg, env);
@@ -210,7 +216,7 @@ export async function geminiJson(
   const fetchImpl = opts.fetch ?? fetch;
   const body = JSON.stringify({
     ...(opts.system ? { systemInstruction: { parts: [{ text: opts.system }] } } : {}),
-    contents: [{ role: "user", parts: [{ text: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }] }],
+    contents: [{ role: "user", parts: [{ text: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }, ...(opts.blocks ?? []).map(geminiPart)] }],
     generationConfig: { responseMimeType: "application/json", responseJsonSchema: schema },
   });
   // 키는 헤더에만. URL 쿼리에 넣지 않는다(로그·에러에 남기 쉬움).
@@ -267,9 +273,55 @@ export async function geminiJson(
   return parseModelJson(text, "Gemini 응답에서 JSON을 읽지 못했어요.");
 }
 
+// OpenAI strict 출력은 모든 속성이 required · additionalProperties false 여야 한다(아니면 400 — 우리 스키마엔 선택 속성이 많다).
+// 선택 속성은 "없음" 자리를 더해 required 로 바꾸고, 답을 받은 뒤 그 자리를 지워 원래 모양으로 되돌린다(openaiUnstrict).
+// 원래 null 이 "지우기"인 속성(할 일 link·note)은 null 과 구분하려고 따로 표식 {"_omit":true} 를 쓴다
+const OMIT = { type: "object", additionalProperties: false, required: ["_omit"], properties: { _omit: { type: "boolean", enum: [true] } } };
+type Sch = Record<string, any>;
+const nullable = (s: Sch | undefined): boolean => !!s && (s.type === "null" || (Array.isArray(s.type) && s.type.includes("null")) || (s.anyOf ?? []).some(nullable));
+export function openaiStrict(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const s = raw as Sch, out: Sch = { ...s };
+  if (s.items) out.items = openaiStrict(s.items);
+  for (const k of ["anyOf", "oneOf", "allOf"]) if (Array.isArray(s[k])) out[k] = s[k].map(openaiStrict);
+  if (s.properties) {
+    const req = new Set<string>(s.required ?? []);
+    out.properties = Object.fromEntries(Object.entries<Sch>(s.properties).map(([k, v]) => {
+      const sv = openaiStrict(v) as Sch;
+      if (req.has(k)) return [k, sv];
+      const none = nullable(v) ? OMIT : { type: "null" };
+      return [k, { anyOf: [sv, none], description: `${v.description ? `${v.description} ` : ""}(안 줄 때는 ${nullable(v) ? '{"_omit":true}' : "null"})` }];
+    }));
+    out.required = Object.keys(s.properties);
+    out.additionalProperties = false;
+  }
+  return out;
+}
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+export function openaiUnstrict(value: unknown, raw: unknown): any {
+  if (!raw || typeof raw !== "object" || value === null || typeof value !== "object") return value;
+  const s = raw as Sch;
+  if (Array.isArray(value)) return s.items ? value.map((v) => openaiUnstrict(v, s.items)) : value;
+  if (!s.properties) {
+    const obj = (s.anyOf ?? s.oneOf ?? []).find((b: Sch) => b?.properties);
+    return obj ? openaiUnstrict(value, obj) : value;
+  }
+  const req = new Set<string>(s.required ?? []), out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (UNSAFE_KEYS.has(k)) continue; // 모델 답은 믿지 않는다: out[k] 로 쓰면 프로토타입이 바뀌는 키는 버린다
+    const prop = s.properties[k];
+    if (prop && !req.has(k)) {
+      if (v === null && !nullable(prop)) continue;
+      if (nullable(prop) && v && typeof v === "object" && (v as Sch)._omit === true) continue;
+    }
+    out[k] = openaiUnstrict(v, prop);
+  }
+  return out;
+}
+
 export async function openaiJson(
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
-  opts: { system?: string; model?: string; fetch?: FetchLike; env?: NodeJS.ProcessEnv } = {},
+  opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; env?: NodeJS.ProcessEnv } = {},
 ): Promise<unknown> {
   const env = opts.env ?? process.env;
   const key = openaiKey(cfg, env);
@@ -278,7 +330,7 @@ export async function openaiJson(
   const fetchImpl = opts.fetch ?? fetch;
   const messages = [
     ...(opts.system ? [{ role: "system", content: opts.system }] : []),
-    { role: "user", content: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` },
+    { role: "user", content: opts.blocks?.length ? [{ type: "text", text: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }, ...opts.blocks.map(openaiPart)] : `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` },
   ];
   let res: Response;
   try {
@@ -288,8 +340,7 @@ export async function openaiJson(
       body: JSON.stringify({
         model,
         messages,
-        // strict 는 모든 키 required·additionalProperties:false 를 요구한다 → 사본으로 바꿔 보낸다(안 그러면 400)
-        response_format: { type: "json_schema", json_schema: { name: "cy_brain", strict: true, schema: toOpenAiStrict(schema) } },
+        response_format: { type: "json_schema", json_schema: { name: "cy_brain", strict: true, schema: openaiStrict(schema) } },
       }),
     });
   } catch {
@@ -302,13 +353,12 @@ export async function openaiJson(
   const text = typeof content === "string"
     ? content
     : Array.isArray(content) ? content.map((p) => (asRecord(p)?.text as string) ?? "").join("") : "";
-  // 선택 필드라서 채워 온 null 은 빼서 Gemini·Claude 답과 같은 모양으로
-  return stripAddedNulls(parseModelJson(text, "OpenAI 응답에서 JSON을 읽지 못했어요."), schema);
+  return openaiUnstrict(parseModelJson(text, "OpenAI 응답에서 JSON을 읽지 못했어요."), schema);
 }
 
 export async function anthropicJson(
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
-  opts: { system?: string; model?: string; fetch?: FetchLike; env?: NodeJS.ProcessEnv } = {},
+  opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; env?: NodeJS.ProcessEnv } = {},
 ): Promise<unknown> {
   const env = opts.env ?? process.env;
   const key = anthropicKey(cfg, env);
@@ -324,7 +374,7 @@ export async function anthropicJson(
         model,
         max_tokens: 16000,
         ...(opts.system ? { system: opts.system } : {}),
-        messages: [{ role: "user", content: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }],
+        messages: [{ role: "user", content: opts.blocks?.length ? [{ type: "text", text: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }, ...opts.blocks] : `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }],
         output_config: { format: { type: "json_schema", schema } },
       }),
     });
@@ -429,14 +479,16 @@ export function parseCodexUsage(stdout: string): CodexUsage {
   return { inTokens, outTokens };
 }
 
-export type CodexOpts = { system?: string; execFile?: ExecFileLike; commandExists?: (name: string) => boolean; timeoutMs?: number };
+export type CodexOpts = { blocks?: ContentBlock[]; system?: string; execFile?: ExecFileLike; commandExists?: (name: string) => boolean; timeoutMs?: number };
 
 // codex exec 한 번 → 마지막 답의 JSON + 토큰 수. 실패는 짧은 한국어(출력 본문은 넣지 않는다)
 export async function codexExec(prompt: string, schema: unknown, opts: CodexOpts = {}): Promise<{ out: unknown; usage: CodexUsage }> {
   const exists = opts.commandExists ?? ((name: string) => commandOnPath(name));
   if (!exists("codex")) throw new Error(MISSING_CODEX);
   const exec = opts.execFile ?? defaultExecFile;
-  const input = [opts.system ?? "", prompt, "도구를 부르지 말고 코드도 고치지 마라. 아래 JSON 스키마에 맞는 객체 하나만 답하라.", JSON.stringify(schema)].filter(Boolean).join("\n\n");
+  // codex exec 는 stdin 글만 받는다: 글 첨부는 그대로, 그림·PDF 는 못 본다고 적는다(본 척하지 않게)
+  const att = (opts.blocks ?? []).map((b) => (b.type === "text" ? b.text : `[첨부 ${b.type === "document" ? b.title ?? "PDF" : "그림"} — 이 AI 연결(Codex)로는 그림·PDF 내용을 받지 못했다. 내용을 봤다고 하지 말고 그렇다고 말하라]`));
+  const input = [opts.system ?? "", prompt, ...att, "도구를 부르지 말고 코드도 고치지 마라. 아래 JSON 스키마에 맞는 객체 하나만 답하라.", JSON.stringify(schema)].filter(Boolean).join("\n\n");
   let stdout = "";
   try {
     const result = await exec("codex", CODEX_ARGS, { input, timeout: opts.timeoutMs ?? CODEX_TIMEOUT_MS, cwd: tmpdir() });
@@ -454,7 +506,7 @@ export async function codexJson(prompt: string, schema: unknown, opts: CodexOpts
 export async function remoteJson(
   provider: Extract<BrainProvider, "gemini" | "openai" | "anthropic" | "codex">,
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
-  opts: { system?: string; model?: string } & ProviderDeps = {},
+  opts: { system?: string; model?: string; blocks?: ContentBlock[] } & ProviderDeps = {},
 ): Promise<unknown> {
   if (provider === "gemini") return geminiJson(cfg, prompt, schema, opts);
   if (provider === "openai") return openaiJson(cfg, prompt, schema, opts);

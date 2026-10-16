@@ -42,6 +42,7 @@ import { isAbsPath } from "./plat.ts";
 import { BackgroundAgents, type BgPorts } from "./bg-agents.ts";
 import { addAgentWorktree, agentBranch, finishAgentWorktree, isolationSource, worktreeNote, worktreeRecords } from "./agent-worktrees.ts";
 import { runBackgroundAgent } from "./chat.ts";
+import { inlineContext } from "./ctx-tools.ts";
 import { AttachmentStore, type Attachment } from "./attachments.ts";
 import { Guidelines, applyGuidelineOp, guidelinesApi, setGuidelineStore, type GuidelineCtx, type GuidelinesApi } from "./guidelines.ts";
 import { WAIT_SETUP, modelWorkAllowed, sessionsAllowed } from "./onboarding.ts";
@@ -62,7 +63,7 @@ export interface SlackPort {
 export type Deps = {
   think: typeof realThink;
   runFix: (cfg: Config, p: Proposal, onStep: (s: string) => void) => Promise<FixResult>;
-  mergePr: (url: string) => string;
+  mergePr: (url: string, headOid?: string) => string | Promise<string>; // headOid: 승인한 커밋(그 사이 새 커밋이 오면 gh 가 거절)
   converse: Converse;
   askTodo: AskTodo; // 할 일 팝오버 한 턴
   describe: Describe; // 설명 없는 할 일을 펼칠 때 한 번(가벼운 모델)
@@ -421,13 +422,17 @@ export class Agent {
     r.mergeDeps = {
       merge: async (rec) => {
         // 채팅에서 요청한 머지(PR 상태가 있음): 머지 직전에 새로 읽고 실패한 검사·충돌·초안·닫힘이면 머지하지 않는다
+        // 승인한 커밋: 물을 때 읽은 PR head(또는 수정 run 이 푸시한 커밋). 그 뒤 새 커밋·대상 브랜치 변경은 승인한 PR 이 아니다
+        const want = rec.pr?.headOid ?? rec.headOid;
         if (rec.pr) {
           const st = await this.deps.prStatus({ url: rec.prUrl, repo: rec.pr.repo, number: rec.pr.number });
           const why = mergeBlock(st);
           if (why) throw new Error(why);
+          if ((want && st.headOid && st.headOid !== want) || (rec.pr.base && st.base !== rec.pr.base))
+            throw new Error("승인한 뒤 PR 에 새 커밋이 올라왔거나 대상 브랜치가 바뀌었어요 — 바뀐 내용을 보고 머지를 다시 요청해 주세요");
         }
         this.prs.delete(rec.id);
-        return this.deps.mergePr(rec.prUrl);
+        return this.deps.mergePr(rec.prUrl, want);
       },
       commit: (rec) => rec.pr ? this.deps.mergeCommit(rec.prUrl) : Promise.resolve(undefined),
       changed: (rec, ev) => this.actions.mirrorMerge(rec.id, ev),
@@ -630,7 +635,7 @@ export class Agent {
         `사용자가 Slack DM으로 말했다:\n"""${text}"""\n질문이면 reply_md로 답하라. 코드 구현/수정 요청이면 대상 레포(프로젝트 목록·세션 맥락으로 판단)와 구체적 계획을 proposals에 하나 넣어라(이 경우 크기 제한 없음, 사용자가 실행 버튼으로 확정한다). 레포가 애매하면 proposals는 비우고 reply_md로 되물어라.\n할 일을 추가·수정·완료·되살리기·삭제해 달라는 말이면 todo_ops에 넣고(이때 todos·done_todo_ids는 비운다) reply_md로 무엇을 바꿨는지 한 줄로 말하라. 어느 할 일인지 애매하면 todo_ops는 비우고 되물어라.\n자기 정보("내 이름은 홍길동이야, 기억해줘")는 memory_ops remember에 사실 문장만 넣는다. 이미 저장됐으면 memory_ops는 비우고 짧게 확인만 한다.\n${RULE_GUIDE} 규칙은 바로 저장되고 맞는 기존 할 일에도 적용된다. 오늘 할 일(할 일 중 오늘로 고른 것)은 plan_ops로 채운다.
 ${WRITE_GUIDE} 승인 카드는 이 Slack 스레드에 [허용]/[항상 허용]/[거부] 버튼으로 간다.
 ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없음 — 필요하면 연결된 캘린더 도구로 읽는다)"}`,
-        undefined, { todoOps: true, context: this.cfg.contextMode === "inline" ? "inline" : "tools", ctx: { dashboard: () => this.dashboard() }, interactive: { origin: { via: "slack", ...(threadTs ? { slackTs: threadTs } : {}) } } });
+        undefined, { todoOps: true, context: inlineContext(this.cfg) ? "inline" : "tools", ctx: { dashboard: () => this.dashboard() }, interactive: { origin: { via: "slack", ...(threadTs ? { slackTs: threadTs } : {}) } } });
       await this.absorb(t, threadTs, true);
     } finally {
       this.bus.setMood("idle");
@@ -679,7 +684,7 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
           // 머지는 사용자 승인: 오버레이 ✓/✗/추가질문 + Slack 머지 버튼, 먼저 답한 쪽.
           // 채팅에서 시킨 작업이면 그 대화에도 머지 승인 카드(같은 머지 기록 — 말풍선·Slack 과 같이 결정된다)
           const ask = async (why?: string) => {
-            this.reactions!.offerMerge({ id: p.id, title: p.title, prUrl: r.prUrl!, summary: r.summary, branch: r.branch,
+            this.reactions!.offerMerge({ id: p.id, title: p.title, prUrl: r.prUrl!, summary: r.summary, branch: r.branch, ...(r.headOid ? { headOid: r.headOid } : {}),
               tests: testsFromLog(r.log ?? steps), ...(done ? { slack: { channel: done.channel, ts: done.ts } } : {}) });
             if (p.threadId) await this.mergeCardAfterFix(p, r.prUrl!, why);
           };
@@ -872,7 +877,7 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
     const url = this.prs.get(id) ?? this.store.proposal(id)?.result;
     if (!url?.startsWith("https://")) return "머지할 PR을 못 찾았어요";
     this.prs.delete(id);
-    const out = this.deps.mergePr(url);
+    const out = await this.deps.mergePr(url);
     this.bus.bubble({ text: phrase("merge_done"), kind: "done", image: "merge_complete", ttlMs: 10e3, link: url });
     return out;
   }

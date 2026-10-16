@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseVersion, compareVersions, isNewer, latestRelease, pickAsset, checkDue, shouldNotify, updateBubble,
+  RELEASES_API,
+  parseVersion, compareVersions, isNewer, latestRelease, newestRelease, pickAsset, checkDue, shouldNotify, updateBubble,
   RELEASES_PAGE, CHECK_EVERY_MS, BUBBLE_ID,
 } from '../src/update-check.js';
 import { normalizeBubble, isSafeLink } from '../src/bubbles.js';
@@ -147,8 +148,29 @@ test('updateBubble: 받을 파일 주소가 있으면 그 파일로 바로, 터�
 test('main.js 배선: 이 PC 용 파일이 있을 때만 알림 기록, 휴대용은 Update.exe 로 가린다', () => {
   const main = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
   const fn = main.slice(main.indexOf('async function checkForUpdate()'));
-  assert.match(fn, /latestRelease\(await r\.json\(\), target\)/);
-  assert.ok(fn.indexOf('latestRelease(') < fn.indexOf('state.updateNotified = rel.version'));
+  assert.match(fn, /newestRelease\(await r\.json\(\), target\)/);
+  assert.ok(fn.indexOf('newestRelease(') < fn.indexOf('state.updateNotified = rel.version'));
   assert.match(fn, /assetUrl: rel\.asset\?\.url/);
   assert.match(main, /const isPortableWin = \(\) => process\.platform === 'win32' && app\.isPackaged && !fs\.existsSync\(path\.join\(path\.dirname\(process\.execPath\), '\.\.', 'Update\.exe'\)\);/);
+});
+
+test('newestRelease: 맥(v<버전>)·윈도우(v<버전>-windows) 릴리스가 따로여도 이 PC 용 가장 높은 정식 버전', () => {
+  assert.match(RELEASES_API, /\/releases\?per_page=100$/); // /releases/latest 는 맥 릴리스만 준다(윈도우는 --latest=false)
+  const rel = (tag, names, extra = {}) => ({ tag_name: tag, html_url: `${RELEASES_PAGE}/tag/${tag}`, assets: names.map((name) => ({ name, browser_download_url: `${RELEASES_PAGE}/download/${tag}/${name}` })), ...extra });
+  const list = [
+    rel('v0.5.0', ['Shisa-0.5.0-arm64.dmg', 'Shisa-0.5.0-x64.dmg']),
+    rel('v0.6.0-windows', ['Shisa-0.6.0-Setup.exe'], { prerelease: true }),
+    rel('v0.4.0-windows', ['Shisa-0.4.0-Setup.exe', 'Shisa-0.4.0-win-x64.zip']),
+    rel('v0.3.0-windows', ['Shisa-0.3.0-Setup.exe']),
+    rel('v0.9.0', ['Shisa-0.9.0-Setup.exe'], { draft: true }),
+  ];
+  const win = newestRelease(list, { platform: 'win32', arch: 'x64' });
+  assert.deepEqual([win.version, win.tag, win.asset.name], ['0.4.0', 'v0.4.0-windows', 'Shisa-0.4.0-Setup.exe']);
+  assert.equal(newestRelease(list, { platform: 'win32', arch: 'x64', portable: true }).asset.name, 'Shisa-0.4.0-win-x64.zip');
+  assert.equal(newestRelease(list, { platform: 'darwin', arch: 'arm64' }).version, '0.5.0');
+  assert.equal(newestRelease(list, { platform: 'darwin', checkout: true }).tag, 'v0.5.0'); // 맥 터미널 설치는 윈도우 릴리스를 안 본다
+  assert.equal(shouldNotify({ latest: win.version, current: '0.3.0' }), true);
+  assert.equal(shouldNotify({ latest: win.version, current: '0.4.0' }), false); // -windows 는 버전 비교에 안 섞인다
+  assert.equal(newestRelease({ message: 'Not Found' }, { platform: 'win32' }), null);
+  assert.equal(newestRelease([], { platform: 'darwin' }), null);
 });
