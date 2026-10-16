@@ -298,7 +298,7 @@ function agentSetup() {
     post: async (blocks, text) => { posts.push({ blocks, text }); return { channel: "D1", ts: String(++n) }; },
     update: async (_c, ts, blocks, text) => { updates.push({ ts, blocks, text }); },
   };
-  const merged: string[] = [];
+  const merged: string[] = [], pins: (string | undefined)[] = [];
   const thought = {
     bubble: "할 일 정리했어", reply_md: "## 오늘",
     todos: [{ key: "slack:1", title: "팀원 답장", source: "slack", priority: 2, description: "패널 질문" }],
@@ -306,13 +306,13 @@ function agentSetup() {
   };
   const agent = new Agent(cfg as any, store, bus, slack, {
     think: async () => thought as any,
-    runFix: async (_c, _p, step) => { step("🌿 워크트리 cy/b"); step("Edit a.ts"); step("🧪 npm test"); step("🚀 푸시 완료"); return { ok: true, summary: "바꿈", prUrl: "https://github.com/x/y/pull/1", branch: "cy/b", log: ["🧪 npm test"] }; },
-    mergePr: (url) => { merged.push(url); return "merged"; },
+    runFix: async (_c, _p, step) => { step("🌿 워크트리 cy/b"); step("Edit a.ts"); step("🧪 npm test"); step("🚀 푸시 완료"); return { ok: true, summary: "바꿈", prUrl: "https://github.com/x/y/pull/1", branch: "cy/b", log: ["🧪 npm test"], headOid: "d".repeat(40) }; },
+    mergePr: (url, sha) => { merged.push(url); pins.push(sha); return "merged"; },
     git: async () => [],
   });
   const r = new Reactions(bus, { logPath: join(root, "reactions.json"), random: () => 0.99, progressGapMs: 0 });
   agent.setReactions(r, async () => "답");
-  return { agent, store, bubbles, posts, updates, merged, r };
+  return { agent, store, bubbles, posts, updates, merged, pins, r };
 }
 
 test("core: 브리핑 새 할 일 → to_do_new, 실행 이정표 → 머지 질문, 오버레이 ✓ 뒤 Slack ✓ 는 이미 머지", async () => {
@@ -335,6 +335,7 @@ test("core: 브리핑 새 할 일 → to_do_new, 실행 이정표 → 머지 질
   const r = await s.agent.mergeDecide(pid, "merge");
   assert.equal(r.ok, true);
   assert.deepEqual(s.merged, ["https://github.com/x/y/pull/1"]);
+  assert.deepEqual(s.pins, ["d".repeat(40)]); // 수정 run 이 푸시한 커밋으로 고정(그 사이 새 커밋이면 gh 가 거절)
   assert.equal(s.bubbles.at(-1).image, "merge_complete");
   const up = s.updates.find((u) => u.ts === String(mergeMsgTs));
   assert.ok(up && /머지 완료/.test(up.text), "Slack 머지 메시지 정리");

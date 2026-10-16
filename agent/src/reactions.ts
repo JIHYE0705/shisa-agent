@@ -21,6 +21,8 @@ export type MergeRec = {
   summary?: string; tests?: string; branch?: string; slack?: { channel: string; ts: string };
   // 채팅에서 요청한 머지(merge-request.ts): PR 상태(검사·충돌·리뷰) · ✓ 를 막는 이유 · 카드가 뜬 대화 · 머지 커밋 링크
   pr?: MergeInfo; blocked?: string; threadId?: string; commitUrl?: string;
+  // 수정 run 이 푸시한 커밋(PR 상태 없이 묻는 머지) — 승인한 이 커밋일 때만 머지한다
+  headOid?: string;
   // 무엇으로 머지를 허락받았나(기록): button = ✓(말풍선·카드·Slack) · text = 사용자가 말로 시킴 · auto = 자동 머지 레포(auto-merge.ts)
   approved?: MergeApproval;
 };

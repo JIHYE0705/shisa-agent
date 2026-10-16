@@ -105,7 +105,7 @@ test("하드 차단 이유가 다른 데로 보내지 않고 merges 로 카드�
 
 // ── 데몬 경로: 채팅 → 카드 + 말풍선, 결정 ──
 
-function setup(o: { status?: (ref: any) => PrStatus; converse?: any; mergePr?: (url: string) => string; runFix?: any } = {}) {
+function setup(o: { status?: (ref: any) => PrStatus; converse?: any; mergePr?: (url: string, headOid?: string) => string; runFix?: any } = {}) {
   const store = new Store(":memory:");
   const bus = new Bus();
   bus.setMood = () => {};
@@ -319,4 +319,25 @@ test("채팅에서 시킨 수정 작업이 PR 까지 가면 그 대화에 답 �
   // 머지 기록은 제안 id 하나(말풍선 ✓ 와 카드 ✓ 가 같은 것)
   assert.equal(bub.proposalId, JSON.parse((s.store.db.prepare("SELECT payload FROM pending_actions WHERE id = ?").get(cards[0].id) as any).payload).mergeId);
   assert.deepEqual(s.merged, []);
+});
+
+
+test("승인한 커밋만 머지: 그 뒤 새 커밋·대상 브랜치가 바뀌면 머지 안 하고, 머지에는 승인한 SHA 를 넘긴다", async () => {
+  const A = "a".repeat(40), B = "b".repeat(40);
+  assert.equal(parsePrView(JSON.stringify({ number: 268, title: "t", url: URL268, state: "OPEN", baseRefName: "develop", headRefName: "h", headRefOid: A, statusCheckRollup: [] })).headOid, A);
+  assert.equal(parsePrView(JSON.stringify({ number: 268, title: "t", url: URL268, state: "OPEN", headRefOid: "not-a-sha" })).headOid, undefined);
+  for (const changed of [{ headOid: B }, { base: "main" }]) {
+    const s = setup({ status: () => ok268({ headOid: A }) });
+    assert.ok((await s.agent.requestMerge({ pr: URL268 }, { via: "chat" })).action);
+    s.setStatus(() => ok268({ headOid: A, ...changed }));
+    const r = await s.agent.mergeDecide("pr-acme_speaker-268", "merge");
+    assert.equal(r.ok, false);
+    assert.match((r as any).error, /새 커밋|대상 브랜치/);
+    assert.deepEqual(s.merged, []);
+  }
+  let pinned: string | undefined;
+  const s = setup({ status: () => ok268({ headOid: A }), mergePr: (_u, sha) => { pinned = sha; return "merged"; } });
+  await s.agent.requestMerge({ pr: URL268 }, { via: "chat" });
+  assert.equal((await s.agent.mergeDecide("pr-acme_speaker-268", "merge")).ok, true);
+  assert.equal(pinned, A);
 });

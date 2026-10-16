@@ -23,6 +23,7 @@ import { configSetsAlias, isGitName, shellSegments, shellWordsNorm, shellWrapper
 
 export type FixResult = {
   ok: boolean; summary: string; prUrl?: string; branch?: string; log: string[];
+  headOid?: string;    // 푸시한 커밋 — 머지 승인은 이 커밋에만(core → mergePr --match-head-commit)
   runId?: string;      // 이 수정 run(세션 창)
   testsRan?: string[]; // 통과한 테스트(FixDeps.testCommands 의 label — 하나라도 실패하면 커밋 안 하고 ok:false)
 };
@@ -488,6 +489,7 @@ async function ship(cfg: Config, s: Session, out: any, sp: ShipSpec, reg: RunReg
 
   await shAsync("git", ["add", "-A"], wt);
   await shAsync("git", ["commit", "-q", "-m", `${out.commit_message.trim()}\n\n${sp.trailer}${deps.trailer ? `\n${deps.trailer}` : ""}`], wt, author);
+  const headOid = await shAsync("git", ["rev-parse", "HEAD"], wt).catch(() => "");
   await repoGit(wt, () => shAsync("git", ["push", "-q", "-u", "origin", branch], wt)); // 원격 추적 참조를 바꾼다 — 같은 레포 git 줄
   step("🚀 푸시 완료");
   run.log({ type: "system", text: `🚀 ${branch} 푸시 완료` });
@@ -504,7 +506,7 @@ async function ship(cfg: Config, s: Session, out: any, sp: ShipSpec, reg: RunReg
   }
   if (prUrl) reg.update(run.id, { prUrl });
   run.end("done");
-  return { ok: true, summary: out.summary, prUrl, branch, log, pushed: true, runId: run.id, ...(testsRan.length ? { testsRan } : {}) };
+  return { ok: true, summary: out.summary, prUrl, branch, log, pushed: true, runId: run.id, ...(testsRan.length ? { testsRan } : {}), ...(/^[0-9a-f]{40,64}$/.test(headOid) ? { headOid } : {}) };
 }
 
 // PR 대상 브랜치 이름 다듬기: "origin/develop"·"refs/heads/develop" → "develop", 빈 값은 없음
@@ -710,6 +712,8 @@ async function defaultSessionExists(sessionId: string, cwd: string): Promise<boo
   return !!(await getSessionInfo(sessionId, { dir: cwd }));
 }
 
-export function mergePr(prUrl: string): string {
-  return execFileSync("gh", ["pr", "merge", prUrl, "--squash", "--delete-branch"], { encoding: "utf8" }).trim() || "머지 완료";
+// 비동기로(execFileSync 는 머지하는 동안 데몬 전체가 멈췄다). headOid 를 주면 PR head 가 그 커밋일 때만 gh 가 머지한다
+export async function mergePr(prUrl: string, headOid?: string, run: typeof shAsync = shAsync): Promise<string> {
+  const pin = headOid && /^[0-9a-f]{40,64}$/.test(headOid) ? ["--match-head-commit", headOid] : [];
+  return (await run("gh", ["pr", "merge", prUrl, "--squash", "--delete-branch", ...pin], process.cwd())) || "머지 완료";
 }
