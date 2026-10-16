@@ -17,7 +17,7 @@
 |---|---|---|
 | `bubble` | `Bubble`(아래) | 말풍선. 같은 `id`로 다시 오면 통째로 바꾼다 |
 | `clear` | `{ id }` | 말풍선 걷기 |
-| `state` | `{ mood: idle\|thinking\|working\|alert, activity: idle\|studying\|dancing, runs: [{ id, kind, title, startedAt }], danceId?, character }` | 캐릭터 상태. `character`는 고른 캐릭터 id(`shisa`·`hachi`·`rakko`·`momonga`)이고, 바뀌면 바로 다시 보낸다 |
+| `state` | `{ mood: idle\|thinking\|working\|alert, activity: idle\|studying\|dancing, runs: [{ id, kind, title, startedAt }], danceId?, character }` | 캐릭터 상태. `character`는 고른 캐릭터 id(`shisa`·`hachi`·`rakko`·`momonga` 또는 사용자가 만든 `u-…`)이고, 바뀌면 바로 다시 보낸다 |
 | `status` | `{ status: Status }` | 연결 상태가 바뀜(`GET /status`와 같은 모양) |
 | `dashboard` | `{}` | 대시보드를 다시 가져오라는 신호 |
 | `open_panel` | `{ section: overview\|projects\|todos\|today\|chat\|null }` | 패널을 그 탭으로 열기 |
@@ -28,6 +28,7 @@
 | `run` | `{ id, seq, event }` | 작업 세션 이벤트 한 줄 |
 | `runs` | `{ run?, active: [run] }` | run 시작·끝·상태 변화 |
 | `focus` | `FocusView`(아래 「집중하기」) | 집중하기 시작·일시정지·다시 시작·그만. 접속 직후에도 한 번 |
+| `characters` | `{ rev }` | 캐릭터를 만들거나 고치거나 지움 → `GET /characters`를 다시 읽는다(아래 「캐릭터 만들기·대사 고치기」) |
 
 ```ts
 type Bubble = {
@@ -105,6 +106,8 @@ type Bubble = {
 ```
 
 - 결과는 200 `{ ok, settings, applied: "live", restartNeeded: false }`다.
+- 사용자 캐릭터는 `~/.cy-agent/characters/<id>/`의 그림·영상을 `cy-asset://app/user-characters/<id>/<저장 이름>`으로 튼다. gif·png·jpg·webp 클립은 `<img>`로, webm·mp4는 `<video>`로 보인다. 빈 칸은 대신 쓴다: 응원이 없으면 춤, 춤이 없으면 응원, 일정 알림이 없으면 춤(그것도 없으면 응원), 집중이 없으면 평소 그림 그대로다. 눈 감은 그림이 없으면 깜빡이지 않는다.
+
 - `config.json`이 깨져 있으면 덮어쓰지 않고 409 `{ error }`(몇 번째 줄인지 담은 한 줄)를 준다. 파일을 쓰지 못하면 500.
 - `config.json`에 원자적으로 합쳐 쓰고 메모리 설정도 바로 바꾼다. 데몬을 다시 켤 필요가 없다.
 - 뇌가 바뀌면 SSE `status`를 보낸다.
@@ -113,6 +116,27 @@ type Bubble = {
 - `character`가 바뀌면 다음 말풍선과 답부터 그 캐릭터 말투가 된다. 모델에 넣는 시스템 프롬프트의 첫 문장과 말투 줄, 고정 문구의 기본값, AI 없이 하는 정해진 말이 모두 바뀐다. 사용자가 「문구」에서 고친 줄은 캐릭터와 상관없이 그대로 쓴다. 앱은 SSE `state`로 그림·영상·앱 이름(「하치와레 비서」)을 바꾼다.
 - 일정 알림 말풍선은 문구 `meeting_alert`(`{mins}` `{title}` `{time}` `{where}`)다. `{mins}`는 실제로 남은 분이다(늦게 켜졌으면 설정보다 작다). `{mins}`가 없는 예전 고친 문구도 그대로 쓴다.
 - 커넥터(`connectors`)는 여기서 바꾸지 않는다. 파일을 고친 뒤 데몬을 다시 켜야 한다.
+
+### 캐릭터 만들기·대사 고치기
+
+설정 창 「캐릭터」가 쓴다(`agent/src/character-store.ts`). 쓰기(POST·PUT·DELETE)는 다른 쓰기처럼 `X-CY-Agent: 1` 헤더가 있어야 한다. 바뀌면 SSE `characters`를 보내고, 지금 캐릭터의 말투도 바로 바뀐다.
+
+| | |
+|---|---|
+| `GET /characters` | `{ current, characters, slots, types, help, schema }`. `characters`는 기본 넷(`builtin`, `defaults` 기본 대사, `override` 고친 칸 또는 `null`, `lines` 둘을 합친 것)과 사용자 캐릭터(`custom`, `from`, `media { 칸: 저장 이름 }`, `frames { 칸: 테두리 }`, `lines`)다. `schema`는 고칠 수 있는 칸 목록 `[{ path, kind: text\|list, vars, oneLine?, label? }]`, `help`는 `lines.json`의 `_help`다 |
+| `POST /characters { name, from?, lines?, frames? }` | 새 캐릭터. `from`(기본 `shisa`)의 대사를 전부 복사하고 이름이 든 줄은 새 이름으로 바꾼다. `lines`를 주면 그 위에 덮는다(시사의 정해진 답처럼 앱에만 있는 칸). 201 `{ character }` |
+| `GET /characters/:id` · `PUT /characters/:id` | 사용자 캐릭터는 `{ name?, lines?, frames? }`(`lines`는 통째로, `frames`는 준 칸만). 기본 캐릭터는 `{ lines }`만 받고 기본값과 다른 칸만 `overrides/<id>.json`에 남긴다 |
+| `DELETE /characters/:id/lines` | 기본 캐릭터 대사를 기본값으로(덮어쓰기 파일을 지운다) |
+| `DELETE /characters/:id` | 사용자 캐릭터를 폴더째 지운다. 지금 쓰던 캐릭터면 시사로 돌아가고 `config.json`도 고친다. 기본 캐릭터는 400 |
+| `PUT /characters/:id/media/:slot` · `DELETE …` | 그림·영상 올리기(본문 = 파일 바이트, 이름은 `x-file-name`) · 빼기. 칸은 `eyes_open`·`eyes_closed`·`cheer`·`dance`(꼭 넣을 넷)와 `study`·`plan`(고를 둘) |
+
+- 저장 위치는 사용자 데이터 폴더뿐이다. 사용자 캐릭터는 `~/.cy-agent/characters/<id>/character.json`과 올린 파일, 기본 캐릭터에서 고친 칸은 `~/.cy-agent/characters/overrides/<id>.json`이다. 레포와 앱 번들은 건드리지 않는다.
+- id는 `u-` 뒤에 소문자·숫자를 붙여 새로 짓고, 기본 id와 겹치지 않는다.
+- 받는 파일은 png·jpg·webp·gif·webm·mp4다. 이름이 아니라 파일 첫 바이트로 종류를 보고, 그 밖은 400이다. 저장 이름은 `<칸>-<무작위 8자>.<확장자>`로 새로 짓는다. 크기와 개수 상한은 없다.
+- 테두리(둥근 네모 카드)는 칸마다 고른다. 고르지 않은 칸은 png·webm이면 끄고, 그 밖(배경이 있는 jpg·gif·mp4 등)은 켠다.
+- 대사의 칸은 `lines.json`과 같다(`name`, `prompt`, `flair`, `phrases`, `local`, `cheer`, `canned`, `setup`, `overlay`, `tour`). 모르는 칸이나 그 칸에서 못 쓰는 자리표시(`{title}` 등)가 있으면 400이다. 정해진 답(`canned`)은 어느 칸에서나 `{next}` `{open}` `{done}` `{total}` `{rest}`를 쓸 수 있다.
+- 모델 프롬프트에 들어가는 건 `prompt.intro`와 `prompt.tone` 두 칸뿐이고, 둘 다 한 줄로 다듬는다. 프롬프트의 시사 첫 문장·말투 줄 자리만 바꾸므로 그 밖의 규칙과 안전 지시는 그대로다.
+- 앱은 `cy-asset`으로 사용자 캐릭터 파일을 줄 때 `GET /characters` 목록에 그 캐릭터의 그 파일이 있는지, 심볼릭 링크를 풀었을 때 그 캐릭터 폴더 안의 보통 파일인지 본다.
 
 ### `GET /connections` · `POST /connections/check { id? }`
 

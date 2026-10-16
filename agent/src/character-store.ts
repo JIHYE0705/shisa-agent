@@ -187,7 +187,7 @@ export function validateLines(input: unknown): { ok: true; lines: LinesPatch } |
     if (c && typeof c === "object" && !Array.isArray(c)) return { ok: false, error: c.error };
     if (c === undefined) continue;
     const bad = (Array.isArray(c) ? c : [c]).flatMap((l) => unknownVars(l, d.vars)).filter((x, i, a) => a.indexOf(x) === i);
-    if (bad.length) return { ok: false, error: `모르는 자리표시 ${bad.map((x) => `{${x}}`).join(" ")}: ${d.label ? `${d.path}(${d.label})` : d.path}${d.vars.length ? ` — 쓸 수 있는 것: ${d.vars.map((x) => `{${x}}`).join(" ")}` : " — 이 칸은 자리표시를 못 써요"}` };
+    if (bad.length) return { ok: false, error: `모르는 자리표시 ${bad.map((x) => `{${x}}`).join(" ")}: ${d.label ? `${d.path}(${d.label})` : d.path}${d.vars.length ? ` · 쓸 수 있는 것: ${d.vars.map((x) => `{${x}}`).join(" ")}` : " · 이 칸은 자리표시를 못 써요"}` };
     out[path] = c;
   }
   // 객체 모양이지만 칸이 아닌 것(예: { phrases: "글" } 처럼 묶음 자리에 글)
