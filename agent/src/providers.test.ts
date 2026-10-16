@@ -11,7 +11,7 @@ import { converse } from "./chat.ts";
 import { inlineContext } from "./ctx-tools.ts";
 import type { ContentBlock } from "./attachments.ts";
 import {
-  ANTHROPIC_URL, MISSING_ANTHROPIC_KEY, GEMINI_DEFAULT_MODEL, bestGeminiFlash, MISSING_CODEX, MISSING_GEMINI_KEY, MISSING_OPENAI_KEY, OPENAI_DEFAULT_MODEL, OPENAI_URL,
+  ANTHROPIC_URL, MISSING_ANTHROPIC_KEY, GEMINI_DEFAULT_MODEL, bestGeminiFlash, geminiQuota, MISSING_CODEX, MISSING_GEMINI_KEY, MISSING_OPENAI_KEY, OPENAI_DEFAULT_MODEL, OPENAI_URL,
   type ExecFileLike, type FetchLike, openaiStrict, openaiUnstrict, parseCodexStdout, resolveHttpModel, brainAuthFailed, resetBrainAuth, onBrainAuthChange, BrainAuthError,
 } from "./providers.ts";
 
@@ -164,6 +164,89 @@ test("gemini: 끝내 붐비면 알아듣기 쉬운 오류, Retry-After 를 따�
   );
   assert.equal(posts, 3);
   assert.deepEqual(waits, [7000, 7000]);
+});
+
+// 2026-10 무료 키로 받은 429 본문 모양(하루 한도·분당 한도)
+const quota429 = (quotaId: string, retryDelay: string, quotaValue = "20") => new Response(JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "You exceeded your current quota", details: [
+  { "@type": "type.googleapis.com/google.rpc.QuotaFailure", violations: [{ quotaMetric: "generativelanguage.googleapis.com/generate_content_free_tier_requests", quotaId, quotaValue }] },
+  { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay },
+] } }), { status: 429 });
+const geminiList = (...ids: string[]) => new Response(JSON.stringify({ models: ids.map((id) => ({ name: `models/${id}`, supportedGenerationMethods: ["generateContent"] })) }), { status: 200 });
+const geminiOk = () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: thoughtJson() }] } }] }), { status: 200 });
+
+test("geminiQuota: 하루 한도·분당 한도·retryDelay 읽기", async () => {
+  assert.deepEqual(geminiQuota(await quota429("GenerateRequestsPerDayPerProjectPerModel-FreeTier", "62128s").text()), { day: true, waitMs: 62_128_000, limit: 20 });
+  assert.deepEqual(geminiQuota(await quota429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "12.5s", "5").text()), { day: false, waitMs: 12_500 });
+  assert.deepEqual(geminiQuota("{}"), { day: false });
+  assert.deepEqual(geminiQuota("not json"), { day: false });
+});
+
+test("gemini: 하루 한도(429 PerDay)면 기다리지 않고 flash-lite 로, 그 뒤로는 다 쓴 모델을 건너뛴다", async () => {
+  const posts: string[] = [], waits: number[] = [];
+  let t = 1_000;
+  const fetch: FetchLike = async (url, init) => {
+    if (init?.method === "GET") return geminiList("gemini-3.8-flash", "gemini-3.5-flash-lite");
+    const m = url.split("/").pop()!.replace(":generateContent", "");
+    posts.push(m);
+    return m === "gemini-3.8-flash" ? quota429("GenerateRequestsPerDayPerProjectPerModel-FreeTier", "100s") : geminiOk();
+  };
+  const opts = { deps: { fetch, sleep: async (ms: number) => { waits.push(ms); }, now: () => t, env: { CY_AGENT_GEMINI_API_KEY: `${KEY}-day` } } };
+  assert.equal((await ask<{ reply_md: string }>(cfgOf("gemini"), "x", SCHEMA, undefined, opts)).reply_md, "본문");
+  assert.deepEqual(posts, ["gemini-3.8-flash", "gemini-3.5-flash-lite"]);
+  posts.length = 0;
+  await ask(cfgOf("gemini"), "x", SCHEMA, undefined, opts);
+  assert.deepEqual(posts, ["gemini-3.5-flash-lite"], "다 쓴 모델은 건너뛴다");
+  t += 101_000; posts.length = 0;
+  await ask(cfgOf("gemini"), "x", SCHEMA, undefined, opts);
+  assert.deepEqual(posts, ["gemini-3.8-flash", "gemini-3.5-flash-lite"], "다시 쓸 수 있는 때가 지나면 원래 모델부터");
+  assert.deepEqual(waits, []);
+});
+
+test("gemini: 하루 한도인데 lite 가 이 계정에 없으면(404) 하루 한도 글로 알리고, 다음부터 lite 를 묻지 않는다", async () => {
+  const posts: string[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    if (init?.method === "GET") return geminiList("gemini-3.8-flash", "gemini-3.5-flash-lite");
+    const m = url.split("/").pop()!.replace(":generateContent", "");
+    posts.push(m);
+    return m === "gemini-3.8-flash" ? quota429("GenerateRequestsPerDayPerProjectPerModel-FreeTier", "62128s") : new Response("", { status: 404 });
+  };
+  const opts = { deps: { fetch, sleep: async () => {}, env: { CY_AGENT_GEMINI_API_KEY: `${KEY}-day404` } } };
+  await assert.rejects(ask(cfgOf("gemini"), "x", SCHEMA, undefined, opts), (e: Error) => {
+    assert.equal(e.message, "오늘 쓸 수 있는 Gemini 무료 사용량을 다 썼어요(무료 키는 모델마다 하루 20번이 정해져 있어요). 내일 다시 쓰거나, 결제를 켠 키를 넣어 주세요 (HTTP 429).");
+    return true;
+  });
+  assert.deepEqual(posts, ["gemini-3.8-flash", "gemini-3.5-flash-lite"]);
+  posts.length = 0;
+  await assert.rejects(ask(cfgOf("gemini"), "x", SCHEMA, undefined, opts), /무료 사용량을 다 썼어요/);
+  assert.deepEqual(posts, [], "다 쓴 모델도, 없는 lite 도 다시 보내지 않는다");
+});
+
+test("gemini: 분당 한도(429 PerMinute)는 retryDelay 만큼 기다렸다 다시, 너무 길면 기다리지 않는다", async () => {
+  let n = 0;
+  const waits: number[] = [];
+  const fetch: FetchLike = async (_url, init) => {
+    if (init?.method === "GET") return geminiList("gemini-3.8-flash");
+    return n++ < 1 ? quota429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "9s", "5") : geminiOk();
+  };
+  await ask(cfgOf("gemini"), "x", SCHEMA, undefined, { deps: { fetch, sleep: async (ms: number) => { waits.push(ms); }, env: { CY_AGENT_GEMINI_API_KEY: `${KEY}-min` } } });
+  assert.deepEqual(waits, [9000]);
+  const long: FetchLike = async (_url, init) => (init?.method === "GET" ? geminiList("gemini-3.8-flash") : quota429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "600s", "5"));
+  waits.length = 0;
+  await assert.rejects(ask(cfgOf("gemini"), "x", SCHEMA, undefined, { deps: { fetch: long, sleep: async (ms: number) => { waits.push(ms); }, env: { CY_AGENT_GEMINI_API_KEY: `${KEY}-min2` } } }), /사용량 한도에 걸렸어요.*HTTP 429/);
+  assert.deepEqual(waits, []);
+});
+
+test("gemini: 빈 답은 이유(안전 필터·길이)를 알리고, 400 은 Gemini 가 준 이유 한 줄을 붙인다(키는 없다)", async () => {
+  const env = { CY_AGENT_GEMINI_API_KEY: `${KEY}-empty` };
+  const one = (r: () => Response): FetchLike => async (_u, init) => (init?.method === "GET" ? geminiList() : r());
+  await assert.rejects(ask(cfgOf("gemini"), "x", SCHEMA, undefined, { deps: { fetch: one(() => new Response(JSON.stringify({ candidates: [{ finishReason: "SAFETY" }] }))), env } }), /안전 필터/);
+  await assert.rejects(ask(cfgOf("gemini"), "x", SCHEMA, undefined, { deps: { fetch: one(() => new Response(JSON.stringify({ promptFeedback: { blockReason: "OTHER" } }))), env } }), /안전 필터/);
+  await assert.rejects(ask(cfgOf("gemini"), "x", SCHEMA, undefined, { deps: { fetch: one(() => new Response(JSON.stringify({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [] } }] }))), env } }), /너무 길어/);
+  await assert.rejects(ask(cfgOf("gemini"), "x", SCHEMA, undefined, { deps: { fetch: one(() => new Response(JSON.stringify({ candidates: [] }))), env } }), /빈 답/);
+  await assert.rejects(ask(cfgOf("gemini"), "x", SCHEMA, undefined, { deps: { fetch: one(() => new Response(JSON.stringify({ error: { message: `Invalid JSON payload ${env.CY_AGENT_GEMINI_API_KEY}\nmore` } }), { status: 400 })), env } }), (e: Error) => {
+    assert.equal(e.message, "Gemini 요청이 실패했어요 (HTTP 400: Invalid JSON payload …).");
+    return true;
+  });
 });
 
 test("bestGeminiFlash: lite 고르기", () => {

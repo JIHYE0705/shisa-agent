@@ -199,13 +199,16 @@ export function brainCreditNeeded(cfg: Pick<Config, "brain">, env: NodeJS.Proces
 }
 export function resetBrainAuth() { badKeys.clear(); noCredit.clear(); }
 
-async function readError(res: Response, fail: string, auth?: { provider: KeyProvider; key: string }): Promise<never> {
-  await res.text().catch(() => "");
+// reason: 본문에서 이유 한 줄을 뽑는 함수(있으면 400 같은 실패에 덧붙인다 — 키는 넣지 않는다)
+async function readError(res: Response, fail: string, auth?: { provider: KeyProvider; key: string }, reason?: (body: string) => string | undefined): Promise<never> {
+  const body = await res.text().catch(() => "");
   if (auth && (res.status === 401 || res.status === 403)) {
     markAuth(auth.provider, auth.key, true);
     throw new BrainAuthError(`${authFailText(auth.provider)} (HTTP ${res.status}).`);
   }
-  throw new Error(`${fail} (HTTP ${res.status}).`);
+  const why = reason && res.status === 400 ? reason(body) : undefined;
+  const clean = why && auth ? why.split(auth.key).join("…") : why;
+  throw new Error(`${fail} (HTTP ${res.status}${clean ? `: ${clean}` : ""}).`);
 }
 
 const geminiPicked = new Map<string, string>(); // 키 → 기본 대신 쓰는 모델(이 실행 동안만)
@@ -250,17 +253,48 @@ async function newestGeminiFlash(key: string, fetchImpl: FetchLike, lite = false
 // Gemini 가 붐비면(503·500) 또는 너무 자주 보내면(429) 이만큼 쉬고 다시 보낸다
 // 출처: 2026-10 무료 키로 시험 — 3.5~3.8 flash 는 503(high demand)이 계속, flash-lite 는 바로 답했다
 export const GEMINI_RETRY_MS = [2_000, 5_000];
+// 429 본문이 「N초 뒤 다시」(RetryInfo)를 주면 그만큼 기다렸다 다시. 이보다 길면 기다리지 않고 바로 알린다
+export const GEMINI_MAX_WAIT_MS = 60_000;
 const BUSY = new Set([429, 500, 503]);
 
-function geminiFailText(status: number): string {
-  if (status === 503 || status === 500) return "Gemini가 지금 붐벼서 답하지 못했어요. 잠시 뒤 다시 보내 주세요";
-  if (status === 429) return "Gemini 사용량 한도에 걸렸어요(무료 키는 1분·하루 횟수가 정해져 있어요). 잠시 뒤 다시 보내 주세요";
+// 429 본문(google.rpc QuotaFailure·RetryInfo) 읽기.
+// 출처: 2026-10 무료 키로 시험 — gemini-3.8-flash 무료 등급은 quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier,
+// quotaValue 20(모델마다 하루 20번), retryDelay "62128s"(태평양 시각 자정까지). 분당 한도는 PerMinute 이고 retryDelay 가 몇십 초다
+export function geminiQuota(body: string): { day: boolean; waitMs?: number; limit?: number } {
+  const err = asRecord(asRecord(tryParse(body))?.error);
+  const details = Array.isArray(err?.details) ? err!.details as Record<string, any>[] : [];
+  let day = false, limit: number | undefined, waitMs: number | undefined;
+  for (const d of details) {
+    for (const v of Array.isArray(d?.violations) ? d.violations : []) {
+      if (/PerDay/i.test(String(v?.quotaId ?? ""))) {
+        day = true;
+        const n = Number(v?.quotaValue);
+        if (Number.isFinite(n) && n > 0) limit = n;
+      }
+    }
+    const m = /^(\d+(?:\.\d+)?)s$/.exec(String(d?.retryDelay ?? ""));
+    if (m) waitMs = Math.ceil(Number(m[1]) * 1000);
+  }
+  return { day, ...(waitMs !== undefined ? { waitMs } : {}), ...(limit !== undefined ? { limit } : {}) };
+}
+
+type GeminiFail = { fail: true; status: number; day?: boolean; limit?: number };
+const isFail = (x: Response | GeminiFail): x is GeminiFail => (x as GeminiFail).fail === true;
+
+function geminiFailText(f: { status: number; day?: boolean; limit?: number }): string {
+  if (f.day) return `오늘 쓸 수 있는 Gemini 무료 사용량을 다 썼어요(무료 키는 모델마다 하루 ${f.limit ? `${f.limit}번` : "횟수"}이 정해져 있어요). 내일 다시 쓰거나, 결제를 켠 키를 넣어 주세요`;
+  if (f.status === 503 || f.status === 500) return "Gemini가 지금 붐벼서 답하지 못했어요. 잠시 뒤 다시 보내 주세요";
+  if (f.status === 429) return "Gemini 사용량 한도에 걸렸어요(무료 키는 1분·하루 횟수가 정해져 있어요). 잠시 뒤 다시 보내 주세요";
   return "Gemini 요청이 실패했어요";
 }
 
+// 하루 한도를 다 쓴 모델 — 키 지문:모델 → 다시 쓸 수 있는 때(ms). 그때까지는 그 모델을 건너뛰고 바로 flash-lite 로(헛걸음 요청을 줄인다)
+const geminiSpent = new Map<string, { until: number; limit?: number }>();
+export function resetGeminiState() { geminiSpent.clear(); geminiPicked.clear(); geminiLites.clear(); }
+
 export async function geminiJson(
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
-  opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; sleep?: (ms: number) => Promise<void>; env?: NodeJS.ProcessEnv } = {},
+  opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; sleep?: (ms: number) => Promise<void>; env?: NodeJS.ProcessEnv; now?: () => number } = {},
 ): Promise<unknown> {
   const env = opts.env ?? process.env;
   const key = geminiKey(cfg, env);
@@ -268,6 +302,7 @@ export async function geminiJson(
   const chosen = resolveHttpModel("gemini", cfg.models?.general, opts.model);
   const picked = chosen === GEMINI_DEFAULT_MODEL ? geminiPicked.get(key) : undefined;
   const fetchImpl = opts.fetch ?? fetch;
+  const now = opts.now ?? Date.now;
   const body = JSON.stringify({
     ...(opts.system ? { systemInstruction: { parts: [{ text: opts.system }] } } : {}),
     contents: [{ role: "user", parts: [{ text: `${prompt}\n\nJSON만 답하라. 도구 호출이나 코드 수정은 하지 마라.` }, ...(opts.blocks ?? []).map(geminiPart)] }],
@@ -286,45 +321,91 @@ export async function geminiJson(
     }
   };
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  // 붐비면 쉬었다 다시. Retry-After(초)를 주면 그만큼(최대 30초)
-  const retryBusy = async (r: Response, model: string) => {
-    for (const wait of GEMINI_RETRY_MS) {
-      if (!BUSY.has(r.status)) break;
+  const spentTag = (model: string) => `${fingerprint(key)}:${model}`;
+  const spent = (model: string) => (geminiSpent.get(spentTag(model))?.until ?? 0) > now();
+  // 한 모델에 보내기. 붐비면(429·500·503) retry 일 때만 쉬었다 다시(429 본문의 retryDelay > Retry-After > GEMINI_RETRY_MS).
+  // 하루 한도(429 PerDay)는 기다려도 소용없어 바로 실패(그 모델은 그때까지 건너뛴다)
+  // retry 가 함수면 처음 붐빌 때 물어본다(lite 로 넘어갈 수 있으면 여기서 기다리지 않는다)
+  const tryModel = async (model: string, retry: boolean | (() => Promise<boolean>)): Promise<Response | GeminiFail> => {
+    let r = await send(model);
+    for (let i = 0; ; i++) {
+      if (!BUSY.has(r.status)) return r;
+      const text = await r.text().catch(() => "");
+      const q = r.status === 429 ? geminiQuota(text) : { day: false };
+      if (q.day) {
+        geminiSpent.set(spentTag(model), { until: now() + (q.waitMs ?? 3_600_000), ...(q.limit ? { limit: q.limit } : {}) });
+        return { fail: true, status: 429, day: true, ...(q.limit ? { limit: q.limit } : {}) };
+      }
       const after = Number(r.headers.get("retry-after"));
-      await r.text().catch(() => "");
-      await sleep(after > 0 ? Math.min(after * 1000, 30_000) : wait);
+      const wait = q.waitMs ?? (after > 0 ? after * 1000 : GEMINI_RETRY_MS[i]);
+      if (typeof retry === "function") retry = await retry();
+      if (!retry || i >= GEMINI_RETRY_MS.length || wait > GEMINI_MAX_WAIT_MS) return { fail: true, status: r.status };
+      await sleep(wait);
       r = await send(model);
     }
-    return r;
   };
+  // 붐빌 때 넘어갈 flash-lite(같은 키에서 flash 는 막혀도 lite 는 바로 답하는 일이 많다 — 하루 한도도 모델마다 따로다)
   const first = picked ?? chosen;
-  let res = await send(first);
-  // 붐비면 가벼운 flash-lite 로 넘어간다(같은 키에서 flash 는 막혀도 lite 는 바로 답하는 일이 많다). lite 가 없으면 같은 모델로 기다렸다 다시
-  if (BUSY.has(res.status)) {
-    const lite = /-lite$/.test(first) ? undefined : await geminiLite(key, fetchImpl);
-    if (lite) {
-      await res.text().catch(() => "");
-      res = await retryBusy(await send(lite), lite);
-    } else {
-      res = await retryBusy(res, first);
+  const liteOf = async () => {
+    if (/-lite$/.test(first)) return undefined;
+    const lite = await geminiLite(key, fetchImpl);
+    return lite && lite !== first && !spent(lite) ? lite : undefined;
+  };
+  let out: Response | GeminiFail;
+  const early = spent(first) ? await liteOf() : undefined;
+  if (spent(first) && !early) {
+    const limit = geminiSpent.get(spentTag(first))?.limit;
+    out = { fail: true, status: 429, day: true, ...(limit ? { limit } : {}) }; // 다 쓴 모델에 또 보내지 않는다(넘어갈 lite 도 없다)
+  } else if (early) {
+    out = await tryModel(early, true);
+    if (!isFail(out) && !out.ok) { await out.text().catch(() => ""); const limit = geminiSpent.get(spentTag(first))?.limit; out = { fail: true, status: 429, day: true, ...(limit ? { limit } : {}) }; } // lite 도 못 쓰면 원래 이유(하루 한도)
+  } else {
+    let lite: string | undefined;
+    out = await tryModel(first, async () => !(lite = await liteOf()));
+    if (isFail(out) && (lite ??= out.day ? await liteOf() : undefined)) {
+      const second = await tryModel(lite, true);
+      if (!isFail(second) && second.ok) out = second;
+      else if (!isFail(second)) {
+        // lite 가 이 계정에 없으면(404) 다음부터 묻지 않는다. 사용자에게는 원래 모델의 이유를 보인다
+        if (second.status === 404) geminiLites.set(key, undefined);
+        await second.text().catch(() => "");
+      }
     }
   }
   // 기본 모델이 이 계정에 없으면(404) 목록에서 가장 새 flash 를 골라 한 번 더
-  if (res.status === 404 && chosen === GEMINI_DEFAULT_MODEL && !picked) {
+  if (!isFail(out) && out.status === 404 && chosen === GEMINI_DEFAULT_MODEL && !picked) {
     const best = await newestGeminiFlash(key, fetchImpl);
     if (best && best !== chosen) {
-      await res.text().catch(() => "");
-      res = await retryBusy(await send(best), best);
-      if (res.ok) geminiPicked.set(key, best);
+      await out.text().catch(() => "");
+      out = await tryModel(best, true);
+      if (!isFail(out) && out.ok) geminiPicked.set(key, best);
     }
   }
-  if (!res.ok) return readError(res, geminiFailText(res.status), { provider: "gemini", key });
+  if (isFail(out)) throw new Error(`${geminiFailText(out)} (HTTP ${out.status}).`);
+  const res = out;
+  if (!res.ok) return readError(res, geminiFailText({ status: res.status }), { provider: "gemini", key }, geminiReason);
   markAuth("gemini", key, false);
   const raw = await res.text();
   const data = asRecord(parseModelJson(raw, "Gemini 응답에서 JSON을 읽지 못했어요."));
-  const parts = (data?.candidates as { content?: { parts?: { text?: string }[] } }[] | undefined)?.[0]?.content?.parts;
+  const cand = (data?.candidates as { content?: { parts?: { text?: string }[] }; finishReason?: string }[] | undefined)?.[0];
+  const parts = cand?.content?.parts;
   const text = Array.isArray(parts) ? parts.map((p) => p?.text ?? "").join("") : "";
+  // 빈 답: 안전 필터·길이 초과 등 이유를 알 수 있으면 알려 준다
+  if (!text.trim()) {
+    const block = String(asRecord(data?.promptFeedback)?.blockReason ?? "");
+    const why = String(cand?.finishReason ?? "");
+    if (block || /SAFETY|BLOCKLIST|PROHIBITED|SPII|RECITATION/.test(why)) throw new Error("Gemini가 안전 필터로 답을 막았어요. 말을 조금 바꿔서 다시 보내 주세요");
+    if (why === "MAX_TOKENS") throw new Error("Gemini 답이 너무 길어 중간에 끊겼어요. 조금 더 짧게 물어봐 주세요");
+    throw new Error("Gemini가 빈 답을 보냈어요. 잠시 뒤 다시 보내 주세요");
+  }
   return parseModelJson(text, "Gemini 응답에서 JSON을 읽지 못했어요.");
+}
+
+// Gemini 오류 본문의 이유 한 줄(400 스키마 거절 등). 키는 본문에 없지만 혹시 몰라 키 모양은 지운다
+function geminiReason(body: string): string | undefined {
+  const m = asRecord(asRecord(tryParse(body))?.error)?.message;
+  if (typeof m !== "string" || !m.trim()) return undefined;
+  return m.replace(/AIza[\w-]{20,}/g, "…").split("\n")[0].slice(0, 160);
 }
 
 // OpenAI strict 출력은 모든 속성이 required · additionalProperties false 여야 한다(아니면 400 — 우리 스키마엔 선택 속성이 많다).
