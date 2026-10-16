@@ -31,7 +31,7 @@ import { listRules, rulesContext, RULE_SCHEMA } from "./todo-rules.ts";
 import { guidelinesFor } from "./guidelines.ts";
 import { ledgerContext } from "./todo-ledger.ts";
 import { TONE } from "./voice.ts";
-import { withCharacter } from "./characters.ts";
+import { SHISA_INTRO, withCharacter } from "./characters.ts";
 import { localThought, type LocalTodo } from "./local-mode.ts";
 import { LOCAL_ONLY, remoteJson, resolveAnthropicModel, resolveHttpModel, type ProviderDeps } from "./providers.ts";
 import { GH_HINT, GH_SERVER, ghEnabled, ghMcpServer } from "./gh.ts";
@@ -124,7 +124,7 @@ export const WRITE_RULE = `- 업무 도구는 사용자가 Claude Code 에 연�
 // 쓰기(승인 카드) 안내 — 채팅·팝오버·Slack DM 공용
 export const WRITE_GUIDE = `- 회의 수락·거절·미정은 연결된 캘린더 MCP 에 응답 도구가 있으면 그걸 바로 부른다(일정 id 는 "다가오는 회의"(프롬프트에 있거나 cy meetings_upcoming 도구)나 일정 목록 도구로 읽은 id 그대로). 어느 회의인지 애매하면 부르지 말고 되묻는다. 응답 도구가 없으면 직접 응답하라고 안내한다.
 - 쓰기 도구를 부르면 그 자리에서 승인 카드가 뜨고, 사용자가 [허용]을 눌러야 실행된다. 결과(허용·거부)를 보고 reply에 무엇을 했는지(또는 거부돼서 안 했는지) 한 줄로 말한다.`;
-const BASE = (rule: string) => `너는 사용자 개인 PC에 상주하는 비서 "cy"다. ${TONE}
+const BASE = (rule: string) => `${SHISA_INTRO} ${TONE}
 ${rule}
 - 할 일은 "사용자가 실제로 행동해야 하는 것"만. 단순 공지·자동 알림은 빼라.
 - UI/UX 수정 제안(proposals)은 사용자가 요청했거나 피드백에서 명확히 드러난, 몇 줄 수준의 작은 변경만. 레포 경로는 아래 프로젝트 목록에 있는 것만 쓴다. 애매하면 제안하지 않는다.

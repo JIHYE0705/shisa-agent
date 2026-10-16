@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
-  CHARACTER_IDS, CHARACTERS, LINES_JSON, SHISA_INTRO, SHISA_TONE, characterId, installCharacters, isBuiltinId, mergeLines,
+  CHARACTER_IDS, CHARACTERS, LEGACY_SHISA_INTRO, LINES_JSON, SHISA_INTRO, introFor, SHISA_TONE, characterId, installCharacters, isBuiltinId, mergeLines,
   type BuiltinId, type LinesEntry, type LinesPatch, type Mood,
 } from "./characters.ts";
 import { PHRASES, unknownVars } from "./phrases.ts";
@@ -205,13 +205,13 @@ export function diffLines(base: unknown, edited: unknown): LinesPatch {
 }
 const isEmptyPatch = (p: unknown) => Object.keys(flattenLines(p)).length === 0;
 
-// 가져온 대사의 이름을 새 이름으로(「하치와레」가 든 줄 → 새 이름). 시사의 첫 문장은 「비서 "cy"」라 새 이름 소개로 바꾼다
+// 가져온 대사의 이름을 새 이름으로(「하치와레」가 든 줄 → 새 이름). 시사의 첫 문장(예전 「비서 "cy"」도)은 새 이름 소개로 바꾼다
 export function renameLines(e: LinesPatch, from: string, to: string): LinesPatch {
   const flat = flattenLines(e);
   const swap = (s: string) => (from && from !== to ? s.split(from).join(to) : s);
   const out: Record<string, Value> = {};
   for (const [p, v] of Object.entries(flat)) out[p] = Array.isArray(v) ? v.map(swap) : swap(v);
-  if (out["prompt.intro"] === SHISA_INTRO) out["prompt.intro"] = `너는 사용자 개인 PC에 상주하는 비서 캐릭터 "${to}"다.`;
+  if (out["prompt.intro"] === SHISA_INTRO || out["prompt.intro"] === LEGACY_SHISA_INTRO) out["prompt.intro"] = introFor(to);
   out.name = to;
   return unflattenLines(out);
 }

@@ -21,6 +21,7 @@ import { contextHeader, CTX_GUIDE, inlineContext, type CtxDeps } from "./ctx-too
 import type { Dashboard } from "./dashboard.ts";
 import { GUIDELINE_SCHEMA, GUIDELINE_GUIDE, guidelinesFor, type GuidelineCtx } from "./guidelines.ts";
 import { phrase } from "./phrases.ts";
+import { character } from "./characters.ts";
 import { attachmentInput, attachmentRef, type Attachment, type AttachmentStore } from "./attachments.ts";
 import { autoMergeConsent, textMergeConsent } from "./auto-merge.ts";
 import { parsePrRef } from "./merge-request.ts";
@@ -257,14 +258,16 @@ export function chatPrompt(cfg: Config, store: Store, history: ChatTurn[], text:
   const refs = (t: ChatTurn) => (t.attachments?.length ? `${t.text ? " " : ""}${t.attachments.map((a) => attachmentRef(a, t.threadId ?? thread?.id)).join(" ")}` : "");
   const turns = history.slice(-HISTORY_TURNS * 2).map((t) => t.role === "system"
     ? `(기록) ${t.text.slice(0, 400)}`
-    : `${t.role === "user" ? "사용자" : "cy"}${t.todoId ? ` (할 일 "${t.todoTitle ?? t.todoId}"에 대해)` : ""}: ${t.text.slice(0, 1200)}${refs(t)}`);
+    : `${t.role === "user" ? "사용자" : character().name}${t.todoId ? ` (할 일 "${t.todoTitle ?? t.todoId}"에 대해)` : ""}: ${t.text.slice(0, 1200)}${refs(t)}`);
   const guidelines = guidelinesFor(store, "chat"); // 사용자가 정한 행동 지침(guidelines.ts) — 맥락 넣는 법과 상관없이 늘
   const head = inlineContext(cfg)
     ? [buildContext(store, new Date(), { selfId: cfg.slackUserId, query: focus ? `${focus.title} ${text}` : text, sessions: sessionsAllowed(cfg) }), "", ...(guidelines ? [guidelines, ""] : []), summary ?? "", "", ...(meeting(store) ? [meeting(store), ""] : [])]
     : [contextHeader(cfg, { ...(thread ? { thread } : {}), ...(focus ? { focus } : {}), ...(guidelines ? { guidelines } : {}) }), ""];
   return [
     ...head,
-    "## 이 대화의 최근 흐름(다른 대화 창의 내용은 모른다)", turns.length ? turns.join("\n") : "(없음 — 새 대화)", "",
+    "## 이 대화의 최근 흐름(다른 대화 창의 내용은 모른다)", turns.length ? turns.join("\n") : "(없음 — 새 대화)",
+    // 예전 기록에 다른 이름(옛 「cy」·바꾸기 전 캐릭터)으로 소개한 말이 있어도 지금 이름으로 답하게
+    ...(turns.length ? [`(「${character().name}」의 말은 네가 한 말이다. 기록에서 다른 이름으로 소개했어도 너는 「${character().name}」다.)`] : []), "",
     ...(focus ? [focusBlock(focus), ""] : []),
     codeBlock(cfg.repoRoots, repo), "",
     `## 지금 사용자가 말했다\n"""${text || "(글 없이 첨부만 보냈다)"}"""`,

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CHARACTERS, CHARACTER_IDS, SHISA_PERSONA, character, characterId, setCharacter, withCharacter } from "./characters.ts";
+import { CHARACTERS, CHARACTER_IDS, LEGACY_SHISA_INTRO, SHISA_PERSONA, character, characterId, installCharacters, setCharacter, withCharacter } from "./characters.ts";
 import { SYSTEM, INTERACTIVE_SYSTEM, systemPrompt, ask } from "./brain.ts";
 import { CHAT_SYSTEM, CHAT_SYSTEM_INLINE, BG_AGENT_SYSTEM } from "./chat.ts";
 import { ASK_SYSTEM } from "./todo-ask.ts";
@@ -15,7 +15,7 @@ import { Settings } from "./settings.ts";
 import { Bus } from "./bus.ts";
 import type { FetchLike } from "./providers.ts";
 
-afterEach(() => { setCharacter("shisa"); setPhrases({}); });
+afterEach(() => { installCharacters({}); setCharacter("shisa"); setPhrases({}); });
 
 const OTHERS = CHARACTER_IDS.filter((id) => id !== "shisa");
 const SYSTEMS = { SYSTEM, INTERACTIVE_SYSTEM, CHAT_SYSTEM, CHAT_SYSTEM_INLINE, BG_AGENT_SYSTEM, ASK_SYSTEM, connectorsOff: systemPrompt() };
@@ -61,6 +61,19 @@ test("우사기: 중요 안내에는 외침이 없고, 인사에 외침을 두 �
   }
 });
 
+test("소개: 시사는 「cy」가 아니라 「시사」라고 소개하고, 이름만 바꾼 시사·예전 소개 글로 저장된 대사는 그 이름으로", () => {
+  for (const [name, sys] of Object.entries(SYSTEMS)) {
+    assert.ok(sys.startsWith('너는 사용자 개인 PC에 상주하는 비서 캐릭터 "시사"다.'), name);
+    assert.ok(!sys.includes('비서 "cy"'), `${name}: 예전 소개가 남음`);
+  }
+  installCharacters({ overrides: { shisa: { name: "시사짱" } } });
+  assert.ok(withCharacter(SYSTEM).startsWith('너는 사용자 개인 PC에 상주하는 비서 캐릭터 "시사짱"다.'));
+  installCharacters({ overrides: { shisa: { prompt: { intro: LEGACY_SHISA_INTRO } } }, users: [{ id: "u-abc12345", lines: { name: "까망", prompt: { intro: LEGACY_SHISA_INTRO, tone: "까망 말투.", persona: "" } } }] });
+  assert.equal(withCharacter(SYSTEM), SYSTEM, "예전 소개 글은 기본 소개로");
+  setCharacter("u-abc12345");
+  assert.ok(withCharacter(SYSTEM).startsWith('너는 사용자 개인 PC에 상주하는 비서 캐릭터 "까망"다. 까망 말투.'));
+});
+
 test("시스템 프롬프트: 시사면 글자 하나 안 바뀌고, 다른 캐릭터면 모든 프롬프트에서 시사 소개·말투가 그 캐릭터 것으로", () => {
   for (const [name, sys] of Object.entries(SYSTEMS)) {
     assert.ok(sys.includes(SHISA_PERSONA), `${name}: 바꿀 자리(시사 소개+말투)가 없다`);
@@ -72,7 +85,7 @@ test("시스템 프롬프트: 시사면 글자 하나 안 바뀌고, 다른 캐�
     for (const [name, sys] of Object.entries(SYSTEMS)) {
       const out = withCharacter(sys);
       assert.ok(!out.includes(CHARACTERS.shisa.tone), `${id}/${name}: 시사 말투가 남음`);
-      assert.ok(!out.includes('비서 "cy"다'), `${id}/${name}: 시사 소개가 남음`);
+      assert.ok(!out.includes('"시사"다'), `${id}/${name}: 시사 소개가 남음`);
       assert.ok(out.startsWith(`${c.intro} ${c.tone}`), `${id}/${name}`);
       assert.equal(out.split(c.tone).length - 1, 1, `${id}/${name}: 말투 줄은 한 번만`);
       // 말투 말고 나머지(규칙·안전 지시)는 그대로

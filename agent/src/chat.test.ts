@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { Store, type ChatTurn } from "./store.ts";
 import { listFacts } from "./profile.ts";
 import { loadConfig } from "./config.ts";
+import { setCharacter } from "./characters.ts";
 import type { PendingAction } from "./actions.ts";
 import { Chat, CHAT_PROPOSALS, CHAT_SYSTEM, chatPrompt, threadTitle, todoThreadFor, type ChatEvent, type ChatReply, type Converse } from "./chat.ts";
 
@@ -114,6 +115,21 @@ test("chat: todo_ops는 포트로 적용하고 실패 이유를 답에 덧붙인
   const msgs = store.threadMessages(done.threadId);
   assert.equal(msgs.at(-2)!.text, done.text);
   assert.deepEqual([msgs.at(-1)!.role, msgs.at(-1)!.text], ["system", "✓ 추가: X"]); // 적용한 변경은 시스템 줄로
+});
+
+test("chatPrompt: 대화 기록의 비서 말은 지금 캐릭터 이름으로 — 「cy:」로 붙이지 않는다", () => {
+  const store = new Store(":memory:");
+  const h: ChatTurn[] = [{ role: "user", text: "너는 누구야", at: "t" }, { role: "assistant", text: "저는 시사예요", at: "t" }];
+  try {
+    for (const [id, name] of [["shisa", "시사"], ["hachi", "하치와레"]]) {
+      setCharacter(id);
+      const p = chatPrompt(loadConfig(), store, h, "다시 말해 줘", undefined);
+      assert.ok(p.includes(`${name}: 저는 시사예요`), id);
+      assert.ok(p.includes(`너는 「${name}」다.`), `${id}: 지금 이름 알림`);
+      assert.ok(!/(^|\n)cy: /.test(p), `${id}: cy: 가 남음`);
+      assert.ok(!CHAT_SYSTEM.includes('비서 "cy"'), "시스템 프롬프트");
+    }
+  } finally { setCharacter("shisa"); }
 });
 
 test("chatPrompt: 집어 든 할 일 블록(id·제목·우선순위·메모·출처·링크·직접 수정·만든 때)과 '이거' 지시, 기록의 todoId 표시", () => {

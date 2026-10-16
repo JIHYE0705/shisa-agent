@@ -39,7 +39,12 @@ export type LocalLineKey =
 
 // 시사: 예전 말투 그대로(voice.ts TONE·MOODS, phrases.ts 기본값, local-mode.ts LINES).
 // 프롬프트(brain.ts BASE 등)에 박힌 첫 문장·말투 줄은 늘 이 글이다. withCharacter 가 이 자리만 지금 캐릭터 것으로 바꾼다
-export const SHISA_INTRO = "너는 사용자 개인 PC에 상주하는 비서 \"cy\"다.";
+// 첫 문장은 캐릭터 이름으로 소개한다(예전엔 「비서 "cy"」라 시사에게 이름을 물으면 「cy예요」라고 답했다)
+export const introFor = (name: string) => `너는 사용자 개인 PC에 상주하는 비서 캐릭터 "${name}"다.`;
+export const SHISA_INTRO = introFor("시사");
+// 예전 시사 첫 문장 — 이 글로 저장된 덮어쓰기·사용자 캐릭터 대사는 기본 소개로 본다
+export const LEGACY_SHISA_INTRO = "너는 사용자 개인 PC에 상주하는 비서 \"cy\"다.";
+const ownIntro = (intro: string | undefined) => (intro && intro !== LEGACY_SHISA_INTRO ? intro : undefined);
 export const SHISA_TONE = "존댓말로 짧고 다정하게. 가끔(네 번에 한 번 정도) 말끝을 '~요'처럼 늘이거나 '(기쁜 시사)' 같은 감정 표시를 붙여도 되지만, 오류·머지·결재처럼 진지한 내용에는 쓰지 않는다.";
 const SHISA: Character = {
   id: "shisa",
@@ -92,7 +97,7 @@ export function mergeLines<T>(base: T, over: unknown): T {
 const nonEmpty = <R extends object>(r?: R) => (r && Object.keys(r).length ? r : undefined);
 function fromLines(id: CharacterId, e: Partial<LinesEntry>, extra: Partial<Character> = {}): Character {
   return {
-    id, name: e.name || id, intro: e.prompt?.intro || SHISA_INTRO, tone: e.prompt?.tone || SHISA_TONE, stretch: false,
+    id, name: e.name || id, intro: ownIntro(e.prompt?.intro) || (e.name ? introFor(e.name) : SHISA_INTRO), tone: e.prompt?.tone || SHISA_TONE, stretch: false,
     lead: nonEmpty(e.flair?.lead) as Character["lead"], tail: nonEmpty(e.flair?.tail) as Character["tail"],
     phrases: e.phrases ?? {}, lines: e.local ?? {}, cheer: e.cheer?.length ? e.cheer : undefined, ...extra,
   };
@@ -112,7 +117,7 @@ function shisaWith(o: LinesPatch): Character {
   return {
     ...SHISA,
     name: o.name || SHISA.name,
-    intro: o.prompt?.intro || SHISA.intro,
+    intro: ownIntro(o.prompt?.intro) || (o.name && o.name !== SHISA.name ? introFor(o.name) : SHISA.intro), // 이름만 바꿨으면 새 이름으로 소개
     tone: o.prompt?.tone || SHISA.tone,
     lead: nonEmpty(o.flair?.lead) as Character["lead"],
     tail: (o.flair?.tail ? nonEmpty(o.flair.tail) : SHISA.tail) as Character["tail"],

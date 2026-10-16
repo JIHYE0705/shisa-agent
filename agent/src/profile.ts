@@ -15,6 +15,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { HOME_DIR, type Config } from "./config.ts";
 import type { Store, Node } from "./store.ts";
+import { character } from "./characters.ts";
 
 export const CATEGORIES = ["preference", "person", "project", "routine", "style", "priority"] as const;
 export type FactCategory = (typeof CATEGORIES)[number];
@@ -292,7 +293,7 @@ function gatherChat(store: Store, g: Gathered, budget: number) {
   const rows = store.db.prepare(`SELECT ${key} AS k, role, text FROM chat WHERE ${key} > ? AND role != 'system' AND hidden_at IS NULL ORDER BY ${key} LIMIT 200`).all(wm) as any[];
   const lines: Evidence[] = rows.map((r) => ({
     id: `chat:${r.k}`,
-    line: `[chat:${r.k}] ${r.role === "user" ? "사용자" : "cy"}: ${clip(r.text, r.role === "user" ? 400 : 150)}`,
+    line: `[chat:${r.k}] ${r.role === "user" ? "사용자" : character().name}: ${clip(r.text, r.role === "user" ? 400 : 150)}`,
   }));
   const taken = takeWithin(lines, budget);
   g.items.push(...taken);
