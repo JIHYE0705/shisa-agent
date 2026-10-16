@@ -563,7 +563,7 @@ function setMood(m) {
   daemonMood = MOODS.includes(m) ? m : 'idle';
   if (!isBusy(chat)) applyMood(daemonMood);
 }
-cy.onState((p) => { if (typeof p?.character === 'string') setCharacter(p.character); setMood(p?.mood); dispatchActivity({ type: 'state', activity: p?.activity, runs: p?.runs, danceId: p?.danceId }); });
+cy.onState((p) => { if (typeof p?.character === 'string') setCharacter(p.character); setMood(p?.mood); dispatchActivity({ type: 'state', activity: p?.activity, runs: p?.runs, danceId: p?.danceId, danceClip: p?.danceClip }); }); // danceClip: 일정 알림·춤·응원 중 어느 영상
 
 cy.onConnection(({ connected }) => {
   wrap.classList.toggle('sleepy', !connected);

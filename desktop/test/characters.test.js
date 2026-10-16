@@ -195,3 +195,8 @@ test('응원해 줘: 랏코·모몽가는 일정 알림 영상(plan), 하치와�
   assert.match(clipFor2('hachi', 'cheer'), /hachi\/cheer\.webm$/);
 });
 function clipFor2(id, k) { return characterAssets(id).clips[k].src; }
+
+test('오버레이가 데몬 state 의 danceClip 을 넘긴다(채팅 「춤」이 일정 알림 영상으로 나오지 않게)', () => {
+  const r = fs.readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  assert.match(r, /cy\.onState\([^\n]*dispatchActivity\(\{ type: 'state',[^\n]*danceClip: p\?\.danceClip/);
+});
