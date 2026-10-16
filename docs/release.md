@@ -24,7 +24,7 @@
 
 로그인할 때 자동 실행(`app.setLoginItemSettings`)은 dmg로 깐 앱에서만 다룹니다. 설치 마법사를 마치면 켜지고, 설정의 「이 앱」에서 끌 수 있습니다. 터미널 설치(launchd), 개발 실행, `CY_AGENT_HOME`이나 기본이 아닌 `CY_AGENT_PORT`를 준 시험 실행, `CY_NO_LOGIN_ITEM=1`에서는 건드리지 않습니다.
 
-새 버전 알림은 하루 한 번 `https://api.github.com/repos/cheo0y/shisa-agent/releases/latest`를 인증 없이 읽어서, `desktop/package.json`의 version보다 새로우면 캐릭터 말풍선으로 한 번 알립니다(`desktop/src/update-check.js`).
+새 버전 알림은 하루 한 번 `https://api.github.com/repos/cheo0y/shisa-agent/releases?per_page=100`을 인증 없이 읽어서, 이 PC용 파일이 든 가장 높은 정식 버전이 `desktop/package.json`의 version보다 새로우면 캐릭터 말풍선으로 한 번 알립니다(`desktop/src/update-check.js`). 윈도우용 `v<버전>-windows` 릴리스는 윈도우 PC만 봅니다.
 
 ## 만들기
 
