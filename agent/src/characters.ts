@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// 고를 수 있는 캐릭터: 시사(기본)·하치와레·랏코·모몽가 + 사용자가 만든 캐릭터(character-store.ts, ~/.cy-agent/characters/).
+// 고를 수 있는 캐릭터: 시사(기본)·하치와레·랏코·모몽가·우사기 + 사용자가 만든 캐릭터(character-store.ts, ~/.cy-agent/characters/).
 // 캐릭터마다 이름·말투(모델 프롬프트)·말투 양념(voice.ts)·고정 문구 기본값(phrases.ts)·AI 없이 하는 정해진 말(local-mode.ts)이 다르다.
 // 그림·영상은 데스크톱이 같은 id 로 고른다(assets/characters/<id>/, 시사는 예전 그대로 assets/character/, 사용자 캐릭터는 ~/.cy-agent/characters/<id>/).
 // 고르는 곳: 설정 창 「캐릭터」 → PUT /settings { character } → config.json character. 데몬은 setCharacter 로 바로 바꾼다.
 // 사용자가 설정 창 「문구」에서 고친 문구는 캐릭터와 상관없이 그대로 쓴다(phrases.ts).
 // 기본 캐릭터의 대사를 설정 창에서 고친 것(덮어쓰기)과 사용자 캐릭터는 character-store.ts 가 읽어 installCharacters 로 넣는다.
 
-export const CHARACTER_IDS = ["shisa", "hachi", "rakko", "momonga"] as const;
+export const CHARACTER_IDS = ["shisa", "hachi", "rakko", "momonga", "usagi"] as const;
 export type BuiltinId = (typeof CHARACTER_IDS)[number];
 // 사용자 캐릭터 id 도 들어간다(u-xxxxxxxx). 지금 목록에 있는지는 isCharacterId 로
 export type CharacterId = string;
@@ -57,7 +57,7 @@ const SHISA: Character = {
   lines: {},
 };
 
-// 하치와레·랏코·모몽가의 말은 전부 assets/characters/lines.json 에 있다(사람이 고치는 파일 — 데스크톱도 같은 파일을 쓴다).
+// 시사 외 캐릭터의 말은 전부 assets/characters/lines.json 에 있다(사람이 고치는 파일 — 데스크톱도 같은 파일을 쓴다).
 // 레포에서도, 앱 번들(Resources/agent/src ↔ Resources/assets)에서도 ../../assets 다
 export const LINES_FILE = fileURLToPath(new URL("../../assets/characters/lines.json", import.meta.url));
 // 대사 한 벌(lines.json 의 캐릭터 하나와 같은 모양). canned·setup·overlay·tour 는 데스크톱만 쓴다
@@ -104,6 +104,7 @@ export const CHARACTERS: Record<BuiltinId, Character> = {
   hachi: fromLines("hachi", LINES_JSON.hachi as LinesEntry),
   rakko: fromLines("rakko", LINES_JSON.rakko as LinesEntry),
   momonga: fromLines("momonga", LINES_JSON.momonga as LinesEntry),
+  usagi: fromLines("usagi", LINES_JSON.usagi as LinesEntry),
 };
 
 // 시사를 고친 것: 고친 칸만 바뀌고 나머지는 시사 기본(문구·정해진 말은 phrases.ts·local-mode.ts 기본값이 받는다)
@@ -121,7 +122,7 @@ function shisaWith(o: LinesPatch): Character {
   };
 }
 
-// 지금 쓰는 목록: 기본 넷(덮어쓰기 반영) + 사용자 캐릭터(만든 순서)
+// 지금 쓰는 목록: 기본 다섯(덮어쓰기 반영) + 사용자 캐릭터(만든 순서)
 let table: Record<string, Character> = { ...CHARACTERS };
 let order: string[] = [...CHARACTER_IDS];
 export const isCharacterId = (v: unknown): v is CharacterId => typeof v === "string" && Object.hasOwn(table, v);
