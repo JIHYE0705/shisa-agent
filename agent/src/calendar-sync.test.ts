@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Store } from "./store.ts";
 import type { Config } from "./config.ts";
 import {
-  CalendarSync, alertDetail, alertKey, alertText, extractLocation, onlineLabel, kstHHMM, parseCalendarView, planAlerts, skipReason, toIso, toMeetings,
+  CalendarSync, alertDetail, alertKey, alertText, extractLocation, icsSource, onlineLabel, kstHHMM, parseCalendarView, planAlerts, skipReason, toIso, toMeetings,
   type CalEvent, type Meeting,
 } from "./calendar-sync.ts";
 
@@ -337,4 +337,39 @@ test("CalendarSync: 예전 meetings 표(location 칸 없음)에 칸을 더하고
   const [m] = cal.upcoming();
   assert.equal(m.location, undefined);
   assert.equal(alertText(m), "일정 10분 전이에요! 〈옛 회의〉 13:00");
+});
+
+test("여러 캘린더(ICS 여러 개)에 같은 일정이 겹쳐도(같은 UID·시작) 회의는 하나, 알림도 한 번", async () => {
+  // 13:00 KST 회의(한 번짜리)와 매일 13:30 반복 회의가 두 캘린더에 똑같이 들어 있다(내 캘린더 + 팀 캘린더)
+  const vevent = (uid: string, start: string, end: string, summary: string, rrule = "") => [
+    "BEGIN:VEVENT", `UID:${uid}`, `DTSTART:${start}`, `DTEND:${end}`, `SUMMARY:${summary}`, ...(rrule ? [`RRULE:${rrule}`] : []),
+    "ORGANIZER:mailto:boss@example.com", "ATTENDEE;PARTSTAT=ACCEPTED:mailto:me@example.com", "END:VEVENT",
+  ];
+  const ics = (...events: string[][]) => ["BEGIN:VCALENDAR", "VERSION:2.0", ...events.flat(), "END:VCALENDAR"].join("\r\n");
+  const once = vevent("same-1@example.com", "20261008T040000Z", "20261008T043000Z", "주간 회의");
+  const daily = vevent("daily-1@example.com", "20261001T043000Z", "20261001T044500Z", "데일리", "FREQ=DAILY");
+  const feeds: Record<string, string> = {
+    "https://calendar.google.com/calendar/ical/me%40example.com/private-a/basic.ics": ics(once, daily),
+    "https://calendar.google.com/calendar/ical/team%40group.calendar.google.com/private-b/basic.ics": ics(daily, once),
+  };
+  const src = icsSource(Object.keys(feeds), { timeZone: "Asia/Seoul" }, async (u) => feeds[u]);
+  const store = new Store(join(mkdtempSync(join(tmpdir(), "cal-")), "t.db"));
+  let now = Date.parse("2026-10-08T03:40:00Z"); // 12:40 KST
+  const timers: { at: number; fn: () => void }[] = [];
+  const cal = new CalendarSync({ models: { light: "x" } } as Config, store, {
+    now: () => new Date(now), setTimer: (fn, ms) => { timers.push({ at: now + ms, fn }); return timers.length as any; }, clearTimer: () => {},
+    source: src,
+  });
+  const r = await cal.sync();
+  assert.equal(r.calls, 2);
+  assert.equal(r.events, 6); // 두 캘린더 × (회의 1 + 데일리 오늘·내일 2)
+  assert.deepEqual(cal.upcoming().map((m) => m.subject), ["주간 회의", "데일리", "데일리"]);
+  const fired: string[] = [];
+  cal.schedule((m) => fired.push(`${m.subject}@${m.start}`));
+  for (const at of ["2026-10-08T03:50:00Z", "2026-10-08T04:20:00Z", "2026-10-08T04:25:00Z"]) {
+    now = Date.parse(at);
+    cal.check();
+    await new Promise((res) => setImmediate(res));
+  }
+  assert.deepEqual(fired, ["주간 회의@2026-10-08T04:00:00.000Z", "데일리@2026-10-08T04:30:00.000Z"]);
 });
