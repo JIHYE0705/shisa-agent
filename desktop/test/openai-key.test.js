@@ -120,3 +120,20 @@ test('keyFetch: Node fetch 도 옵션을 받고, 리다이렉트는 따라가지
     srv.close();
   }
 });
+test('openai 키 확인: 모델 목록은 열려도 크레딧이 없으면(대화 429 insufficient_quota) 연결 실패로 알린다', async () => {
+  const quota = oaiErr('You exceeded your current quota, please check your plan and billing details.', 'insufficient_quota', 'insufficient_quota');
+  const f = fake({
+    'https://api.openai.com/v1/models': res(200, { data: [{ id: 'gpt-4.1-mini' }] }),
+    'https://api.openai.com/v1/chat/completions': res(429, quota),
+  });
+  const r = await checkLlm('openai', KEY, f);
+  assert.equal(r.ok, false);
+  assert.equal(r.error, OPENAI_NO_CREDIT);
+  assert.match(OPENAI_NO_CREDIT, /platform\.openai\.com\/settings\/organization\/billing/);
+  assert.equal(f.calls.length, 2);
+  // 크레딧이 있으면 통과, 잠깐 너무 잦음(rate_limit_exceeded)은 키 문제가 아니라 통과 + 안내
+  assert.deepEqual(await checkLlm('openai', KEY, fake({ 'https://api.openai.com/v1/models': res(200, { data: [] }), 'https://api.openai.com/v1/chat/completions': res(200, { choices: [{ message: { content: '' } }] }) })), { ok: true });
+  const rl = await checkLlm('openai', KEY, fake({ 'https://api.openai.com/v1/models': res(200, { data: [] }), 'https://api.openai.com/v1/chat/completions': res(429, oaiErr('Rate limit reached', 'rate_limit_exceeded', 'requests')) }));
+  assert.equal(rl.ok, true);
+  assert.match(rl.warn, /너무 잦았어요/);
+});

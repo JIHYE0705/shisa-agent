@@ -15,7 +15,7 @@ const MODELS = {
   openai: 'gpt-4.1-mini', // 데몬 기본(agent/src/providers.ts OPENAI_DEFAULT_MODEL)과 같게
 };
 
-export const OPENAI_NO_CREDIT = '키는 맞을 수 있지만 크레딧이 없습니다. 플랫폼 결제에서 크레딧을 사야 합니다.';
+export const OPENAI_NO_CREDIT = '키는 맞지만 크레딧이 없습니다. 결제를 켜고 크레딧을 충전해 주세요(ChatGPT 구독과 API 요금은 따로입니다): https://platform.openai.com/settings/organization/billing';
 export const OPENAI_NO_PERMISSION = '키에 권한이 모자랍니다. OpenAI 플랫폼의 API keys 에서 이 키의 권한을 All 로 바꾸거나, Restricted 면 Model capabilities(Chat completions) 를 Write 로 켜 주세요.';
 
 // Genspark LLM 프록시(OpenAI 호환). 무료 플랜 키도 모델 목록(GET /models)은 열리지만, 대화는 200 에 요금 안내문을 준다
@@ -104,13 +104,14 @@ function gensparkError(body) {
   return `Genspark 확인에 실패했어요 (HTTP ${body.status}).`;
 }
 
-// OpenAI 키 확인. 목록(GET /models)이 403 이면 제한 키(api.model.read 없음)일 수 있다 → 아주 짧은 대화 한 번으로 다시 본다
+// OpenAI 키 확인: 목록(GET /models) → 아주 짧은 대화 한 번. 목록이 403 이면 제한 키(api.model.read 없음)일 수 있고,
+// 목록이 열려도 크레딧이 없으면 대화에서 429 insufficient_quota 가 온다(연결은 됐는데 대화만 막히던 문제)
 async function checkOpenai(key, fetchImpl) {
   const res = await fetchImpl('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${key}` } });
   const body = await readBody(res, key);
-  if (body.ok) return { ok: true };
-  if (isQuota(body.error)) return { ok: false, error: OPENAI_NO_CREDIT };
-  if (!isPermission(body.status, body.error)) return { ok: false, error: body.error };
+  // 모델 목록은 크레딧이 없어도 열린다 — 그래서 목록이 열려도 아주 짧은 대화 한 번으로 크레딧(insufficient_quota)까지 본다
+  if (!body.ok && isQuota(body.error)) return { ok: false, error: OPENAI_NO_CREDIT };
+  if (!body.ok && !isPermission(body.status, body.error)) return { ok: false, error: body.error };
   const chat = await fetchImpl('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', Authorization: `Bearer ${key}` },
@@ -118,8 +119,9 @@ async function checkOpenai(key, fetchImpl) {
   });
   const cb = await readBody(chat, key);
   if (cb.ok) return { ok: true };
-  if (isQuota(cb.error)) return { ok: false, error: OPENAI_NO_CREDIT };
+  if (isQuota(cb.error) || isQuota(cb.raw ?? '')) return { ok: false, error: OPENAI_NO_CREDIT };
   if (isPermission(cb.status, cb.error)) return { ok: false, error: OPENAI_NO_PERMISSION };
+  if (cb.status === 429) return { ok: true, warn: 'OpenAI 요청이 잠깐 너무 잦았어요. 연결은 됐고, 조금 뒤엔 잘 돼요.' }; // 너무 잦음은 키 문제가 아니다
   return { ok: false, error: cb.error };
 }
 

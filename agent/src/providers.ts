@@ -461,6 +461,8 @@ type ChatSpec = {
   // 실패 응답 → 사람이 읽을 글(없으면 「<label> 요청이 실패했어요」). 본문은 오류 글에 그대로 넣지 않는다
   failText?: (status: number, body: string) => string | undefined;
   retry?: { sleep?: (ms: number) => Promise<void> }; // 붐비면(429·500·503) GEMINI_RETRY_MS 대로 다시
+  // 다시 보내도 소용없는 실패(예: OpenAI 크레딧 없음 insufficient_quota) — 그러면 쉬지 않고 바로 알린다
+  noRetry?: (status: number, body: string) => boolean;
 };
 type ChatOpts = { system?: string; blocks?: ContentBlock[]; fetch?: FetchLike };
 async function chatCompletionsText(spec: ChatSpec, prompt: string, schema: unknown, opts: ChatOpts): Promise<string> {
@@ -487,19 +489,21 @@ async function chatCompletionsText(spec: ChatSpec, prompt: string, schema: unkno
     }
   };
   let res = await send();
+  let failBody: string | undefined; // 재시도 판단에 이미 읽은 실패 본문(본문은 한 번만 읽힌다)
   if (spec.retry) {
     const sleep = spec.retry.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     for (const wait of GEMINI_RETRY_MS) {
       if (!BUSY.has(res.status)) break;
       const after = Number(res.headers.get("retry-after"));
-      await res.text().catch(() => "");
+      const text = await res.text().catch(() => "");
+      if (spec.noRetry?.(res.status, text)) { failBody = text; break; }
       await sleep(after > 0 ? Math.min(after * 1000, 30_000) : wait);
       res = await send();
     }
   }
   if (!res.ok) {
     if (spec.failText && res.status !== 401 && res.status !== 403) {
-      const text = await res.text().catch(() => "");
+      const text = failBody ?? await res.text().catch(() => "");
       throw new Error(`${spec.failText(res.status, text) ?? `${spec.label} 요청이 실패했어요`} (HTTP ${res.status}).`);
     }
     return readError(res, `${spec.label} 요청이 실패했어요`, { provider: spec.provider, key: spec.key });
@@ -511,15 +515,37 @@ async function chatCompletionsText(spec: ChatSpec, prompt: string, schema: unkno
     : Array.isArray(content) ? content.map((p) => (asRecord(p)?.text as string) ?? "").join("") : "";
 }
 
+// OpenAI 실패 본문 {"error":{"code","type","message"}} 의 code(없으면 type)
+const openaiErrorCode = (body: string): string | undefined => {
+  try { const e = asRecord(asRecord(JSON.parse(body))?.error); return (e?.code ?? e?.type) as string | undefined; } catch { return undefined; }
+};
+export const OPENAI_BILLING_URL = "https://platform.openai.com/settings/organization/billing";
+// 크레딧 없음(insufficient_quota)은 기다려도 안 풀린다 — 다시 보내지 않는다
+export const openaiNoRetry = (status: number, body: string) => status === 429 && openaiErrorCode(body) === "insufficient_quota";
+// 429 를 이유별로: 크레딧 없음 · 너무 잦음. 400 은 OpenAI 가 준 이유 한 줄(키 모양 글자는 가림)
+export function openaiFailText(status: number, body: string): string | undefined {
+  const code = openaiErrorCode(body);
+  if (status === 429 && code === "insufficient_quota") return `OpenAI 크레딧이 없어요. 결제를 켜고 크레딧을 충전한 뒤 다시 보내 주세요(ChatGPT 구독과 API 요금은 따로예요): ${OPENAI_BILLING_URL}`;
+  if (status === 429) return "OpenAI 요청이 너무 잦아요. 잠시 뒤 다시 보내 주세요";
+  if (status === 400) {
+    let msg = "";
+    try { msg = String(asRecord(asRecord(JSON.parse(body))?.error)?.message ?? ""); } catch { /* 본문이 JSON 이 아니면 이유 없이 */ }
+    msg = msg.replace(/sk-[A-Za-z0-9_-]{8,}/g, "…").replace(/\s+/g, " ").trim().slice(0, 200);
+    return msg ? `OpenAI 가 요청을 받지 않았어요: ${msg}` : undefined;
+  }
+  if (status >= 500) return "OpenAI 가 지금 답하지 못했어요. 잠시 뒤 다시 보내 주세요";
+  return undefined;
+}
+
 export async function openaiJson(
   cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
-  opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; env?: NodeJS.ProcessEnv } = {},
+  opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; env?: NodeJS.ProcessEnv; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<unknown> {
   const env = opts.env ?? process.env;
   const key = openaiKey(cfg, env);
   if (!key) throw new Error(MISSING_OPENAI_KEY);
   const model = resolveHttpModel("openai", cfg.models?.general, opts.model);
-  const text = await chatCompletionsText({ url: OPENAI_URL, label: "OpenAI", provider: "openai", key, model }, prompt, schema, opts);
+  const text = await chatCompletionsText({ url: OPENAI_URL, label: "OpenAI", provider: "openai", key, model, failText: openaiFailText, noRetry: openaiNoRetry, retry: { sleep: opts.sleep } }, prompt, schema, opts);
   markAuth("openai", key, false);
   return openaiUnstrict(parseModelJson(text, "OpenAI 응답에서 JSON을 읽지 못했어요."), schema);
 }

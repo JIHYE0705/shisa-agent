@@ -523,3 +523,41 @@ test("openai strict: 선택 속성도 전부 required 로 보내고, 받은 답�
   strictOk(sent.response_format.json_schema.schema);
   assert.deepEqual(out.todo_ops, [{ op: "edit", id: "user:1", priority: 1, note: null }]);
 });
+
+test("openai 429: 크레딧 없음(insufficient_quota)은 다시 보내지 않고 결제 안내, 너무 잦음은 쉬었다 다시", async () => {
+  const quota = JSON.stringify({ error: { message: "You exceeded your current quota", type: "insufficient_quota", param: null, code: "insufficient_quota" } });
+  const rate = JSON.stringify({ error: { message: "Rate limit reached for gpt-4.1-mini", type: "requests", param: null, code: "rate_limit_exceeded" } });
+  // 크레딧 없음: 한 번만 보내고 바로 결제 안내
+  let n = 0;
+  const waits: number[] = [];
+  const noCredit: FetchLike = async () => { n++; return new Response(quota, { status: 429 }); };
+  await assert.rejects(() => ask(cfgOf("openai"), "x", SCHEMA, undefined, { deps: { fetch: noCredit, sleep: async (ms: number) => { waits.push(ms); }, env: { OPENAI_API_KEY: OAI } } }), (e: unknown) => {
+    const m = String((e as Error).message);
+    assert.match(m, /OpenAI 크레딧이 없어요/);
+    assert.match(m, /platform\.openai\.com\/settings\/organization\/billing/);
+    assert.ok(!m.includes(OAI));
+    return true;
+  });
+  assert.equal(n, 1);
+  assert.deepEqual(waits, []);
+  // 너무 잦음: 쉬었다 다시 보내고, 그다음에 되면 답
+  let k = 0;
+  const thenOk: FetchLike = async () => (++k < 3 ? new Response(rate, { status: 429 }) : new Response(JSON.stringify({ choices: [{ message: { content: thoughtJson() } }] }), { status: 200 }));
+  const out = await ask<{ bubble: string }>(cfgOf("openai"), "x", SCHEMA, undefined, { deps: { fetch: thenOk, sleep: async () => {}, env: { OPENAI_API_KEY: OAI } } });
+  assert.equal(out.bubble, "안녕");
+  assert.equal(k, 3);
+  // 계속 너무 잦으면 「잠시 뒤 다시」
+  const always: FetchLike = async () => new Response(rate, { status: 429 });
+  await assert.rejects(() => ask(cfgOf("openai"), "x", SCHEMA, undefined, { deps: { fetch: always, sleep: async () => {}, env: { OPENAI_API_KEY: OAI } } }), /OpenAI 요청이 너무 잦아요.*HTTP 429/);
+});
+
+test("openai 400: OpenAI 가 준 이유 한 줄을 붙이고 키 모양 글자는 가린다", async () => {
+  const bad = JSON.stringify({ error: { message: "Invalid schema for response_format 'cy_brain': key sk-proj-ABCDEFGH12345678 leaked", type: "invalid_request_error", code: null } });
+  const f: FetchLike = async () => new Response(bad, { status: 400 });
+  await assert.rejects(() => ask(cfgOf("openai"), "x", SCHEMA, undefined, { deps: { fetch: f, env: { OPENAI_API_KEY: OAI } } }), (e: unknown) => {
+    const m = String((e as Error).message);
+    assert.match(m, /OpenAI 가 요청을 받지 않았어요: Invalid schema/);
+    assert.ok(!m.includes("sk-proj-ABCDEFGH12345678"));
+    return true;
+  });
+});
