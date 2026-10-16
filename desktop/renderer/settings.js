@@ -8,7 +8,9 @@ import {
   ALERT_DEFAULT, cleanCalendarAlert, alertMinutesNext, parseAlertMinutes, alertChoices, calendarAlertSummary,
 } from '../src/settings.js';
 import { mountGuidelines } from '../src/guidelines.js';
-import { CHARACTERS, CHARACTER_IDS, characterAssets } from '../src/character.js';
+import { CHARACTERS, CHARACTER_IDS, characterAssets, characterName, okCharacterId, USER_CHAR_DIR, defaultFrame } from '../src/character.js';
+import { applyCharacters, effectiveLines, defaultsOf } from '../src/character-registry.js';
+import { editorSections, flattenLines, unflattenLines, fieldText, fieldProblem, linesFromTexts, diffLines, slotRows, okMediaName, previewKind, missingRequired, sourceOptions, ACCEPT } from '../src/character-edit.js';
 import { who, setWho, onWho } from './who.js';
 // 안내 글 속 이름(<span class="who">)도 캐릭터 이름으로
 onWho(() => { for (const n of document.querySelectorAll('.who')) n.textContent = who(); });
@@ -244,14 +246,38 @@ function renderLocal() {
 }
 
 // ---- 캐릭터 ----
+// 고르기 + [고치기](대사 전부 · 사용자 캐릭터는 이름·그림·지우기도) + [＋ 새 캐릭터](이름·말투 가져오기·그림 칸).
+// 목록·칸·설명은 데몬 GET /characters(src/character-edit.js 가 묶는다). 바뀌면 메인이 'characters' 로 새 목록을 준다
+let chars = null; // GET /characters
+let editing = null; // { mode: 'new' } | { mode: 'edit', id }
+let editDirty = false; // 고치던 글이 있으면 새 목록이 와도 편집 화면을 다시 그리지 않는다
+const charList = () => (Array.isArray(chars?.characters) && chars.characters.length ? chars.characters
+  : (Array.isArray(settings?.characters) && settings.characters.length ? settings.characters : CHARACTER_IDS.map((id) => ({ id, name: CHARACTERS[id].name, builtin: true }))));
+const charEntry = (id) => charList().find((c) => c.id === id);
+function takeCharacters(data) {
+  if (!data || !Array.isArray(data.characters)) return;
+  chars = data;
+  applyCharacters(data);
+  if (settings && typeof data.current === 'string') settings = { ...settings, character: data.current };
+  renderCharacter();
+  if (editing?.mode === 'edit' && !charEntry(editing.id)) { editing = null; editDirty = false; }
+  if (editing && !editDirty) renderCharEditor();
+}
+async function loadCharacters() {
+  const r = await cy.getCharacters?.().catch(() => null);
+  if (r?.ok) takeCharacters(r.data);
+}
+cy.onCharacters?.((data) => takeCharacters(data));
+
 function renderCharacter() {
   if (!settings) return;
   if (setWho(settings.character)) loadAppPrefs(); // 이름이 들어간 줄(로그인할 때 … 켜기)도 다시
   const box = $('char-pick');
   box.replaceChildren();
-  const list = Array.isArray(settings.characters) && settings.characters.length ? settings.characters : CHARACTER_IDS.map((id) => ({ id, name: CHARACTERS[id].name }));
-  for (const c of list) {
-    if (!CHARACTER_IDS.includes(c.id)) continue;
+  // 카드는 다 같은 크기: 고르기(카드 전체) + 오른쪽 위 연필(고치기) · 맨 끝은 ＋ 새 캐릭터 카드
+  for (const c of charList()) {
+    if (!okCharacterId(c.id)) continue;
+    const card = el('div', 'char-card');
     const lab = el('label', 'char-opt');
     const rb = el('input');
     rb.type = 'radio';
@@ -262,9 +288,369 @@ function renderCharacter() {
     const pic = el('img');
     pic.alt = '';
     pic.src = characterAssets(c.id).open;
-    lab.append(rb, pic, el('span', null, c.name));
-    box.append(lab);
+    const nm = c.name ?? characterName(c.id);
+    lab.append(rb, pic, el('span', 'char-name', nm));
+    if (c.custom) lab.append(el('span', 'char-tag', '만든 것'));
+    else if (c.override) lab.append(el('span', 'char-tag', '대사 고침'));
+    const edit = el('button', 'char-edit', '✎');
+    edit.type = 'button';
+    edit.title = c.custom ? `${nm} 고치기(이름·그림·대사)` : `${nm} 대사 고치기`;
+    edit.setAttribute('aria-label', edit.title);
+    edit.addEventListener('click', () => openCharEditor({ mode: 'edit', id: c.id }));
+    card.append(lab, edit);
+    box.append(card);
   }
+  const add = el('button', 'char-card char-add');
+  add.type = 'button';
+  add.id = 'char-new';
+  add.disabled = editing?.mode === 'new';
+  add.append(el('span', 'char-add-plus', '＋'), el('span', 'char-name', '새 캐릭터'));
+  add.title = '이름·그림·말투를 직접 정해요';
+  add.addEventListener('click', () => openCharEditor({ mode: 'new' }));
+  box.append(add);
+}
+function openCharEditor(next) {
+  if (editDirty && !confirmLeave()) return;
+  editing = next;
+  editDirty = false;
+  renderCharEditor();
+  $('char-editor').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+const confirmLeave = () => window.confirm('고치던 글이 저장되지 않았어요. 버릴까요?');
+function closeCharEditor() {
+  if (editDirty && !confirmLeave()) return;
+  editing = null;
+  editDirty = false;
+  renderCharEditor();
+}
+
+// 미리보기 하나(그림은 <img>, webm·mp4 는 <video>). src 는 cy-asset 주소나 고른 파일의 blob 주소
+function mediaPreview(src, name) {
+  if (!src) return el('span', 'slot-empty', '비어 있음');
+  if (previewKind(name ?? src) === 'video') {
+    const v = el('video', 'slot-pic');
+    v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+    v.src = src;
+    return v;
+  }
+  const im = el('img', 'slot-pic');
+  im.alt = '';
+  im.src = src;
+  return im;
+}
+
+// 그림 칸 목록. chosen: 만들 때 고른 파일들({ 칸: { file, url } }) · entry: 고칠 때(바로 올린다)
+// frames: 칸마다 지금 테두리(없는 칸은 파일 종류 기본값) · onFrame(칸, 켬/끔)
+function slotList(entry, chosen, onChange, frames = {}, onFrame = () => {}) {
+  const box = el('div', 'slots');
+  for (const r of slotRows(entry?.media)) {
+    const row = el('div', 'slot');
+    const head = el('div', 'slot-head');
+    head.append(el('b', null, r.label), el('span', r.required ? 'slot-req' : 'faint', r.required ? '꼭 넣어 주세요' : '골라도 돼요'));
+    const local = chosen?.[r.slot];
+    const src = local ? local.url : r.file ? `${USER_CHAR_DIR}/${entry.id}/${r.file}` : null;
+    const fileName = local ? local.file.name : r.file;
+    const pic = mediaPreview(src, fileName);
+    const framed = src ? (typeof frames[r.slot] === 'boolean' ? frames[r.slot] : defaultFrame(fileName)) : false;
+    if (src) pic.classList.toggle('framed', framed); // 오버레이와 같은 둥근 네모 카드로 미리 보기
+    const input = el('input');
+    input.type = 'file';
+    input.accept = ACCEPT;
+    input.hidden = true;
+    const pick = el('button', 'small', src ? '바꾸기' : '고르기');
+    pick.type = 'button';
+    pick.addEventListener('click', () => input.click());
+    const err = el('span', 'ph-err');
+    input.addEventListener('change', async () => {
+      const f = input.files?.[0];
+      input.value = '';
+      if (!f) return;
+      if (!okMediaName(f.name)) { err.textContent = 'png·jpg·webp·gif·webm·mp4 파일만 넣을 수 있어요'; return; }
+      err.textContent = '';
+      await onChange(r.slot, f, err);
+    });
+    const btns = el('div', 'slot-btns');
+    btns.append(pick);
+    if (src) {
+      // 칸마다 테두리: 투명 배경 png·webm 은 기본 끔, 배경 있는 jpg·gif·mp4 등은 기본 켬
+      const fl = el('label', 'slot-frame');
+      const fc = el('input');
+      fc.type = 'checkbox';
+      fc.checked = framed;
+      fc.addEventListener('change', () => { pic.classList.toggle('framed', fc.checked); onFrame(r.slot, fc.checked, fc); });
+      fl.append(fc, document.createTextNode('테두리'));
+      btns.append(fl);
+    }
+    if (src) {
+      const rm = el('button', 'small ghost', '빼기');
+      rm.type = 'button';
+      rm.addEventListener('click', () => onChange(r.slot, null, err));
+      btns.append(rm);
+    }
+    row.append(head, pic, el('p', 'faint', r.hint), btns, err, input);
+    box.append(row);
+  }
+  return box;
+}
+
+// 대사 편집: 묶음마다 접기, 칸마다 설명·자리표시·검사. 돌려주는 read() → { lines, problem }
+function linesEditor(entry, values, base, custom) {
+  const box = el('div', 'ph-groups char-lines');
+  const secs = editorSections(chars?.schema, chars?.help);
+  const inputs = [];
+  for (const sec of secs) {
+    if (sec.key === 'name' && custom) continue; // 사용자 캐릭터 이름은 위 칸에서
+    const d = el('details');
+    const sum = el('summary', null, sec.title);
+    const changed = base ? sec.fields.filter((f) => JSON.stringify(flattenLines(base)[f.path]) !== JSON.stringify(flattenLines(values)[f.path])).length : 0;
+    sum.append(el('span', 'faint', `${sec.fields.length}칸${changed ? ` · 고친 것 ${changed}` : ''}`));
+    const list = el('div', 'ph-list');
+    if (sec.help) list.append(el('p', 'hint', sec.help));
+    const flat = flattenLines(values);
+    for (const f of sec.fields) {
+      const row = el('div', 'ph-row');
+      const head = el('div', 'ph-head');
+      const id = `cl-${f.path.replace(/[^\w-]/g, '_')}`;
+      const lab = el('label', null, f.label || f.path);
+      lab.htmlFor = id;
+      head.append(lab);
+      if (f.vars.length) head.append(el('span', 'ph-vars', f.vars.map((v) => `{${v}}`).join(' ')));
+      if (f.kind === 'list') head.append(el('span', 'faint', '한 줄에 하나(그중 하나를 골라 써요)'));
+      const ta = el('textarea');
+      ta.id = id;
+      ta.spellcheck = false;
+      ta.value = fieldText(f, flat[f.path]);
+      ta.rows = f.oneLine ? 1 : Math.min(8, Math.max(1, ta.value.split('\n').length));
+      const err = el('span', 'ph-err');
+      ta.addEventListener('input', () => { editDirty = true; err.textContent = fieldProblem(f, ta.value); });
+      const foot = el('div', 'ph-foot');
+      const def = base ? flattenLines(base)[f.path] : undefined;
+      if (base && def !== undefined && JSON.stringify(def) !== JSON.stringify(flat[f.path])) {
+        const back = el('button', 'small ghost', '이 칸만 기본값');
+        back.type = 'button';
+        back.addEventListener('click', () => { ta.value = fieldText(f, def); editDirty = true; err.textContent = ''; });
+        foot.append(back);
+      }
+      foot.prepend(err);
+      row.append(head, ta, foot);
+      list.append(row);
+      inputs.push({ f, ta, err, d });
+    }
+    d.append(sum, list);
+    box.append(d);
+  }
+  const read = () => {
+    const texts = {};
+    let problem = null;
+    for (const x of inputs) {
+      const p = fieldProblem(x.f, x.ta.value);
+      x.err.textContent = p;
+      if (p && !problem) problem = x;
+      texts[x.f.path] = x.ta.value;
+    }
+    if (problem) { problem.d.open = true; problem.ta.focus(); return { problem: problem.err.textContent }; }
+    return { lines: linesFromTexts(inputs.map((x) => x.f), texts) };
+  };
+  return { box, read, inputs };
+}
+
+// 이름이 든 줄을 새 이름으로(데몬 renameLines 와 같다 — 고칠 때 「다른 캐릭터 대사로 채우기」)
+function renamed(lines, from, to) {
+  const flat = flattenLines(lines);
+  for (const [k, v] of Object.entries(flat)) flat[k] = Array.isArray(v) ? v.map((x) => (from ? x.split(from).join(to) : x)) : (from ? v.split(from).join(to) : v);
+  flat.name = to;
+  return unflattenLines(flat);
+}
+
+function sourceSelect(selected) {
+  const sel = el('select');
+  for (const o of sourceOptions(charList())) {
+    const op = el('option', null, `${o.name}${o.custom ? ' (만든 것)' : ''}`);
+    op.value = o.id;
+    sel.append(op);
+  }
+  sel.value = selected ?? 'shisa';
+  return sel;
+}
+
+function renderCharEditor() {
+  const box = $('char-editor');
+  box.replaceChildren();
+  box.hidden = !editing;
+  if ($('char-new')) $('char-new').disabled = editing?.mode === 'new';
+  if (!editing) return;
+  const head = el('div', 'ce-head');
+  const close = el('button', 'small ghost', '닫기');
+  close.type = 'button';
+  close.addEventListener('click', closeCharEditor);
+  const status = el('span', 'ph-err ce-status');
+  if (editing.mode === 'new') {
+    head.append(el('h3', null, '새 캐릭터 만들기'), close);
+    const chosen = {};
+    const nameIn = el('input', 'ce-name');
+    nameIn.type = 'text';
+    nameIn.placeholder = '이름(예: 까망이)';
+    nameIn.addEventListener('input', () => { editDirty = true; });
+    const src = sourceSelect('shisa');
+    const frames = {}; // 사용자가 고른 테두리만(나머지는 파일 종류 기본값)
+    let slotsBox = null;
+    const redrawSlots = () => {
+      const next = slotList(null, chosen, (slot, f) => {
+        editDirty = true;
+        if (chosen[slot]) URL.revokeObjectURL(chosen[slot].url);
+        delete frames[slot]; // 새 파일이면 그 종류 기본값부터
+        if (f) chosen[slot] = { file: f, url: URL.createObjectURL(f) };
+        else delete chosen[slot];
+        redrawSlots();
+      }, frames, (slot, on) => { frames[slot] = on; editDirty = true; });
+      if (slotsBox) slotsBox.replaceWith(next);
+      slotsBox = next;
+    };
+    redrawSlots();
+    const make = el('button', 'primary', '만들기');
+    make.type = 'button';
+    make.addEventListener('click', async () => {
+      const name = nameIn.value.trim();
+      if (!name) { status.textContent = '이름을 적어 주세요'; nameIn.focus(); return; }
+      const miss = missingRequired(chosen);
+      if (miss.length) { status.textContent = `${miss.join('·')} 그림을 넣어 주세요`; return; }
+      make.disabled = true;
+      status.textContent = '';
+      const from = charEntry(src.value);
+      // 가져올 대사: 그 캐릭터가 지금 쓰는 대사 전부(시사의 정해진 답·설치 화면 말처럼 앱에만 있는 칸도). 이름은 데몬이 새 이름으로 바꾼다
+      const r = await cy.createCharacter({ name, from: src.value, lines: from ? effectiveLines(from) : {}, frames }).catch(() => null);
+      if (!r?.ok) { make.disabled = false; status.textContent = r?.data?.error ?? `만들지 못했어요 · ${who()}에 연결되지 않았어요`; return; }
+      const id = r.data.character.id;
+      for (const [slot, c] of Object.entries(chosen)) {
+        const u = await cy.putCharacterMedia(id, slot, c.file.name, c.file.type, new Uint8Array(await c.file.arrayBuffer())).catch(() => null);
+        if (!u?.ok) status.textContent = `${slot} 그림을 넣지 못했어요: ${u?.data?.error ?? '연결 안 됨'}`;
+        URL.revokeObjectURL(c.url);
+      }
+      editDirty = false;
+      await save({ character: id }); // 만들면 바로 그 캐릭터로
+      await loadCharacters();
+      flash(`${name}을(를) 만들었어요`);
+      openCharEditor({ mode: 'edit', id });
+    });
+    const form = el('div', 'ce-form');
+    const srcRow = el('label', 'ce-row');
+    srcRow.append(el('span', null, '말투 가져오기'), src, el('span', 'faint', '그 캐릭터의 대사를 전부 복사해서 시작해요. 이름이 든 줄은 새 이름으로 바꿔요'));
+    const nameRow = el('label', 'ce-row');
+    nameRow.append(el('span', null, '이름'), nameIn);
+    form.append(nameRow, srcRow, el('h3', null, '그림·영상'), el('p', 'hint', '움직이는 gif·webp, 영상(webm·mp4)도 돼요. 크기 제한은 없어요. 「테두리」를 켜면 둥근 네모 카드로 보여요.'), slotsBox);
+    const foot = el('div', 'ce-foot');
+    foot.append(status, make);
+    box.append(head, form, foot);
+    return;
+  }
+
+  const entry = charEntry(editing.id);
+  if (!entry) { editing = null; box.hidden = true; return; }
+  const custom = !!entry.custom;
+  const name = characterName(entry.id);
+  head.append(el('h3', null, `${name} 고치기`), close);
+  box.append(head);
+  const base = custom ? null : defaultsOf(entry);
+  const values = effectiveLines(entry);
+  let nameIn = null;
+  if (custom) {
+    nameIn = el('input', 'ce-name');
+    nameIn.type = 'text';
+    nameIn.value = entry.name ?? '';
+    nameIn.addEventListener('input', () => { editDirty = true; });
+    const nameRow = el('label', 'ce-row');
+    nameRow.append(el('span', null, '이름'), nameIn);
+    // 칸마다 테두리: 바꾸면 바로 저장
+    const onFrame = async (slot, on, box) => {
+      const r = await cy.updateCharacter(entry.id, { frames: { [slot]: on } }).catch(() => null);
+      if (r?.ok) flash('저장했어요 · 바로 적용돼요'); else { box.checked = !on; flash(r?.data?.error ?? '저장 못 했어요', true); }
+    };
+    // 그림은 고르면 바로 올린다. 새 목록이 오면 편집 화면을 다시 그린다(고치던 글이 있으면 그림 칸만)
+    const onSlot = async (slot, f, err) => {
+      const r = f ? await cy.putCharacterMedia(entry.id, slot, f.name, f.type, new Uint8Array(await f.arrayBuffer())).catch(() => null)
+        : await cy.deleteCharacterMedia(entry.id, slot).catch(() => null);
+      if (!r?.ok) { err.textContent = r?.data?.error ?? '넣지 못했어요'; return; }
+      flash(f ? '그림을 넣었어요' : '그림을 뺐어요');
+      await loadCharacters();
+      if (editDirty) { const e2 = charEntry(entry.id); const n = slotList(e2, null, onSlot, e2?.frames, onFrame); slots.replaceWith(n); slots = n; }
+    };
+    let slots = slotList(entry, null, onSlot, entry.frames, onFrame);
+    box.append(nameRow, el('h3', null, '그림·영상'), el('p', 'hint', '「테두리」를 켜면 둥근 네모 카드로 보여요(배경이 있는 그림에 어울려요).'), slots);
+  }
+  // 다른 캐릭터 대사로 채우기(저장 전까지는 화면만)
+  const fill = el('div', 'ce-row');
+  const fillSel = sourceSelect(entry.from && charEntry(entry.from) ? entry.from : 'shisa');
+  const fillBtn = el('button', 'small ghost', '이 캐릭터 대사로 채우기');
+  fillBtn.type = 'button';
+  fill.append(el('span', null, '대사 가져오기'), fillSel, fillBtn);
+  box.append(el('h3', null, '대사'), el('p', 'hint', custom ? '비운 칸은 시사 말로 나와요. 저장하면 바로 바뀌어요.' : '고친 칸만 따로 저장해요(앱 파일은 그대로). 「기본값으로」를 누르면 처음으로 돌아가요.'), fill);
+  let editor = linesEditor(entry, values, base, custom);
+  box.append(editor.box);
+  fillBtn.addEventListener('click', () => {
+    const from = charEntry(fillSel.value);
+    if (!from) return;
+    const to = custom ? (nameIn.value.trim() || name) : name;
+    const next = linesEditor(entry, renamed(effectiveLines(from), characterName(from.id), to), base, custom);
+    editor.box.replaceWith(next.box);
+    editor = next;
+    editDirty = true;
+    flash(`${characterName(from.id)} 대사로 채웠어요. 저장해야 바뀌어요`);
+  });
+  const saveBtn = el('button', 'primary', '대사 저장');
+  saveBtn.type = 'button';
+  saveBtn.addEventListener('click', async () => {
+    const r0 = editor.read();
+    if (r0.problem) { status.textContent = r0.problem; return; }
+    let body;
+    if (custom) {
+      const n = nameIn.value.trim();
+      if (!n) { status.textContent = '이름을 적어 주세요'; nameIn.focus(); return; }
+      body = { name: n, lines: { ...r0.lines, name: n } };
+    } else body = { lines: diffLines(base, r0.lines) }; // 고친 칸만(비운 칸은 기본값)
+    saveBtn.disabled = true;
+    const r = await cy.updateCharacter(entry.id, body).catch(() => null);
+    saveBtn.disabled = false;
+    if (!r?.ok) { status.textContent = r?.data?.error ?? `저장 못 했어요 · ${who()}에 연결되지 않았어요`; return; }
+    status.textContent = '';
+    editDirty = false;
+    flash('저장했어요 · 바로 적용돼요');
+    await loadCharacters();
+  });
+  const foot = el('div', 'ce-foot');
+  foot.append(status);
+  if (!custom) {
+    const n = entry.override ? Object.keys(flattenLines(entry.override)).length : 0;
+    const reset = el('button', 'small ghost', n ? `기본값으로(고친 ${n}칸)` : '기본값으로');
+    reset.type = 'button';
+    reset.disabled = !n;
+    reset.addEventListener('click', async () => {
+      if (!window.confirm(`${name}의 고친 대사를 다 지우고 처음으로 돌릴까요?`)) return;
+      const r = await cy.resetCharacter(entry.id).catch(() => null);
+      if (!r?.ok) { status.textContent = r?.data?.error ?? '되돌리지 못했어요'; return; }
+      editDirty = false;
+      flash('기본값으로 돌렸어요');
+      await loadCharacters();
+    });
+    foot.append(reset);
+  } else {
+    const del = el('button', 'small ghost danger', '이 캐릭터 지우기');
+    del.type = 'button';
+    del.addEventListener('click', async () => {
+      if (!window.confirm(`${name}을(를) 지울까요? 올린 그림도 같이 지워져요. 지금 쓰는 캐릭터면 시사로 돌아가요.`)) return;
+      const r = await cy.deleteCharacter(entry.id).catch(() => null);
+      if (!r?.ok) { status.textContent = r?.data?.error ?? '지우지 못했어요'; return; }
+      editing = null;
+      editDirty = false;
+      flash(`${name}을(를) 지웠어요`);
+      const s2 = await cy.getSettings().catch(() => null);
+      if (s2?.ok) settings = s2.data;
+      await loadCharacters();
+      renderCharEditor();
+    });
+    foot.append(del);
+  }
+  foot.append(saveBtn);
+  box.append(foot);
 }
 
 // ---- 오늘 할 일 알림 ----
@@ -592,7 +978,7 @@ async function load() {
   if (k && typeof k === 'object' && typeof k.claude === 'boolean') caps = { claude: k.claude, codex: k.codex === true };
   if (!s?.ok || !c?.ok) banner(`${who()}에 연결되지 않았어요. ${who()}가 켜져 있는지 확인해 주세요.`);
   else banner(null);
-  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderAutoMerge(); renderPhrases(); renderCharacter(); }
+  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderAutoMerge(); renderPhrases(); renderCharacter(); loadCharacters(); }
   if (c?.ok) {
     await loadCalendars();
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];

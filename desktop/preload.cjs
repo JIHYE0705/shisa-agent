@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('cy', {
   dragStart: () => ipcRenderer.send('drag-start'),
   dragEnd: () => ipcRenderer.send('drag-end'),
   characterMenu: () => ipcRenderer.send('character-menu'),
+  // 사용자 캐릭터·고친 대사(GET /characters 받아 둔 것) · 바뀜 알림
+  getCharacters: () => ipcRenderer.invoke('characters-get'),
+  onCharacters: on('characters'),
   openLink: (url) => ipcRenderer.send('open-link', String(url)),
   decide: (proposalId, action) => ipcRenderer.invoke('decide', String(proposalId), String(action)),
   togglePanel: () => ipcRenderer.send('toggle-panel'),

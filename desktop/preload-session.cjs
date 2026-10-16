@@ -11,6 +11,9 @@ const ids = (list) => (Array.isArray(list) ? list.map(String) : null);
 
 contextBridge.exposeInMainWorld('cy', {
   getCharacter: () => ipcRenderer.invoke('get-character'), // 지금 캐릭터 id(창 글 속 이름)
+  // 사용자 캐릭터·고친 대사(GET /characters 받아 둔 것) · 바뀜 알림
+  getCharacters: () => ipcRenderer.invoke('characters-get'),
+  onCharacters: (cb) => { const h = (_e, p) => cb(p); ipcRenderer.on('characters', h); return () => ipcRenderer.removeListener('characters', h); },
   onCharacter: (cb) => { const h = (_e, p) => cb(p); ipcRenderer.on('character', h); return () => ipcRenderer.removeListener('character', h); },
   // 첨부 올리기(📎·끌어다 놓기·⌘V) → { ok, data: { attachment } }
   chatAttach: (name, mime, bytes) => ipcRenderer.invoke('chat-attach', String(name), String(mime ?? ''), bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)),

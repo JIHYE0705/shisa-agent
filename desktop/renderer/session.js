@@ -1,5 +1,6 @@
 // 작업 세션 창 — 왼쪽 run 목록, 오른쪽 Claude Code 같은 기록 + 입력창. 네트워크는 전부 메인을 거친다.
 import { who, setWho } from './who.js';
+import { applyCharacters } from '../src/character-registry.js';
 import DOMPurify from './vendor/purify.js';
 import { Marked } from './vendor/marked.js';
 import { createMarkdown } from '../src/markdown.js';
@@ -894,5 +895,10 @@ loadRuns();
 loadModels();
 
 // 창 글 속 캐릭터 이름(「하치와레에 연결되지 않았어요」)
-cy.getCharacter?.().then((id) => setWho(id)).catch(() => {});
-cy.onCharacter?.((p) => setWho(p?.id));
+// 사용자 캐릭터·고친 이름(src/character-registry.js)은 목록을 받은 뒤에 안다 — 받으면 다시 맞춘다
+let wantChar = 'shisa';
+cy.getCharacter?.().then((id) => { wantChar = id; setWho(id); }).catch(() => {});
+cy.onCharacter?.((p) => { wantChar = p?.id; setWho(p?.id); });
+const takeCharacters = (data) => { if (data && applyCharacters(data)) setWho(wantChar); };
+cy.getCharacters?.().then(takeCharacters).catch(() => {});
+cy.onCharacters?.(takeCharacters);

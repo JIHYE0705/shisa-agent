@@ -1,6 +1,8 @@
 // 설정 창(메인 프로세스 쪽): 창 하나 + 이 창에서만 받는 IPC. 일렉트론 객체는 main.js 가 넘긴다(시험은 가짜로).
 // 모델·브리핑 출처 저장(PUT /settings) · 연결 상태(GET /connections, POST /connections/check) · 패널의 설치 안내·모델 탭 열기.
-import { sanitizeSettingsPatch, sanitizeAppPrefs, okCheckId, okPanelTarget } from './settings.js';
+import { sanitizeSettingsPatch, sanitizeAppPrefs, okCheckId, okPanelTarget, sanitizeCharacterBody, okMediaSlot } from './settings.js';
+import { okCharacterId } from './character.js';
+import { cleanUpload } from './attachments.js';
 import { sanitizeGuidelineAdd, sanitizeGuidelinePatch, okGuidelineId } from './guidelines.js';
 import { okBrainId, okCap } from './disconnect.js';
 import { okCalendarId } from './calendars.js';
@@ -11,7 +13,8 @@ export const SETTINGS_SIZE = { width: 720, height: 760 };
 // deps: { BrowserWindow, ipcMain, shell, request(method, path, body?, timeoutMs?), preload, html, fromOurs(e), debug?, openPanel?(section), caps?(),
 //         sisa?() 앱의 AI 저장(publicView), disconnectBrain?(id), disconnectConnector?(cap), copyText?(text),
 //         calendars?() 연결된 캘린더(가린 이름), removeCalendar?(id) 하나 빼기,
-//         appPrefs?: { get() → { version, openAtLogin: { available, on, hint }, updateCheck }, set(patch) } 「이 앱」 칸 }
+//         appPrefs?: { get() → { version, openAtLogin: { available, on, hint }, updateCheck }, set(patch) } 「이 앱」 칸,
+//         upload?(method, path, name, mime, bytes) 파일 바이트 그대로 올리기(캐릭터 그림) }
 export function setupSettings(deps) {
   let win = null;
 
@@ -87,6 +90,24 @@ export function setupSettings(deps) {
     const p = isMine(e) && deps.appPrefs ? sanitizeAppPrefs(patch) : null;
     return p ? deps.appPrefs.set(p) : denied();
   });
+
+  // 캐릭터 만들기·고치기·지우기(데몬 /characters). 그림은 바이트로(채팅 첨부처럼), 저장 이름은 데몬이 짓는다
+  ipcMain.handle('characters-list', (e) => (isMine(e) ? deps.request('GET', '/characters') : denied()));
+  ipcMain.handle('characters-create', (e, body) => {
+    const b = isMine(e) ? sanitizeCharacterBody(body, true) : null;
+    return b ? deps.request('POST', '/characters', b, 30000) : denied();
+  });
+  ipcMain.handle('characters-update', (e, id, body) => {
+    const b = isMine(e) && okCharacterId(id) ? sanitizeCharacterBody(body) : null;
+    return b ? deps.request('PUT', `/characters/${id}`, b, 30000) : denied();
+  });
+  ipcMain.handle('characters-reset', (e, id) => (isMine(e) && okCharacterId(id) ? deps.request('DELETE', `/characters/${id}/lines`) : denied()));
+  ipcMain.handle('characters-delete', (e, id) => (isMine(e) && okCharacterId(id) ? deps.request('DELETE', `/characters/${id}`) : denied()));
+  ipcMain.handle('characters-media-put', (e, id, slot, name, mime, bytes) => {
+    const u = isMine(e) && okCharacterId(id) && okMediaSlot(slot) && deps.upload ? cleanUpload(name, mime, bytes) : null;
+    return u ? deps.upload('PUT', `/characters/${id}/media/${slot}`, u.name, u.mime, u.bytes) : denied();
+  });
+  ipcMain.handle('characters-media-delete', (e, id, slot) => (isMine(e) && okCharacterId(id) && okMediaSlot(slot) ? deps.request('DELETE', `/characters/${id}/media/${slot}`) : denied()));
 
   // 사용법 다시 보기
   ipcMain.on('settings-tour', (e) => { if (isMine(e)) deps.startTour?.(); });

@@ -29,6 +29,7 @@ import { normalizeActions, upsertAction, placeActions, cardView, decideResult, a
 import { normalizePermissionRules, ruleUsage, withoutPending } from '../src/permissions.js';
 import { normAgents, agentStrip, agentCard, canStopAgent, placeAgents, agentsSig, normSessions, sessionCard, placeSessions, sessionsSig, sessionsPlaceSig } from '../src/agents.js';
 import { characterAssets, okCharacter, appName } from '../src/character.js';
+import { applyCharacters } from '../src/character-registry.js';
 import { who, whoId, setWho, onWho } from './who.js';
 import { normWorktrees, worktreeCard, openTarget, placeWorktrees, worktreesSig, worktreesPlaceSig } from '../src/worktrees.js';
 
@@ -40,9 +41,11 @@ if (new URLSearchParams(location.search).get('vibrancy') === '1') document.body.
 const brand = $('brand-img');
 // 사이드바 아이콘: 고른 캐릭터(눈 뜬 기본 표정) → 번들 png → svg. 캐릭터는 데몬 state(메인이 'character' 로 알린다)
 let character = 'shisa';
+let wantChar = 'shisa'; // 데몬이 고른 id 그대로(사용자 캐릭터는 목록을 받은 뒤에 안다)
 let BRAND_SRCS = [];
 let brandAt = 0;
 function setBrand(id) {
+  wantChar = id;
   character = okCharacter(id);
   setWho(character);
   $('brand-name').textContent = appName(character);
@@ -57,6 +60,10 @@ brand.addEventListener('error', () => { if (brandAt < BRAND_SRCS.length - 1) bra
 setBrand('shisa');
 cy.getCharacter?.().then((id) => { if (typeof id === 'string' && id !== character) setBrand(id); }).catch(() => {});
 cy.onCharacter?.((p) => { if (typeof p?.id === 'string' && p.id !== character) setBrand(p.id); });
+// 사용자 캐릭터·고친 대사(src/character-registry.js): 받을 때마다 다시 그린다(이름·그림·정해진 말)
+const takeCharacters = (data) => { if (data && applyCharacters(data)) setBrand(wantChar); };
+cy.getCharacters?.().then(takeCharacters).catch(() => {});
+cy.onCharacters?.(takeCharacters);
 
 // ---- 마크다운: marked(원시 HTML 막음) → DOMPurify ----
 const toHtml = createMarkdown(Marked);

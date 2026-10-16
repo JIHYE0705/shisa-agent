@@ -177,3 +177,38 @@ button.danger { background: var(--err-fg); color: #fff; }
 .cal-list code { background: var(--code); padding: 1px 6px; border-radius: 5px; overflow-wrap: anywhere; }
 .cal-list .dc { margin-top: 0; }
 .cal-list .dc.asking, .cal-list .dc.done { flex-basis: 100%; }
+
+/* 캐릭터 만들기·고치기: 카드는 다 같은 크기(고르기 카드 · ✎ 고치기 · ＋ 새 캐릭터 카드) */
+.char-card { position: relative; display: flex; min-height: 128px; }
+.char-card > .char-opt { flex: 1; justify-content: flex-start; }
+.char-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.char-tag { position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 10px; padding: 0 6px; border-radius: 999px; background: var(--code); color: var(--muted); font-weight: 400; }
+.char-edit { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; padding: 0; border-radius: 7px; background: transparent; color: var(--faint); font-size: 13px; line-height: 24px; }
+.char-card:hover .char-edit, .char-edit:focus-visible { color: var(--accent); background: var(--accent-soft); }
+.char-add { flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px 6px; border: 1px dashed var(--line); border-radius: 12px; background: transparent; color: var(--muted); font-size: 12px; }
+.char-add:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.char-add-plus { font-size: 30px; line-height: 64px; height: 64px; }
+.char-new-hint { margin: 8px 0 0; }
+.slot-frame { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); margin-right: auto; cursor: pointer; }
+.slot-frame input { margin: 0; accent-color: var(--accent); }
+.char-editor { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
+.ce-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ce-head h3 { margin: 0; font-size: 13px; color: var(--fg); }
+.ce-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.ce-row > span:first-child { min-width: 84px; font-weight: 600; }
+.ce-name { flex: 1; min-width: 160px; padding: 4px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.slot { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); }
+.slot-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.slot-req { color: var(--accent); font-size: 11px; }
+.slot-pic { width: 100%; height: 96px; object-fit: contain; border-radius: 6px; background: var(--code); }
+.slot-empty { display: flex; align-items: center; justify-content: center; height: 96px; border-radius: 6px; border: 1px dashed var(--line); color: var(--faint); font-size: 11.5px; }
+.slot p { margin: 0; }
+.slot-btns { display: flex; gap: 6px; }
+.char-lines details { border-top: 1px solid var(--line); }
+.char-lines .ph-list { display: flex; flex-direction: column; gap: 6px; }
+.ce-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.ce-status { flex: 1; }
+button.danger { color: var(--err-fg); border-color: color-mix(in srgb, var(--err) 40%, transparent); }
+/* 테두리 켠 칸 미리 보기: 그림 크기에 딱 맞는 둥근 카드(오버레이와 같게) */
+.slot-pic.framed { width: auto; max-width: 100%; align-self: center; background: none; border-radius: 14px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22); }

@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('cy', {
   onSection: on('section'),
   onChat: on('chat'),
   onCharacter: on('character'),
+  // 사용자 캐릭터·고친 대사(GET /characters 받아 둔 것) · 바뀜 알림
+  getCharacters: () => ipcRenderer.invoke('characters-get'),
+  onCharacters: on('characters'),
   localAsk: (id) => ipcRenderer.invoke('local-ask', String(id)), // 정해진 답 응원·춤 → 캐릭터 영상(POST /local/ask) // 설정 창에서 캐릭터를 바꿈 → { id }
   getCharacter: () => ipcRenderer.invoke('get-character'), // 지금 캐릭터 id(데몬 state.character, 모르면 'shisa')
   getDashboard: () => ipcRenderer.invoke('get-dashboard'),

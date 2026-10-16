@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: cy-asset:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: cy-asset:; media-src blob: cy-asset:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>설정</title>
   <link rel="stylesheet" href="settings.css">
 </head>
@@ -20,8 +20,10 @@
 
     <section class="card" aria-labelledby="h-char">
       <h2 id="h-char">캐릭터</h2>
-      <p class="hint">고른 캐릭터가 화면에 나오고, 말투와 정해진 말도 그 캐릭터대로 바뀌어요. 고친 문구는 그대로 써요.</p>
+      <p class="hint">고른 캐릭터가 화면에 나오고, 말투와 정해진 말도 그 캐릭터대로 바뀌어요. 아래 「문구」에서 고친 문구는 그대로 써요.</p>
       <div id="char-pick" class="char-pick" role="radiogroup" aria-label="캐릭터"></div>
+      <p class="hint char-new-hint">「＋ 새 캐릭터」로 이름·그림·말투를 직접 정해요. 카드의 ✎ 를 누르면 대사를 전부 고칠 수 있어요.</p>
+      <div id="char-editor" class="char-editor" hidden></div>
     </section>
 
     <section class="card" aria-labelledby="h-models">

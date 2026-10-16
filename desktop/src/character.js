@@ -10,13 +10,14 @@ export const CHAR_DIR = 'cy-asset://app/character';
 // 정지 그림 대체 순서: 눈 뜬 그림 → 예전 개인 그림 → 번들 그림 → 번들 svg
 export const STILL_SRCS = [`${CHAR_DIR}/eyes_open.png`, 'cy-asset://app/character.png', '../assets/character.png', '../assets/character.svg'];
 export const VIDEOS = {
-  studying: { src: `${CHAR_DIR}/studying.webm`, poster: `${CHAR_DIR}/studying.png` },
-  dancing: { src: `${CHAR_DIR}/dance.webm`, poster: `${CHAR_DIR}/dance.png` },
+  studying: { src: `${CHAR_DIR}/studying.webm`, poster: `${CHAR_DIR}/studying.png`, kind: 'video' },
+  dancing: { src: `${CHAR_DIR}/dance.webm`, poster: `${CHAR_DIR}/dance.png`, kind: 'video' },
 };
 
 // ---- 고를 수 있는 캐릭터(데몬 characters.ts 와 같은 id). 시사는 예전 자리(character/), 나머지는 characters/<id>/ ----
 // study = 집중·공부 중(studying 자리), plan = 일정 알림·춤(dancing 자리). scene: 배경이 있는 장면이라 둥근 네모 카드로 보인다
 // clips: 춤 영상 종류(데몬 state.danceClip: plan 일정 알림 · dance 춤춰 줘 · cheer 응원해 줘) → 그 캐릭터의 파일 이름. 없는 종류는 같은 파일을 다시 쓴다
+// 사용자가 만든 캐릭터(u-xxxxxxxx)는 데몬 GET /characters 를 받아 character-registry.js 가 여기에 더한다: { name, custom: true, media, frame }
 export const CHARACTERS = {
   shisa: { name: '시사' },
   hachi: { name: '하치와레', blink: true, scenes: { cheer: true }, clips: { plan: 'plan', dance: 'plan', cheer: 'cheer' } },
@@ -24,27 +25,66 @@ export const CHARACTERS = {
   momonga: { name: '모몽가', blink: true, scenes: { study: true, plan: true, dance: true }, clips: { plan: 'plan', dance: 'dance', cheer: 'plan' } },
 };
 export const DANCE_CLIPS = ['plan', 'dance', 'cheer'];
-export const CHARACTER_IDS = Object.keys(CHARACTERS);
+export const CHARACTER_IDS = Object.freeze(Object.keys(CHARACTERS)); // 기본 넷
+export const characterIds = () => Object.keys(CHARACTERS); // 지금 고를 수 있는 것(사용자 캐릭터 포함)
 export const DEFAULT_CHARACTER = 'shisa';
+// 사용자 캐릭터 id 모양(데몬 character-store.ts USER_ID 와 같다). 있는지는 데몬이 다시 본다
+export const USER_CHARACTER_ID = /^u-[a-z0-9]{4,32}$/;
+export const okCharacterId = (id) => typeof id === 'string' && (CHARACTER_IDS.includes(id) || USER_CHARACTER_ID.test(id));
 // 오버레이가 데몬 말 없이 스스로 띄우는 짧은 말(머지 결과를 먼저 보일 때·AI 없이 묻기 칩). 시사는 예전 글 그대로
-const SHISA_SAY_LOCAL = { quickAi: '정해진 답으로 바로 알려 드릴게요. 무엇이 궁금하세요?', mergeDone: '머지했어요 🎉 (스이시~사)', mergeDeclined: '알겠어요, 머지는 안 할게요. PR은 열어 둘게요', quick: '무엇이 궁금하세요? AI 없이도 이건 바로 알려 드려요', quickLogin: 'Claude Code 로그인 전이라도 이건 바로 알려 드려요. 무엇이 궁금하세요?' };
+export const SHISA_SAY_LOCAL = { quickAi: '정해진 답으로 바로 알려 드릴게요. 무엇이 궁금하세요?', mergeDone: '머지했어요 🎉 (스이시~사)', mergeDeclined: '알겠어요, 머지는 안 할게요. PR은 열어 둘게요', quick: '무엇이 궁금하세요? AI 없이도 이건 바로 알려 드려요', quickLogin: 'Claude Code 로그인 전이라도 이건 바로 알려 드려요. 무엇이 궁금하세요?' };
 // 다른 캐릭터 글은 assets/characters/lines.json 의 overlay
 export const LOCAL_SAY = { shisa: SHISA_SAY_LOCAL, ...Object.fromEntries(Object.entries(CHARACTER_LINES).map(([id, c]) => [id, { ...SHISA_SAY_LOCAL, ...(c.overlay ?? {}) }])) };
-export const localSay = (id) => LOCAL_SAY[okCharacter(id)];
+export const localSay = (id) => LOCAL_SAY[okCharacter(id)] ?? SHISA_SAY_LOCAL;
 
 // 화면에 쓰는 이름: 「하치와레」·「하치와레 비서」(앱 이름·메뉴·창 제목)
 export const characterName = (id) => CHARACTERS[okCharacter(id)].name;
 export const appName = (id) => `${characterName(id)} 비서`;
 export const okCharacter = (id) => (typeof id === 'string' && Object.hasOwn(CHARACTERS, id) ? id : DEFAULT_CHARACTER);
 
+// ---- 사용자 캐릭터 그림·영상 ----
+// 올린 파일은 ~/.cy-agent/characters/<id>/<칸>-<무작위>.<확장자>(데몬이 이름을 짓는다) → cy-asset://app/user-characters/<id>/<그 이름>
+export const USER_CHAR_DIR = 'cy-asset://app/user-characters';
+export const MEDIA_SLOTS = ['eyes_open', 'eyes_closed', 'cheer', 'dance', 'study', 'plan'];
+export const REQUIRED_SLOTS = ['eyes_open', 'eyes_closed', 'cheer', 'dance'];
+export const MEDIA_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'webm', 'mp4'];
+const VIDEO_EXT = /\.(webm|mp4)$/i;
+// 파일 이름 → 'video'(<video> 로 튼다) | 'img'(<img>: 정지 그림·움직이는 gif·webp 는 <video> 가 못 튼다)
+export const clipKind = (file) => (VIDEO_EXT.test(String(file ?? '')) ? 'video' : 'img');
+// 빈 칸 대신 쓰는 규칙(꼭 넣을 넷이 비어도 깨지지 않게):
+//   응원 → 춤 · 춤 → 응원 · 일정 알림 → 춤 → 응원 · 집중 → 없으면 정지 그림(눈 뜬 모습, 깜빡임 그대로)
+//   눈 감은 모습이 없으면 깜빡이지 않는다 · 눈 뜬 모습이 없으면 시사 그림
+// frames: 칸마다 테두리(둥근 네모 카드). 없는 칸은 파일 종류로(투명 배경이 흔한 png·webm 은 끔, 그 밖은 켬 — 데몬 defaultFrame 과 같다).
+// 정사각형이 아니어도 비율대로 상자 안에 맞춘다(fit)
+export const defaultFrame = (file) => !/\.(png|webm)$/i.test(String(file ?? ''));
+export function customAssets(id, media = {}, frames = {}) {
+  const dir = `${USER_CHAR_DIR}/${id}`;
+  const url = (slot) => (typeof media?.[slot] === 'string' && media[slot] ? `${dir}/${media[slot]}` : null);
+  const framed = (slot) => (typeof frames?.[slot] === 'boolean' ? frames[slot] : defaultFrame(media?.[slot]));
+  const clip = (slot) => { const src = url(slot); return src ? { src, poster: '', scene: framed(slot), kind: clipKind(src), fit: true, slot } : null; };
+  const cheer = clip('cheer') ?? clip('dance');
+  const dance = clip('dance') ?? clip('cheer');
+  const plan = clip('plan') ?? dance;
+  const open = url('eyes_open');
+  return {
+    id, dir, retina: false, custom: true,
+    open: open ?? STILL_SRCS[0], closed: open ? url('eyes_closed') : null,
+    openFrame: !!open && framed('eyes_open'), closedFrame: !!open && !!url('eyes_closed') && framed('eyes_closed'),
+    stills: open ? [open, ...STILL_SRCS] : STILL_SRCS,
+    videos: { studying: clip('study'), dancing: plan },
+    clips: { plan, dance, cheer },
+  };
+}
+
 // 캐릭터 하나의 그림·영상 주소. { dir, open, closed(없으면 null), stills(대체 순서), videos: { studying, dancing }, clips: { plan, dance, cheer } }
-// videos.dancing 은 일정 알림(plan) 영상 — 춤춰 줘·응원해 줘는 clips 에서 고른다(clipFor)
+// videos.dancing 은 일정 알림(plan) 영상 — 춤춰 줘·응원해 줘는 clips 에서 고른다(clipFor). 사용자 캐릭터는 빈 칸이 null 일 수 있다(정지 그림으로)
 export function characterAssets(id) {
   const cid = okCharacter(id);
-  if (cid === 'shisa') return { id: cid, dir: CHAR_DIR, retina: true, open: `${CHAR_DIR}/eyes_open.png`, closed: `${CHAR_DIR}/eyes_closed.png`, stills: STILL_SRCS, videos: VIDEOS, clips: { plan: VIDEOS.dancing, dance: VIDEOS.dancing, cheer: VIDEOS.dancing } };
   const c = CHARACTERS[cid];
+  if (c.custom) return customAssets(cid, c.media, c.frames);
+  if (cid === 'shisa') return { id: cid, dir: CHAR_DIR, retina: true, open: `${CHAR_DIR}/eyes_open.png`, closed: `${CHAR_DIR}/eyes_closed.png`, stills: STILL_SRCS, videos: VIDEOS, clips: { plan: VIDEOS.dancing, dance: VIDEOS.dancing, cheer: VIDEOS.dancing } };
   const dir = `cy-asset://app/characters/${cid}`;
-  const clip = (name) => ({ src: `${dir}/${name}.webm`, poster: `${dir}/${name}.png`, scene: !!c.scenes[name] });
+  const clip = (name) => ({ src: `${dir}/${name}.webm`, poster: `${dir}/${name}.png`, scene: !!c.scenes[name], kind: 'video' });
   const clips = Object.fromEntries(DANCE_CLIPS.map((k) => [k, clip(c.clips[k])]));
   return {
     id: cid, dir, retina: false, open: `${dir}/eyes_open.png`, closed: c.blink ? `${dir}/eyes_closed.png` : null,
@@ -53,8 +93,15 @@ export function characterAssets(id) {
     clips,
   };
 }
-// 춤 영상 하나: 종류(plan·dance·cheer, 모르면 plan) → { src, poster, scene }
-export const clipFor = (a, kind) => a.clips[DANCE_CLIPS.includes(kind) ? kind : 'plan'];
+// 춤 영상 하나: 종류(plan·dance·cheer, 모르면 plan) → { src, poster, scene, kind } | null(사용자 캐릭터에 그 칸이 없음 → 정지 그림)
+export const clipFor = (a, kind) => a.clips[DANCE_CLIPS.includes(kind) ? kind : 'plan'] ?? null;
+
+// 그림 비율 그대로 상자 안에 꽉 차게(contain) — 둥근 테두리·그림자가 그림 크기에 맞게. 모르는 크기면 상자 그대로
+export function fitBox(w, h, boxW, boxH) {
+  if (!(w > 0 && h > 0 && boxW > 0 && boxH > 0)) return { w: boxW, h: boxH };
+  const k = Math.min(boxW / w, boxH / h);
+  return { w: Math.round(w * k), h: Math.round(h * k) };
+}
 
 // ---- 깜빡임 ----
 export const BLINK = {

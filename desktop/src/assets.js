@@ -35,15 +35,44 @@ export const ALLOWED = new Map([
   ...IMAGES.map((n) => [`reactions/${n}.jpg`, 'image/jpeg']),
 ]);
 
+// 사용자가 만든 캐릭터(~/.cy-agent/characters/<id>/): 데몬이 지은 저장 이름(<칸>-<무작위 8자>.<확장자>)만, 확장자로 종류를 정한다.
+// 이 목록은 파일마다 고정이 아니라 모양으로 본다. 실제로 그 캐릭터의 파일인지(데몬 목록)와 폴더 밖으로 안 나가는지는 main 이 다시 본다(userCharacterFile)
+export const USER_MEDIA_TYPES = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', webm: 'video/webm', mp4: 'video/mp4' };
+const USER_REL = /^user-characters\/(u-[a-z0-9]{4,32})\/((?:eyes_open|eyes_closed|cheer|dance|study|plan)-[a-z0-9]{8}\.(png|jpg|webp|gif|webm|mp4))$/;
+
 // 'cy-asset://app/reactions/merge.jpg' → { rel: 'reactions/merge.jpg', type: 'image/jpeg' } | null
+// 사용자 캐릭터 파일이면 { rel, type, user: { id, file } }
 export function resolveAsset(url) {
   let u;
   try { u = new URL(url); } catch { return null; }
   if (u.protocol !== `${ASSET_SCHEME}:` || u.hostname !== 'app' || u.search || u.username || u.password || u.port) return null;
   let rel;
   try { rel = decodeURIComponent(u.pathname).replace(/^\//, ''); } catch { return null; }
+  const m = USER_REL.exec(rel);
+  if (m) return { rel, type: USER_MEDIA_TYPES[m[3]], user: { id: m[1], file: m[2] } };
   const type = ALLOWED.get(rel);
   return type ? { rel, type } : null;
+}
+
+// 사용자 캐릭터 파일의 실제 경로: 데몬 목록(GET /characters)에 그 캐릭터의 그 파일이 있어야 하고,
+// 진짜 경로(심볼릭 링크를 다 푼 것)가 그 캐릭터 폴더 안의 보통 파일이어야 한다. 아니면 null.
+// fsx: { realpath(p), lstat(p) → { isFile(), isSymbolicLink() } } · path: { join, sep } (시험은 가짜로)
+export function userCharacterFile(a, root, list, fsx, path) {
+  if (!a?.user || !root) return null;
+  const c = (Array.isArray(list) ? list : []).find((x) => x && x.id === a.user.id && x.custom);
+  if (!c || !Object.values(c.media ?? {}).includes(a.user.file)) return null;
+  try {
+    const dir = fsx.realpath(path.join(root, a.user.id));
+    const rootReal = fsx.realpath(root);
+    if (!dir.startsWith(rootReal + path.sep)) return null; // 캐릭터 폴더가 링크로 밖을 가리킴
+    const file = path.join(dir, a.user.file);
+    const st = fsx.lstat(file);
+    if (st.isSymbolicLink() || !st.isFile()) return null;
+    const real = fsx.realpath(file);
+    return real === file && real.startsWith(dir + path.sep) ? real : null;
+  } catch {
+    return null;
+  }
 }
 
 // 실제로 읽을 파일 후보(앞에서부터): 홈(CY_AGENT_HOME/assets, 사용자가 바꾼 그림) → 레포 assets/(설치 스크립트를 안 거친 새 사용자·테스트 홈)

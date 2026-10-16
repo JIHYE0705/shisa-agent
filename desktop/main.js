@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ASSET_SCHEME, resolveAsset, parseRange, assetCandidates } from './src/assets.js';
+import { ASSET_SCHEME, resolveAsset, parseRange, assetCandidates, userCharacterFile } from './src/assets.js';
 import { cleanMergeQuestion, normalizeOpen } from './src/bubbles.js';
 import { createSSEParser, backoffDelay } from './src/sse.js';
 import { isSafeLink } from './src/bubbles.js';
@@ -33,6 +33,7 @@ import { checkLlm, listModels, KEY_REQ } from './src/llm-check.js';
 import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withSkip, withoutProvider, activeProvider, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
 import { personaFor } from './src/persona.js';
 import { okCharacter, characterName, appName } from './src/character.js';
+import { applyCharacters } from './src/character-registry.js';
 import { normStatus, brainView, sameView } from './src/brain-state.js';
 import { isAskId } from './src/quick-ask.js';
 import { isFocusCmd, DAY_RE } from './src/focus.js';
@@ -76,7 +77,8 @@ const userData = path.join(app.getPath('appData'), 'cy-agent-desktop');
 function configCharacter() {
   try { return JSON.parse(fs.readFileSync(path.join(process.env.CY_AGENT_HOME ?? path.join(os.homedir(), '.cy-agent'), 'config.json'), 'utf8'))?.character; } catch { return null; }
 }
-let charId = okCharacter(configCharacter());
+let wantChar = configCharacter(); // 데몬이 고른 id 그대로(사용자 캐릭터는 목록을 받기 전엔 모른다 — 받으면 다시 맞춘다)
+let charId = okCharacter(wantChar);
 const who = () => characterName(charId);
 const appTitle = () => appName(charId);
 app.setName(appTitle());
@@ -731,6 +733,7 @@ function setConnected(v) {
   sendSession('connection', { connected: v });
   rebuildTrayMenu();
   if (v) refreshStatus(); // 뇌·Claude Code·커넥터 연결 상태
+  if (v) loadCharacters(); // 사용자 캐릭터·고친 대사
   if (v) loginDefaultFromDaemon();
   else pushBrain();
 }
@@ -775,6 +778,7 @@ function onSSE({ event, data }) {
     lastState = payload;
     if (typeof payload?.character === 'string') onCharacter(payload.character);
   }
+  if (event === 'characters') loadCharacters(); // 만들거나 고치거나 지움 → 다시 읽어 창마다
   if (event === 'bubble' || event === 'state' || event === 'clear') send(event, payload);
   else if (event === 'run') sendSession('run', payload);
   else if (event === 'runs') {
@@ -828,9 +832,13 @@ const post = (pathname, body, timeoutMs) => request('POST', pathname, body, time
 
 // 첨부 올리기: 본문 = 파일 바이트(JSON 아님), 이름은 x-file-name → { ok, status, data: { attachment } | { error } }
 async function uploadAttachment(name, mime, bytes) {
+  return uploadBytes('POST', '/chat/attachments', name, mime, bytes);
+}
+// 파일 바이트 그대로 올리기(채팅 첨부 · 캐릭터 그림). 이름은 x-file-name(데몬이 다시 짓는다)
+async function uploadBytes(method, pathname, name, mime, bytes) {
   try {
-    const res = await fetch(`${BASE}/chat/attachments`, {
-      method: 'POST', body: bytes, signal: AbortSignal.timeout(120000),
+    const res = await fetch(`${BASE}${pathname}`, {
+      method, body: bytes, signal: AbortSignal.timeout(120000),
       headers: { Accept: 'application/json', 'X-CY-Agent': '1', 'Content-Type': mime, 'X-File-Name': encodeURIComponent(name) },
     });
     let data = null;
@@ -1004,9 +1012,11 @@ function setDockMenu() {
 }
 
 // 설정 창에서 캐릭터를 바꿈(데몬 state.character) → 앱 이름·메뉴·트레이·창 제목·패널(아이콘·정해진 말)
-function onCharacter(id) {
+// force: 같은 id 라도 이름·그림이 바뀌었을 수 있다(캐릭터 목록을 새로 받음)
+function onCharacter(id, force = false) {
+  wantChar = id;
   const next = okCharacter(id);
-  if (next === charId) return;
+  if (next === charId && !force) return;
   charId = next;
   app.setName(appTitle());
   if (tray) tray.setToolTip(appTitle());
@@ -1017,6 +1027,26 @@ function onCharacter(id) {
   sendPanel('character', { id: charId });
   sendSession('character', { id: charId });
   sendPanel('sisa', sisaPublic(normalizeSisa(readSisa()))); // 말투 글 기본값도 그 캐릭터 것
+}
+
+// 사용자 캐릭터·고친 대사(데몬 GET /characters, src/character-registry.js): 이 프로세스 기본값 위에 덮고 창마다 알린다.
+// 데몬에 붙을 때와 SSE characters 때 다시 읽는다. cy-asset 이 사용자 캐릭터 파일을 줄 때도 이 목록을 본다
+let charactersData = null;
+let charactersLoading = null;
+function loadCharacters() {
+  charactersLoading ??= (async () => {
+    const r = await request('GET', '/characters');
+    if (!r.ok || !r.data || !Array.isArray(r.data.characters)) return;
+    charactersData = r.data;
+    applyCharacters(r.data);
+    send('characters', r.data);
+    sendPanel('characters', r.data);
+    sendSession('characters', r.data);
+    const sw = settingsUi?.window;
+    if (sw && !sw.isDestroyed()) sw.webContents.send('characters', r.data);
+    onCharacter(wantChar ?? charId, true);
+  })().finally(() => { charactersLoading = null; });
+  return charactersLoading;
 }
 
 function setupAppActivation() {
@@ -1169,6 +1199,7 @@ function setupIPC() {
     removeCalendar: (id) => removeCalendar(id),
     copyText: (text) => { clipboard.writeText(text); return { ok: true }; },
     appPrefs,
+    upload: (method, pathname, name, mime, bytes) => uploadBytes(method, pathname, name, mime, bytes),
     preload: path.join(__dirname, 'preload-settings.cjs'),
     html: path.join(__dirname, 'renderer', 'settings.html'),
   });
@@ -1372,6 +1403,8 @@ function setupIPC() {
   });
 
   ipcMain.handle('get-character', (e) => (fromOurs(e) ? charId : null));
+  // 사용자 캐릭터·고친 대사 목록(GET /characters 를 받아 둔 것). 아직 없으면 null — 받으면 'characters' 로 알린다
+  ipcMain.handle('characters-get', (e) => (fromOurs(e) || settingsUi?.isSender(e) ? charactersData : null));
   ipcMain.handle('click-target', (e) => (fromOurs(e) ? clickTarget(lastState, activeRuns) : null));
 
   // ---- 작업 세션 ----
@@ -1738,8 +1771,9 @@ function registerAssetProtocol() {
   protocol.handle(ASSET_SCHEME, async (req) => {
     const a = req.method === 'GET' ? resolveAsset(req.url) : null;
     if (!a) return new Response('not found', { status: 404 });
+    // 사용자가 만든 캐릭터: ~/.cy-agent/characters/<id>/ 의 데몬 목록에 있는 파일만(링크로 폴더 밖에 나가면 안 줌)
     // 홈에 없으면(install.sh 를 안 거친 새 사용자) 레포 assets/ 를 그대로 쓴다
-    const file = assetCandidates(a.rel, { user: USER_ASSETS, repo: app.isPackaged ? null : REPO_ASSETS, bundle: app.isPackaged ? BUNDLE.assetsDir : null, bundled: path.join(__dirname, 'assets') }, path.join).find((f) => fs.existsSync(f));
+    const file = a.user ? userCharacterFile(a, path.join(AGENT_HOME, 'characters'), charactersData?.characters, { realpath: fs.realpathSync, lstat: fs.lstatSync }, path) : assetCandidates(a.rel, { user: USER_ASSETS, repo: app.isPackaged ? null : REPO_ASSETS, bundle: app.isPackaged ? BUNDLE.assetsDir : null, bundled: path.join(__dirname, 'assets') }, path.join).find((f) => fs.existsSync(f));
     if (!file) return new Response('not found', { status: 404 });
     // Range(영상): 206 + Content-Range. 그림은 예전처럼 통째로
     const size = (await fs.promises.stat(file)).size;

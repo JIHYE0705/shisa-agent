@@ -1,7 +1,7 @@
 // 설정 창의 순수 로직: 모델·브리핑 출처·문구·자동 머지 레포·오늘 할 일 알림·일정 알림 저장 본문 검증, 문구 묶기·검사, 연결 상태 줄 묶기·표시 글.
 // 데몬 GET/PUT /settings, GET /connections, POST /connections/check (docs/contract.md "설정 창").
 
-import { CHARACTER_IDS } from './character.js';
+import { okCharacterId, MEDIA_SLOTS } from './character.js';
 
 export const CHECK_IDS = ['net', 'claude', 'services', 'gh', 'local'];
 export const okCheckId = (id) => typeof id === 'string' && CHECK_IDS.includes(id);
@@ -34,7 +34,7 @@ export function sanitizeSettingsPatch(p) {
   for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert' && k !== 'character') return null;
   // 캐릭터(src/character.js 의 id)
   if (p.character !== undefined) {
-    if (typeof p.character !== 'string' || !CHARACTER_IDS.includes(p.character)) return null;
+    if (!okCharacterId(p.character)) return null; // 기본 넷 또는 사용자 캐릭터 모양(있는지는 데몬이)
     out.character = p.character;
   }
   // 이 맥의 Claude Code·Codex 작업 기록 읽기(켜고 끄기만)
@@ -190,6 +190,27 @@ export function phraseProblem(p, text) {
   if (bad.length) return `모르는 자리표시 ${bad.map((v) => `{${v}}`).join(' ')}${vars.length ? ` — 쓸 수 있는 것: ${vars.map((v) => `{${v}}`).join(' ')}` : ' — 이 문구는 자리표시를 못 써요'}`;
   return '';
 }
+
+// ---- 캐릭터 만들기·고치기(데몬 /characters, agent/src/character-store.ts) ----
+// 만들기·고치기 본문: 아는 키만, 값 모양만 본다(칸·자리표시 검사는 데몬이). 이상하면 null
+const isPlain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+export function sanitizeCharacterBody(b, create = false) {
+  if (!isPlain(b)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(b)) {
+    if (k === 'name') { if (typeof v !== 'string') return null; out.name = v; }
+    else if (k === 'from' && create) { if (!okCharacterId(v)) return null; out.from = v; }
+    else if (k === 'frames') {
+      if (!isPlain(v) || !Object.entries(v).every(([s, b]) => MEDIA_SLOTS.includes(s) && typeof b === 'boolean')) return null;
+      out.frames = { ...v };
+    }
+    else if (k === 'lines') { if (!isPlain(v)) return null; out.lines = JSON.parse(JSON.stringify(v)); }
+    else return null;
+  }
+  if (create && typeof out.name !== 'string') return null;
+  return out;
+}
+export const okMediaSlot = (s) => typeof s === 'string' && MEDIA_SLOTS.includes(s);
 
 // 연결 줄에서 패널로 보낼 수 있는 탭(설치 안내 · AI 고르기)
 export const PANEL_TARGETS = ['setup', 'models'];

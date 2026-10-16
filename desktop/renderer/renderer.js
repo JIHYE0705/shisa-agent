@@ -11,7 +11,8 @@ import { createAttachTray } from './attach-tray.js';
 import { hasFiles, filesFromTransfer, ATTACH_ERRORS } from '../src/attachments.js';
 import { normFocus, focusBubble } from '../src/focus.js';
 import { who, setWho } from './who.js';
-import { characterAssets, okCharacter, localSay, clipFor, danceClipOf, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf } from '../src/character.js';
+import { characterAssets, okCharacter, localSay, clipFor, danceClipOf, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf, fitBox } from '../src/character.js';
+import { applyCharacters } from '../src/character-registry.js';
 
 const cy = window.cy;
 const stack = document.getElementById('stack');
@@ -26,7 +27,11 @@ const closedImg = document.getElementById('char-closed');
 // 켤 때 데몬 state 가 오기 전에도 지난번 캐릭터로 그린다(시사가 잠깐 보였다 바뀌지 않게)
 const CHAR_KEY = 'cy-character';
 const savedCharacter = () => { try { return localStorage.getItem(CHAR_KEY); } catch { return null; } };
-let charA = characterAssets(savedCharacter());
+// 사용자 캐릭터·고친 대사(데몬 GET /characters → 메인 → 'characters'). 지난번 목록을 먼저 써서 켤 때 시사가 잠깐 보이지 않게
+const CHARS_KEY = 'cy-characters';
+try { const c = JSON.parse(localStorage.getItem(CHARS_KEY) ?? 'null'); if (c) applyCharacters(c); } catch { /* 없거나 깨짐 → 기본값 */ }
+let wantChar = savedCharacter(); // 데몬이 고른 id 그대로(목록을 받기 전엔 모를 수 있다)
+let charA = characterAssets(wantChar);
 const probe = (url) => new Promise((ok) => {
   const im = new Image();
   im.onload = () => (im.decode ? im.decode().then(() => ok(true), () => ok(true)) : ok(true));
@@ -48,6 +53,7 @@ async function loadStill() {
     stillIdx = 0;
     img.src = open;
     if (both) { closedImg.src = closed; wrap.classList.add('blink-ready'); }
+    fitStill();
     return true;
   }
   if (a === charA && !img.getAttribute('src')) { stillIdx = 1; img.src = a.stills[1]; }
@@ -79,36 +85,75 @@ async function doBlink() {
 }
 scheduleBlink();
 
+// ---- 사용자 캐릭터: 정사각형이 아닌 그림·영상도 비율대로 상자 안에(둥근 테두리가 그림 크기에 맞게) ----
+// 기본 캐릭터는 CSS 그대로(object-fit: contain)
+function fitEl(el, w, h, on) {
+  if (!on) { el.classList.remove('fit'); el.style.width = el.style.height = el.style.left = el.style.top = ''; return; }
+  const bw = el.parentElement.clientWidth, bh = el.parentElement.clientHeight;
+  const f = fitBox(w, h, bw, bh);
+  el.classList.add('fit');
+  Object.assign(el.style, { width: `${f.w}px`, height: `${f.h}px`, left: `${Math.round((bw - f.w) / 2)}px`, top: `${bh - f.h}px` }); // 아래 가운데(기본 캐릭터와 같은 기준점)
+}
+function fitStill() {
+  const on = !!charA.custom;
+  for (const el of [img, closedImg]) {
+    el.classList.toggle('scene', on && (el === img ? charA.openFrame : charA.closedFrame)); // 칸마다 테두리
+    if (!on) fitEl(el, 0, 0, false);
+    else if (el.complete && el.naturalWidth) fitEl(el, el.naturalWidth, el.naturalHeight, true);
+  }
+}
+for (const el of [img, closedImg]) el.addEventListener('load', () => { if (charA.custom) fitEl(el, el.naturalWidth, el.naturalHeight, true); });
+
 // ---- 활동: 데몬이 스스로 세션을 돌리면 공부 영상, 일정 알림(기본 10분 전) 땐 춤 영상(우선순위 춤 > 공부 > 정지) ----
+// 사용자 캐릭터의 gif·png 클립은 <img id="clip-img"> 로(<video> 는 gif 를 못 튼다). 그 칸이 비면(집중 등) 정지 그림 그대로
 const videos = { studying: document.getElementById('vid-studying'), dancing: document.getElementById('vid-dancing') };
+const clipImg = document.getElementById('clip-img');
 let act = initialActivity();
 let shownView = 'idle';
 let danceCap = null;
+const setPoster = (v, p) => { if (p) v.poster = p; else v.removeAttribute('poster'); };
 for (const [k, v] of Object.entries(videos)) {
   v.muted = true;
-  v.poster = charA.videos[k].poster;
-  v.classList.toggle('scene', !!charA.videos[k].scene);
+  setPoster(v, charA.videos[k]?.poster);
+  v.classList.toggle('scene', !!charA.videos[k]?.scene);
   // 첫 장면이 실제로 나올 때 바꿔 끼운다(그 전엔 정지 그림 그대로)
   v.addEventListener('playing', () => { if (shownView === k) showVideo(k); });
+  v.addEventListener('loadedmetadata', () => { const c = clipOf(k); fitEl(v, v.videoWidth, v.videoHeight, !!c?.fit); });
   v.addEventListener('error', () => {
     v.dataset.failed = '1';
     if (shownView === k) showVideo(null); // 영상이 없으면 정지 그림(+기분 애니메이션)으로
   });
 }
+clipImg.addEventListener('load', () => {
+  const c = shownView !== 'idle' ? clipOf(shownView) : null;
+  if (c?.kind !== 'img' || c.src !== clipImg.dataset.clip) return;
+  fitEl(clipImg, clipImg.naturalWidth, clipImg.naturalHeight, true);
+  showVideo(shownView);
+});
+clipImg.addEventListener('error', () => { if (shownView !== 'idle' && clipOf(shownView)?.kind === 'img') showVideo(null); });
 function showVideo(k) {
+  const useImg = !!k && clipOf(k)?.kind === 'img';
   for (const [name, v] of Object.entries(videos)) {
-    const on = name === k;
+    const on = name === k && !useImg;
     v.classList.toggle('on', on);
     if (!on && !v.paused) v.pause();
   }
+  clipImg.classList.toggle('on', useImg);
   wrap.classList.toggle('video-on', !!k);
 }
-// 그 자리에 틀 영상: 춤 자리는 종류(일정 알림·춤·응원)에 따라 다르다
-const clipOf = (k) => (k === 'dancing' ? clipFor(charA, danceClipOf(act)) : charA.videos[k]);
+// 그 자리에 틀 영상: 춤 자리는 종류(일정 알림·춤·응원)에 따라 다르다. null = 그 칸이 없음(정지 그림)
+const clipOf = (k) => (k === 'dancing' ? clipFor(charA, danceClipOf(act)) : charA.videos[k] ?? null);
 function startVideo(k) {
   const v = videos[k];
   const c = clipOf(k);
-  if (v.dataset.clip !== c.src) { v.removeAttribute('src'); v.dataset.clip = c.src; v.poster = c.poster; v.classList.toggle('scene', !!c.scene); }
+  if (!c) return showVideo(null);
+  if (c.kind === 'img') {
+    clipImg.classList.toggle('scene', !!c.scene);
+    if (clipImg.dataset.clip !== c.src) { clipImg.dataset.clip = c.src; clipImg.src = c.src; } // 다 읽히면(load) 보인다
+    else if (clipImg.complete && clipImg.naturalWidth) { fitEl(clipImg, clipImg.naturalWidth, clipImg.naturalHeight, true); showVideo(k); }
+    return;
+  }
+  if (v.dataset.clip !== c.src) { v.removeAttribute('src'); v.dataset.clip = c.src; setPoster(v, c.poster); v.classList.toggle('scene', !!c.scene); }
   if (!v.getAttribute('src') || v.dataset.failed) { delete v.dataset.failed; v.src = c.src; }
   try { v.currentTime = 0; } catch { /* 아직 메타데이터 전 */ }
   const p = v.play();
@@ -131,18 +176,22 @@ function applyActivity() {
   startVideo(view);
 }
 // 캐릭터 바꾸기: 정지 그림을 새로 찾고, 영상은 새 주소로(지금 영상 중이면 새 캐릭터 영상으로 이어서)
-function setCharacter(id) {
+// force: 같은 id 라도 그림을 바꿨을 수 있다(캐릭터 목록을 새로 받음) — 주소가 다 같으면 그대로 둔다
+function setCharacter(id, force = false) {
+  wantChar = id;
   const cid = okCharacter(id);
-  if (cid === charA.id) return;
-  charA = characterAssets(cid);
-  setWho(cid);
+  const next = characterAssets(cid);
+  setWho(cid); // 이름만 바뀌었을 수도
   document.getElementById('ask-input')?.setAttribute('aria-label', `${who()}에게 물어보기`);
-  try { localStorage.setItem(CHAR_KEY, cid); } catch { /* 못 적어도 그림은 바뀐다 */ }
+  try { localStorage.setItem(CHAR_KEY, typeof id === 'string' ? id : cid); } catch { /* 못 적어도 그림은 바뀐다 */ }
+  if (cid === charA.id && (!force || JSON.stringify(next) === JSON.stringify(charA))) return;
+  charA = next;
   wrap.dataset.character = cid;
   wrap.classList.remove('blink', 'blink-ready');
   closedImg.removeAttribute('src');
   stillIdx = 0;
   img.src = charA.stills[0];
+  fitStill();
   loadStill();
   for (const [k, v] of Object.entries(videos)) {
     v.pause();
@@ -150,9 +199,11 @@ function setCharacter(id) {
     delete v.dataset.failed;
     v.load();
     delete v.dataset.clip;
-    v.poster = clipOf(k).poster;
-    v.classList.toggle('scene', !!clipOf(k).scene);
+    setPoster(v, clipOf(k)?.poster);
+    v.classList.toggle('scene', !!clipOf(k)?.scene);
   }
+  clipImg.removeAttribute('src');
+  delete clipImg.dataset.clip;
   if (shownView !== 'idle') { showVideo(null); startVideo(shownView); }
 }
 wrap.dataset.character = charA.id;
@@ -563,6 +614,14 @@ function setMood(m) {
   daemonMood = MOODS.includes(m) ? m : 'idle';
   if (!isBusy(chat)) applyMood(daemonMood);
 }
+// 사용자 캐릭터·고친 대사: 받으면 넣고(다음에 켤 때 먼저 쓰게 남겨 둔다) 지금 캐릭터를 다시 그린다
+function takeCharacters(data) {
+  if (!data || !applyCharacters(data)) return;
+  try { localStorage.setItem(CHARS_KEY, JSON.stringify(data)); } catch { /* 못 남겨도 지금은 바뀐다 */ }
+  setCharacter(wantChar, true);
+}
+cy.getCharacters?.().then(takeCharacters).catch(() => {});
+cy.onCharacters?.(takeCharacters);
 cy.onState((p) => { if (typeof p?.character === 'string') setCharacter(p.character); setMood(p?.mood); dispatchActivity({ type: 'state', activity: p?.activity, runs: p?.runs, danceId: p?.danceId, danceClip: p?.danceClip }); }); // danceClip: 일정 알림·춤·응원 중 어느 영상
 
 cy.onConnection(({ connected }) => {

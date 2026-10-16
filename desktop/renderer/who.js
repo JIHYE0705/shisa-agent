@@ -3,13 +3,15 @@
 import { okCharacter, characterName, appName } from '../src/character.js';
 
 let id = 'shisa';
+let shown = '시사'; // 같은 id 라도 이름을 고치면 다시 알린다
 const listeners = new Set();
 export const who = () => characterName(id);
 export const whoId = () => id;
 export function setWho(next) {
   const n = okCharacter(next);
-  if (n === id) return false;
+  if (n === id && characterName(n) === shown) return false;
   id = n;
+  shown = characterName(n);
   if (/ 비서$/.test(document.title)) document.title = appName(id); // 앱 이름을 제목으로 쓰는 창만(설정 창은 「설정」 그대로)
   for (const fn of listeners) { try { fn(id); } catch { /* 한 곳이 실패해도 나머지는 바뀐다 */ } }
   return true;

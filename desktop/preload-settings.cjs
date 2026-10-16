@@ -25,4 +25,14 @@ contextBridge.exposeInMainWorld('cy', {
   getAppPrefs: () => ipcRenderer.invoke('settings-app-get'), // { version, openAtLogin: { available, on, hint }, updateCheck }
   setAppPrefs: (patch) => ipcRenderer.invoke('settings-app-set', patch && typeof patch === 'object' ? JSON.parse(JSON.stringify(patch)) : null),
   startTour: () => ipcRenderer.send('settings-tour'), // 사용법 다시 보기(캐릭터 말풍선)
+  // 캐릭터: 목록(GET /characters) · 만들기 { name, from?, lines?, frame? } · 고치기(id, { name?, lines?, frame? }) · 기본값으로(id) · 지우기(id)
+  // · 그림 올리기(id, 칸, 이름, 종류, 바이트) · 그림 빼기(id, 칸) → { ok, status, data } · 바뀜 알림(메인이 새 목록을 준다)
+  getCharacters: () => ipcRenderer.invoke('characters-list'),
+  createCharacter: (body) => ipcRenderer.invoke('characters-create', body && typeof body === 'object' ? JSON.parse(JSON.stringify(body)) : null),
+  updateCharacter: (id, body) => ipcRenderer.invoke('characters-update', String(id), body && typeof body === 'object' ? JSON.parse(JSON.stringify(body)) : null),
+  resetCharacter: (id) => ipcRenderer.invoke('characters-reset', String(id)),
+  deleteCharacter: (id) => ipcRenderer.invoke('characters-delete', String(id)),
+  putCharacterMedia: (id, slot, name, mime, bytes) => ipcRenderer.invoke('characters-media-put', String(id), String(slot), String(name), String(mime ?? ''), bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)),
+  deleteCharacterMedia: (id, slot) => ipcRenderer.invoke('characters-media-delete', String(id), String(slot)),
+  onCharacters: (cb) => { const h = (_e, p) => cb(p); ipcRenderer.on('characters', h); return () => ipcRenderer.removeListener('characters', h); },
 });

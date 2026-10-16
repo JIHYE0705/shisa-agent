@@ -5,7 +5,7 @@ import { CHARACTER_LINES } from './character-lines.js';
 export const SETUP_SAY = Object.fromEntries(Object.entries(CHARACTER_LINES).map(([id, c]) => [id, c.setup ?? {}]));
 
 // 둘러보기 장면 글: tour 의 _ready/_noai 와 {slack_on} {slack_off} {cal} 자리를 채운다. o = { ready, cal, slack }
-function tourOf(t) {
+export function tourOf(t) {
   const fill = (s, o) => String(s ?? '')
     .replace('{slack_on}', o.slack ? (t.todos_slack ?? '') : '')
     .replace('{slack_off}', o.slack ? '' : (t.settings_noslack ?? ''))
