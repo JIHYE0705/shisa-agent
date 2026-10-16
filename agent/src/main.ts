@@ -36,6 +36,7 @@ import { CliSync } from "./cli-sync.ts";
 import { AgentsNotifier, AGENT_LIMITS, agentsForThread, sessionsForThread, threadWorktrees } from "./thread-agents.ts";
 import { worktreeRecords } from "./agent-worktrees.ts";
 import { Settings } from "./settings.ts";
+import { CharacterStore } from "./character-store.ts";
 import { disconnectConnector } from "./disconnect.ts";
 import { CHECK_IDS, Connections, lastRunOf, type CheckId } from "./connections.ts";
 import { statusOf } from "./status.ts";
@@ -142,6 +143,15 @@ function reloadConnectors(): { changed: boolean; restarting: boolean } {
   if (restarting) setTimeout(() => (process.platform === "win32" ? void shutdown() : process.kill(process.pid, "SIGTERM")), 500);
   return { changed, restarting };
 }
+// 사용자 캐릭터·기본 캐릭터 대사 고친 것(~/.cy-agent/characters/): Settings 가 config.json character 를 고르기 전에 읽어 둔다
+const characterStore = new CharacterStore(join(HOME_DIR, "characters"));
+try { characterStore.load(); } catch (e: any) { console.warn("[characters] 사용자 캐릭터를 읽지 못했어요:", e?.message ?? e); }
+characterStore.onChange = ({ removedCurrent }) => {
+  // 지금 쓰던 캐릭터를 지움 → 시사로(config.json 도). put 이 state 를 다시 보낸다
+  if (removedCurrent) settings.put({ character: "shisa" });
+  bus.charactersChanged();
+  bus.characterChanged(); // 이름·대사가 바뀐 지금 캐릭터도 바로
+};
 const settings = new Settings(cfg, { onChange: (keys) => {
   if (keys.some((k) => k === "brain" || k === "user" || k === "onboarded")) pushStatus();
   if (keys.includes("onboarded") && modelWorkAllowed(cfg)) setTimeout(() => onboardedNow(), 0); // 마법사를 막 마침 → 첫 정리
@@ -247,6 +257,7 @@ await bus.listen(cfg.port, {
     remove: (id) => agent.deletePermission(id),
   },
   settings: { get: () => settings.view(), put: (body) => settings.put(body) },
+  characters: characterStore,
   // AI 없이 고르는 질문(캐릭터 더블클릭 칩): 오늘 할 일·열린 할 일·캘린더만 보고 정해진 말로
   // 응원해 줘·춤춰 줘: 답과 함께 그 캐릭터의 응원·춤 영상(앱이 캐릭터마다 고른다)
   localAsk: (id) => {

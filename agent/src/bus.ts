@@ -133,7 +133,11 @@ export type BusHandlers = {
   guidelines?: GuidelinesApi;
   // 집중하기(focus.ts): GET /focus · GET /focus/stats?from&to · POST /focus/start|pause|resume|stop. 없으면 503
   focus?: FocusApi;
+  // 캐릭터 만들기·대사 고치기(character-store.ts): GET/POST /characters · GET/PUT/DELETE /characters/:id · DELETE /characters/:id/lines
+  // · PUT/DELETE /characters/:id/media/:slot(본문 = 파일 바이트, 이름은 x-file-name). 없으면 503
+  characters?: CharactersApi;
 };
+export type CharactersApi = { handle(method: string, parts: string[], body?: unknown, upload?: { name: string; bytes: Uint8Array }): { status: number; body: unknown } };
 export type SettingsApi ={ get(): unknown; put(body: unknown): { ok: true; [k: string]: unknown } | { ok: false; status: number; error: string } };
 export type ConnectionsApi = { ids: readonly string[]; list(): Promise<unknown>; recheck(id?: string): Promise<unknown> };
 export type ActionsApi = {
@@ -224,6 +228,11 @@ export class Bus {
   // 캐릭터를 바꿨다(설정 창) → 앱이 그림을 바로 바꾸게 state 를 다시 보낸다
   characterChanged() {
     this.send("state", this.state());
+  }
+  // 캐릭터를 만들거나 고치거나 지웠다 → 앱(오버레이·패널·설정 창)이 GET /characters 를 다시 읽는다
+  private charactersRev = 0;
+  charactersChanged() {
+    this.send("characters", { rev: ++this.charactersRev });
   }
   constructor() {
     this.activity.onChange = () => this.send("state", this.state());
@@ -495,6 +504,22 @@ export class Bus {
       const ping = setInterval(() => res.write(": ping\n\n"), 25e3);
       req.on("close", () => { clearInterval(ping); this.clients.delete(res); });
       return;
+    }
+    // 캐릭터(character-store.ts) — 쓰기(POST·PUT·DELETE)는 POST 와 같은 헤더 규칙
+    const ch = url.pathname.match(/^\/characters(?:\/([\w-]{1,64})(?:\/(lines|media)(?:\/([\w-]{1,32}))?)?)?$/);
+    if (ch) {
+      const method = req.method ?? "GET";
+      if (method !== "GET" && (req.headers["x-cy-agent"] !== "1" || (req.headers.origin && !req.headers.origin.startsWith("file://")))) return json(res, 403, { error: "forbidden" });
+      if (!h.characters) return json(res, 503, { error: "characters unavailable" });
+      const parts = [ch[1], ch[2], ch[3]].filter((x): x is string => !!x);
+      let body: unknown, upload: { name: string; bytes: Uint8Array } | undefined;
+      if (ch[2] === "media" && method === "PUT") {
+        let name = "";
+        try { name = decodeURIComponent(String(req.headers["x-file-name"] ?? "")); } catch { throw new BadRequest("bad x-file-name"); }
+        upload = { name, bytes: await readRaw(req) };
+      } else if (method === "POST" || method === "PUT") body = await readJson(req);
+      const r = h.characters.handle(method, parts, body, upload);
+      return json(res, r.status, r.body);
     }
     // 행동 지침 — 쓰기(POST·PUT·DELETE)는 POST 와 같은 헤더 규칙
     const gl = url.pathname.match(/^\/guidelines(?:\/([\w-]{1,64}))?$/);

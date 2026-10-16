@@ -30,7 +30,7 @@ export const LINES = {
 } as const;
 
 // 지금 캐릭터의 정해진 말(characters.ts lines) — 없는 키는 아래 시사 말
-const SHISA_EXTRA = {
+export const SHISA_EXTRA = {
   emptyHead: "(비어 있어요)",
   praiseDone: "최근에 {titles}을 끝내셨어요. 잘하셨어요.",
   calThen: "그다음은 〈{title}〉, {when}이에요.",

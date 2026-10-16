@@ -60,7 +60,7 @@ export type SettingsView = {
   brain: { provider: BrainProvider; model: string; keys: Record<BrainKey, boolean> };
   // 캐릭터(characters.ts): 그림·영상·말투·고정 문구 기본값이 바뀐다
   character: CharacterId;
-  characters: { id: CharacterId; name: string }[];
+  characters: { id: CharacterId; name: string; custom?: boolean }[];
   user: { name?: string };
   repoRoots: string[];
   // 설치 마법사를 마쳤나 · 이 맥의 Claude Code·Codex 작업 기록을 읽나(onboarding.ts)
