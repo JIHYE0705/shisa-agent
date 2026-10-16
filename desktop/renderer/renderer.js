@@ -9,7 +9,7 @@ import { createMarkdown } from '../src/markdown.js';
 import { initialChat, chatReducer, isBusy, summarizeReply, stopTargets, busyCaption } from '../src/chat.js';
 import { createAttachTray } from './attach-tray.js';
 import { hasFiles, filesFromTransfer, ATTACH_ERRORS } from '../src/attachments.js';
-import { normFocus, focusBubble } from '../src/focus.js';
+import { normFocus, focusBubble, doingBubble } from '../src/focus.js';
 import { who, setWho } from './who.js';
 import { characterAssets, okCharacter, localSay, clipFor, danceClipOf, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf, fitBox } from '../src/character.js';
 import { applyCharacters } from '../src/character-registry.js';
@@ -658,6 +658,7 @@ function drawFocus() {
     focusToggle.disabled = focusStopBtn.disabled = focusBusy;
   }
   if (was !== !!v) requestAnimationFrame(recheckHit);
+  drawDoing(); // 집중하기가 먼저 — 집중하는 동안 진행 중 말풍선은 숨는다
 }
 function setFocus(raw) {
   focus = raw ? normFocus(raw) : null;
@@ -684,6 +685,33 @@ focusToggle.addEventListener('click', (e) => { e.stopPropagation(); focusCmd(foc
 focusStopBtn.addEventListener('click', (e) => { e.stopPropagation(); focusCmd('stop'); });
 cy.onFocus?.((p) => setFocus(p));
 loadFocus();
+
+// ---- 진행 중 말풍선: 할 일에서 ▶ 로 켠 일을 집중하기 말풍선처럼 머리 위에 ----
+const doingEl = document.getElementById('doing');
+const doingText = document.getElementById('doing-text');
+let doingTodos = [];
+function drawDoing() {
+  const v = doingBubble(doingTodos, focus);
+  const was = !doingEl.hidden;
+  doingEl.hidden = !v;
+  if (v) {
+    doingText.textContent = v.text;
+    doingEl.title = v.more ? `진행 중: ${doingTodos.filter((t) => t.doing === true).map((t) => t.title).join(', ')}` : '할 일 보기';
+  }
+  if (was !== !!v) requestAnimationFrame(recheckHit);
+}
+let doingSeq = 0;
+async function loadDoing() {
+  const seq = ++doingSeq;
+  const r = await cy.doingGet?.().catch(() => null);
+  if (seq !== doingSeq || !r?.ok) return; // 못 읽었으면 그대로(데몬이 잠깐 끊긴 것)
+  doingTodos = Array.isArray(r.todos) ? r.todos : [];
+  drawDoing();
+}
+let doingTimer = null;
+cy.onTodosChanged?.(() => { clearTimeout(doingTimer); doingTimer = setTimeout(loadDoing, 300); }); // 할 일이 바뀜(SSE dashboard) — 몰려 와도 한 번
+doingEl.addEventListener('click', (e) => { e.stopPropagation(); cy.openPanel('todos'); });
+loadDoing();
 
 // ---- 채팅: 생각 중 표시 + 내 질문의 답은 말풍선 ----
 const caption = document.getElementById('caption');

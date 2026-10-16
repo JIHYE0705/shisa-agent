@@ -74,6 +74,21 @@ export function focusBubble(f, now = Date.now()) {
   };
 }
 
+// ---- 진행 중 말풍선: 할 일에서 ▶(진행중)을 직접 켠 것 → 캐릭터 머리 위 「진행 중: 제목」 ----
+// todos: GET /dashboard 의 todos(열린 것). 사용자가 켠 것(doing === true)만 — 비서가 세션에서 본 자동 진척은 넣지 않는다.
+// 집중하기 중이면 집중하기 말풍선이 먼저(이건 숨긴다). 여러 개면 「제목 외 n개」
+export function doingTodos(todos) {
+  return (Array.isArray(todos) ? todos : [])
+    .filter((t) => t && t.doing === true && t.status !== 'done' && typeof t.id === 'string' && typeof t.title === 'string' && t.title.trim())
+    .map((t) => ({ id: t.id, title: t.title.trim() }));
+}
+export function doingBubble(list, focus) {
+  if (focus?.active) return null;
+  const xs = doingTodos(list);
+  if (!xs.length) return null;
+  return { label: '진행 중', title: xs[0].title, more: xs.length - 1, text: `${xs[0].title}${xs.length > 1 ? ` 외 ${xs.length - 1}개` : ''}`, id: xs[0].id };
+}
+
 // ---- 잔디 단계(GitHub 기여 그래프처럼): 0 = 빈 칸, 1~4 = 오래 집중할수록 진하게 ----
 export const LEVEL_STEPS = [1, 30 * 60, 60 * 60, 2 * 3600]; // 이 초 이상이면 1·2·3·4단계
 export const LEVEL_LABELS = ['안 함', '30분 미만', '30분~1시간', '1~2시간', '2시간 이상'];

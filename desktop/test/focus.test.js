@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normFocus, elapsedSec, todayLive, fmtClock, fmtDuration, fmtShort, focusBubble, focusLevel, isFocusCmd,
+  normFocus, elapsedSec, todayLive, fmtClock, fmtDuration, fmtShort, focusBubble, focusLevel, isFocusCmd, doingBubble, doingTodos,
   weekRange, monthRange, shiftAnchor, monthGrid, rangeTitle, dayLabel, cellTitle, dayDetail, summarize, barRatio, parseDay, addDays, localDay,
 } from '../src/focus.js';
 import { initialActivity, activityReducer, viewOf } from '../src/character.js';
@@ -135,4 +135,27 @@ test('날짜를 누르면: 총 집중·최대 연속 집중 한 줄', () => {
   assert.equal(dayDetail({ date: '2026-10-14', seconds: 0, longest: 0 }), '10월 14일 (수) · 집중 기록 없음');
   assert.equal(dayDetail({ date: '2026-10-14', seconds: 600 }), '10월 14일 (수) · 총 10분 · 최대 연속 10분'); // 예전 데몬(longest 없음)
   assert.equal(dayDetail(null), '');
+});
+
+test('진행 중 말풍선: ▶ 로 켠 할 일만, 여러 개면 「외 n개」, 집중하기 중이면 숨고, 끄거나 끝내면 사라진다', () => {
+  const todos = [
+    { id: 'a', title: '보고서 쓰기', doing: true },
+    { id: 'b', title: '자동 진척만 있음', progress: '세션에서 봄' },
+    { id: 'c', title: '메일 답장', doing: true },
+    { id: 'd', title: '끔', doing: false },
+    { id: 'e', title: '끝냄', doing: true, status: 'done' },
+    { id: 'f', title: '   ', doing: true },
+    null,
+  ];
+  assert.deepEqual(doingTodos(todos), [{ id: 'a', title: '보고서 쓰기' }, { id: 'c', title: '메일 답장' }]);
+  assert.deepEqual(doingBubble(todos, null), { label: '진행 중', title: '보고서 쓰기', more: 1, text: '보고서 쓰기 외 1개', id: 'a' });
+  assert.equal(doingBubble([todos[0]], null).text, '보고서 쓰기');
+  // 상한 없음: 많아도 다 센다
+  const many = Array.from({ length: 30 }, (_, i) => ({ id: `t${i}`, title: `일 ${i}`, doing: true }));
+  assert.equal(doingBubble(many, null).text, '일 0 외 29개');
+  assert.equal(doingBubble(todos, { active: { startedAt: 'x', paused: false } }), null, '집중하기가 먼저');
+  assert.ok(doingBubble(todos, { active: null }));
+  assert.equal(doingBubble([{ id: 'a', title: '보고서 쓰기', doing: false }], null), null, '▶ 를 다시 눌러 끔');
+  assert.equal(doingBubble([], null), null, '끝내서 목록에서 빠짐');
+  assert.equal(doingBubble(undefined, null), null);
 });

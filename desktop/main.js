@@ -36,7 +36,7 @@ import { okCharacter, characterName, appName } from './src/character.js';
 import { applyCharacters } from './src/character-registry.js';
 import { normStatus, brainView, sameView } from './src/brain-state.js';
 import { isAskId } from './src/quick-ask.js';
-import { isFocusCmd, DAY_RE } from './src/focus.js';
+import { isFocusCmd, DAY_RE, doingTodos } from './src/focus.js';
 import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
 import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
@@ -797,7 +797,7 @@ function onSSE({ event, data }) {
     send('action', payload);
     sendPanel('action', payload);
   }
-  else if (event === 'dashboard') sendPanel('dashboard', {});
+  else if (event === 'dashboard') { sendPanel('dashboard', {}); send('todos-changed', {}); } // 캐릭터 창: 진행 중 말풍선 다시
   else if (event === 'focus') {
     lastFocus = payload;
     send('focus', payload);
@@ -1384,6 +1384,13 @@ function setupIPC() {
   });
   // 집중하기(포커스 타이머): 상태 · 시작/일시정지/다시 시작/그만 · 날마다 집중한 시간(from~to, 로컬 YYYY-MM-DD). AI 없이도 된다
   ipcMain.handle('focus-get', (e) => (fromOurs(e) ? request('GET', '/focus') : denied()));
+  // 진행 중 말풍선: 열린 할 일 중 ▶ 로 켠 것(제목·id 만 넘긴다)
+  ipcMain.handle('doing-get', async (e) => {
+    if (!fromOurs(e)) return denied();
+    const r = await request('GET', '/dashboard');
+    if (!r.ok) return { ok: false, status: r.status };
+    return { ok: true, todos: doingTodos(r.data?.todos).map((t) => ({ ...t, doing: true })) };
+  });
   ipcMain.handle('focus-cmd', (e, cmd) => (fromOurs(e) && isFocusCmd(cmd) ? post(`/focus/${cmd}`) : denied()));
   ipcMain.handle('focus-stats', (e, from, to) => (fromOurs(e) && DAY_RE.test(String(from)) && DAY_RE.test(String(to))
     ? request('GET', `/focus/stats?from=${from}&to=${to}`) : denied()));

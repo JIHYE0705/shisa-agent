@@ -50,4 +50,7 @@ contextBridge.exposeInMainWorld('cy', {
   onFocus: on('focus'),
   focusGet: () => ipcRenderer.invoke('focus-get'),
   focusCmd: (cmd) => ipcRenderer.invoke('focus-cmd', String(cmd)),
+  // 진행 중 말풍선: ▶ 로 켠 할 일(열린 것) · 할 일이 바뀜 알림
+  doingGet: () => ipcRenderer.invoke('doing-get'),
+  onTodosChanged: on('todos-changed'),
 });
