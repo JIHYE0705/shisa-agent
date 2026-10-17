@@ -153,7 +153,7 @@ test("말투 양념: 반말 캐릭터는 '~요'·시사 감정 표시를 절대 
       assert.equal(voice(text, `seed-${i}`, { kind: "error" }), text);
       assert.equal(voice(text, `seed-${i}`, { kind: "meeting" }), text);
     }
-    if (id === "usagi") assert.equal(changed, 0, "우사기는 완성된 외침·괄호에 양념을 다시 붙이지 않는다");
+    if (id === "usagi" || id === "kani") assert.equal(changed, 0, `${id}: 완성된 소리·괄호에 양념을 다시 붙이지 않는다`);
     else assert.ok(changed > 40 && changed < 200, `${id}: 양념 빈도 ${changed}/400`);
     assert.doesNotMatch(phraseVoice("todo_new_one", { title: "x" }, "s1"), /요/);
   }

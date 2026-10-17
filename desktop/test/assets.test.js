@@ -12,7 +12,7 @@ test('cy-asset: 허용 목록만, 경로 조작·다른 호스트·쿼리 거절
     'cy-asset://app/reactions/nope.jpg', 'cy-asset://evil/character.png', 'cy-asset://app/character.png?x=1',
     'file:///etc/passwd', 'https://app/character.png', 'cy-asset://app/config.json', 'not a url',
   ]) assert.equal(resolveAsset(bad), null, bad);
-  assert.equal(ALLOWED.size, 18 + 39); // 시사 18(두 번째 춤 dance2 포함) + 기존 세 캐릭터 × 10 + 우사기 9(감은 눈 제외)
+  assert.equal(ALLOWED.size, 18 + 39 + 10); // 시사 18(두 번째 춤 dance2 포함) + 기존 세 캐릭터 × 10 + 우사기 9(감은 눈 제외) + 카니 10(집중 없음, 점심 있음)
 });
 
 test('cy-asset: 캐릭터 상태 그림·영상(character/) — 정확한 이름만, MIME 맞게', () => {

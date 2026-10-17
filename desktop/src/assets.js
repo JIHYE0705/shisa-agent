@@ -17,15 +17,17 @@ export const CHARACTER_FILES = [
   ['character/dance2.webm', 'video/webm'],
   ['character/dance2.png', 'image/png'],
 ];
-// 고를 수 있는 캐릭터(characters/<id>/): 정지 그림 · 집중(study)·일정 알림(plan) 영상과 첫 장면
-export const PICKABLE = ['hachi', 'rakko', 'momonga', 'usagi'];
+// 고를 수 있는 캐릭터(characters/<id>/): 정지 그림 · 집중(study)·일정 알림(plan)·춤·응원 영상과 첫 장면(+ 카니는 점심시간 lunch, 집중 영상 없음)
+export const PICKABLE = ['hachi', 'rakko', 'momonga', 'usagi', 'kani'];
+const NO_STUDY = ['kani'];
+const HAS_LUNCH = ['kani'];
 export const PICKABLE_FILES = PICKABLE.flatMap((id) => [
   [`characters/${id}/eyes_open.png`, 'image/png'],
   ...(id === 'usagi' ? [] : [[`characters/${id}/eyes_closed.png`, 'image/png']]),
-  [`characters/${id}/study.webm`, 'video/webm'],
+  ...(NO_STUDY.includes(id) ? [] : [[`characters/${id}/study.webm`, 'video/webm'], [`characters/${id}/study.png`, 'image/png']]),
   [`characters/${id}/plan.webm`, 'video/webm'],
-  [`characters/${id}/study.png`, 'image/png'],
   [`characters/${id}/plan.png`, 'image/png'],
+  ...(HAS_LUNCH.includes(id) ? [[`characters/${id}/lunch.webm`, 'video/webm'], [`characters/${id}/lunch.png`, 'image/png']] : []),
   [`characters/${id}/dance.webm`, 'video/webm'],
   [`characters/${id}/dance.png`, 'image/png'],
   [`characters/${id}/cheer.webm`, 'video/webm'],

@@ -106,5 +106,31 @@ export const CHARACTER_CLIPS = {
       }
     ],
     "lunch": "plan"
+  },
+  "kani": {
+    "plan": [
+      {
+        "file": "plan",
+        "scene": true
+      }
+    ],
+    "dance": [
+      {
+        "file": "dance",
+        "scene": true
+      }
+    ],
+    "cheer": [
+      {
+        "file": "cheer",
+        "scene": true
+      }
+    ],
+    "lunch": [
+      {
+        "file": "lunch",
+        "scene": true
+      }
+    ]
   }
 };

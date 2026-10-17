@@ -25,6 +25,7 @@ export const CHARACTERS = {
   rakko: { name: '랏코', blink: true },
   momonga: { name: '모몽가', blink: true },
   usagi: { name: '우사기', blink: false },
+  kani: { name: '카니', blink: true },
 };
 export const DANCE_CLIPS = ['plan', 'dance', 'cheer', 'lunch'];
 export const CLIP_KINDS = ['plan', 'dance', 'cheer', 'study', 'lunch'];
@@ -54,7 +55,7 @@ export function pickVariant(n, last, rand = Math.random) {
   const i = Math.min(n - 2, Math.floor(rand() * (n - 1)));
   return i >= last ? i + 1 : i;
 }
-export const CHARACTER_IDS = Object.freeze(Object.keys(CHARACTERS)); // 기본 다섯
+export const CHARACTER_IDS = Object.freeze(Object.keys(CHARACTERS)); // 기본 여섯
 export const characterIds = () => Object.keys(CHARACTERS); // 지금 고를 수 있는 것(사용자 캐릭터 포함)
 export const DEFAULT_CHARACTER = 'shisa';
 // 사용자 캐릭터 id 모양(데몬 character-store.ts USER_ID 와 같다). 있는지는 데몬이 다시 본다

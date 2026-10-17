@@ -1,8 +1,9 @@
-// 고를 수 있는 캐릭터(하치와레·랏코·모몽가)의 그림·영상을 원본에서 만든다. 결과는 레포 assets/characters/<id>/ 에 둔다.
+// 고를 수 있는 캐릭터(하치와레·랏코·모몽가·카니)의 그림·영상을 원본에서 만든다. 결과는 레포 assets/characters/<id>/ 에 둔다.
 //   eyes_open.png · eyes_closed.png  정지 그림(512 정사각형, 투명). 눈 감은 그림이 없으면 눈 뜬 그림만(깜빡이지 않는다)
 //   study.webm · study.png           집중·공부 중 영상과 첫 장면
 //   plan.webm  · plan.png            일정 알림(n분 전) 영상과 첫 장면
 //   dance.webm · cheer.webm          「춤춰 줘」·「응원해 줘」 영상(있는 캐릭터만 — 없으면 앱이 다른 영상으로 대신한다)
+//   lunch.webm · lunch.png           점심시간 영상(있는 캐릭터만 — 없으면 일정 알림 영상)
 //   video.json                       { study: {...}, plan: {...} } — scene: true 면 배경이 있는 장면(네모 카드로 보인다)
 // 시사(assets/character/)는 예전 그림·영상을 그대로 두고 더한 영상만 만든다(EXTRA — video.json 에 그 칸만 더한다)
 // 배경 처리(key): green = 초록 배경 크로마키(prepare-videos.mjs 와 같은 그래프) · flood = 가장자리에서 이어진 단색 배경을 지움
@@ -32,6 +33,14 @@ export const SOURCES = {
   momonga: {
     stills: { open: 'momonga_open_eyes.png', closed: 'momonga_closed_eyes.png' },
     clips: { plan: { file: 'momonga_plan.mp4', key: 'scene' }, study: { file: 'momonga_study.gif', key: 'scene' }, dance: { file: 'momonga_dance.gif', key: 'scene' } },
+  },
+  // 카니: 정지 그림은 투명 png(눈 뜬·감은 그림 크기가 달라 위치를 맞춘다). 영상은 전부 배경이 있는 장면, 집중 영상은 없다(빈 칸 규칙)
+  kani: {
+    stills: { open: 'kani-eyes-open.png', closed: 'kani-eyes-closed.png' },
+    clips: {
+      dance: { file: 'kani-cheer.gif', key: 'scene' }, cheer: { file: 'kani-cheer2.gif', key: 'scene' },
+      lunch: { file: 'kani-eat.gif', key: 'scene' }, plan: { file: 'kani-plan.gif', key: 'scene', cx: 0.42 },
+    },
   },
 };
 

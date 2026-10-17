@@ -141,7 +141,7 @@ export function missingRequired(chosen) {
   return REQUIRED_SLOTS.filter((s) => !chosen?.[s] || (Array.isArray(chosen[s]) && !chosen[s].length)).map((s) => SLOT_LABEL[s]);
 }
 
-// 「말투 가져오기」 고를 것: 기본 다섯 + 만든 캐릭터
+// 「말투 가져오기」 고를 것: 기본 여섯 + 만든 캐릭터
 export function sourceOptions(list) {
   return (Array.isArray(list) ? list : []).filter((c) => c && typeof c.id === 'string').map((c) => ({ id: c.id, name: c.name ?? c.id, custom: !!c.custom }));
 }

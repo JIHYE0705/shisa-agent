@@ -45,5 +45,11 @@
     "cheer": [{ "file": "cheer" }],
     "study": [{ "file": "study" }],
     "lunch": "plan"
+  },
+  "kani": {
+    "plan": [{ "file": "plan", "scene": true }],
+    "dance": [{ "file": "dance", "scene": true }],
+    "cheer": [{ "file": "cheer", "scene": true }],
+    "lunch": [{ "file": "lunch", "scene": true }]
   }
 }

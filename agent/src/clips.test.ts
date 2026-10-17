@@ -13,7 +13,7 @@ afterEach(() => { installCharacters({}); setCharacter("shisa"); });
 
 const SUIT = "스잇~ 스잇~ 스이 시~사 ~ 🎵";
 
-test("clips.json: 기본 캐릭터 다섯 다 있고, 시사 춤은 두 개(새 영상에 전용 한마디)", () => {
+test("clips.json: 기본 캐릭터 여섯 다 있고, 시사 춤은 두 개(새 영상에 전용 한마디)", () => {
   for (const id of CHARACTER_IDS) assert.ok(builtinClips(id), id);
   assert.equal(builtinClips("_help"), undefined);
   const dance = clipList(CLIPS_JSON.shisa, "dance");
@@ -27,8 +27,9 @@ test("clips.json: 기본 캐릭터 다섯 다 있고, 시사 춤은 두 개(새 
     assert.deepEqual(l.map((x) => x.file), ["dance", "dance2"], k);
     assert.ok(l.every((x) => !x.say), k);
   }
-  // 점심시간 기본값 = 그 캐릭터의 일정 알림 영상
-  for (const id of CHARACTER_IDS) assert.deepEqual(clipList(CLIPS_JSON[id], "lunch").map((x) => x.file), clipList(CLIPS_JSON[id], "plan").map((x) => x.file), id);
+  // 점심시간 기본값 = 그 캐릭터의 일정 알림 영상(점심 영상을 따로 둔 카니 빼고)
+  assert.deepEqual(clipList(CLIPS_JSON.kani, "lunch").map((x) => x.file), ["lunch"]);
+  for (const id of CHARACTER_IDS.filter((x) => x !== "kani")) assert.deepEqual(clipList(CLIPS_JSON[id], "lunch").map((x) => x.file), clipList(CLIPS_JSON[id], "plan").map((x) => x.file), id);
   assert.deepEqual(clipList(CLIPS_JSON.hachi, "dance").map((x) => x.file), ["plan"]);
   assert.deepEqual(clipList(CLIPS_JSON.rakko, "cheer").map((x) => x.file), ["plan"]);
 });

@@ -17,7 +17,7 @@
 |---|---|---|
 | `bubble` | `Bubble`(아래) | 말풍선. 같은 `id`로 다시 오면 통째로 바꾼다 |
 | `clear` | `{ id }` | 말풍선 걷기 |
-| `state` | `{ mood: idle\|thinking\|working\|alert, activity: idle\|studying\|dancing, runs: [{ id, kind, title, startedAt }], danceId?, danceClip?, danceVariant?, character }` | 캐릭터 상태. `danceClip`은 춤 자리에 틀 칸(`plan` 일정 알림·`dance` 춤·`cheer` 응원·`lunch` 점심시간), `danceVariant`는 그 칸 영상 목록에서 데몬이 고른 번호(0부터)다. `character`는 고른 캐릭터 id(`shisa`·`hachi`·`rakko`·`momonga`·`usagi` 또는 사용자가 만든 `u-…`)이고, 바뀌면 바로 다시 보낸다 |
+| `state` | `{ mood: idle\|thinking\|working\|alert, activity: idle\|studying\|dancing, runs: [{ id, kind, title, startedAt }], danceId?, danceClip?, danceVariant?, character }` | 캐릭터 상태. `danceClip`은 춤 자리에 틀 칸(`plan` 일정 알림·`dance` 춤·`cheer` 응원·`lunch` 점심시간), `danceVariant`는 그 칸 영상 목록에서 데몬이 고른 번호(0부터)다. `character`는 고른 캐릭터 id(`shisa`·`hachi`·`rakko`·`momonga`·`usagi`·`kani` 또는 사용자가 만든 `u-…`)이고, 바뀌면 바로 다시 보낸다 |
 | `status` | `{ status: Status }` | 연결 상태가 바뀜(`GET /status`와 같은 모양) |
 | `dashboard` | `{}` | 대시보드를 다시 가져오라는 신호 |
 | `open_panel` | `{ section: overview\|projects\|todos\|today\|chat\|null }` | 패널을 그 탭으로 열기 |
@@ -105,7 +105,7 @@ type Bubble = {
   "onboarded": true,                                      // 설치 마법사를 마침(마법사가 보낸다)
   "calendarAlert": { "minutesBefore": [15, 5] },          // 일정 몇 분 전(양의 정수, 개수·크기 상한 없음). [] = 알림 끔, 기본 [10]
   "lunchAlert": false,                                    // 점심시간 알림 켜고 끄기(기본 켬)
-  "character": "hachi"                                    // shisa·hachi·rakko·momonga·usagi. 모르는 값은 400
+  "character": "hachi"                                    // shisa·hachi·rakko·momonga·usagi·kani. 모르는 값은 400
 }
 ```
 
@@ -127,7 +127,7 @@ type Bubble = {
 
 | | |
 |---|---|
-| `GET /characters` | `{ current, characters, slots, types, help, schema }`. `characters`는 기본 다섯(`builtin`, `defaults` 기본 대사, `override` 고친 칸 또는 `null`, `lines` 둘을 합친 것)과 사용자 캐릭터(`custom`, `from`, `media { 칸: 첫 저장 이름 }`, `frames { 칸: 테두리 }`, `clips { 칸: [{ file, say?, frame }] }`, `lines`)다. 응원·춤·집중·일정 알림·점심시간은 파일을 여러 개 넣는 칸이라 `clips`에 전부 있고, `media`·`frames`에는 칸마다 첫 파일만 있다. `schema`는 고칠 수 있는 칸 목록 `[{ path, kind: text\|list, vars, oneLine?, label? }]`, `help`는 `lines.json`의 `_help`다 |
+| `GET /characters` | `{ current, characters, slots, types, help, schema }`. `characters`는 기본 여섯(`builtin`, `defaults` 기본 대사, `override` 고친 칸 또는 `null`, `lines` 둘을 합친 것)과 사용자 캐릭터(`custom`, `from`, `media { 칸: 첫 저장 이름 }`, `frames { 칸: 테두리 }`, `clips { 칸: [{ file, say?, frame }] }`, `lines`)다. 응원·춤·집중·일정 알림·점심시간은 파일을 여러 개 넣는 칸이라 `clips`에 전부 있고, `media`·`frames`에는 칸마다 첫 파일만 있다. `schema`는 고칠 수 있는 칸 목록 `[{ path, kind: text\|list, vars, oneLine?, label? }]`, `help`는 `lines.json`의 `_help`다 |
 | `POST /characters { name, from?, lines?, frames? }` | 새 캐릭터. `from`(기본 `shisa`)의 대사를 전부 복사하고 이름이 든 줄은 새 이름으로 바꾼다. `lines`를 주면 그 위에 덮는다(시사의 정해진 답처럼 앱에만 있는 칸). 201 `{ character }` |
 | `GET /characters/:id` · `PUT /characters/:id` | 사용자 캐릭터는 `{ name?, lines?, frames?, files? }`(`lines`는 통째로, `frames`는 준 칸만이고 여러 개 넣는 칸은 그 칸 파일 전부, `files`는 `{ 저장 이름: { say?, frame? } }`로 파일마다 한마디·테두리이며 `null`이면 기본으로 돌린다. 일정 알림 파일의 `say`는 400). 기본 캐릭터는 `{ lines }`만 받고 기본값과 다른 칸만 `overrides/<id>.json`에 남긴다 |
 | `DELETE /characters/:id/lines` | 기본 캐릭터 대사를 기본값으로(덮어쓰기 파일을 지운다) |

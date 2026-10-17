@@ -319,7 +319,7 @@ test("HTTP: GET/POST/PUT/DELETE /characters, 그림 올리기(바이트), 쓰기
     const ev = await fetch(`${base}/events`, { signal: ac.signal });
     const reader = ev.body!.getReader();
     const g = await (await fetch(`${base}/characters`)).json();
-    assert.deepEqual(g.characters.map((c: any) => c.id), ["shisa", "hachi", "rakko", "momonga", "usagi"]);
+    assert.deepEqual(g.characters.map((c: any) => c.id), ["shisa", "hachi", "rakko", "momonga", "usagi", "kani"]);
     assert.equal(g.current, "shisa");
     assert.ok(g.schema.length > 100 && g.help.prompt && g.slots.length === 7 && g.types.includes("gif"));
     assert.equal((await fetch(`${base}/characters`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "x" }) })).status, 403);

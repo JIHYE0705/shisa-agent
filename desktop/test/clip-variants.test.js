@@ -34,7 +34,8 @@ test('기본 캐릭터 영상 목록: 주소는 다 허용 목록 안·파일이
       assert.ok(resolveAsset(v.src) && resolveAsset(v.poster), `${id}/${k} ${v.src}`);
       assert.ok(fs.existsSync(fileOf(v.src)) && fs.existsSync(fileOf(v.poster)), `${id}/${k} 파일`);
     }
-    assert.deepEqual(a.variants.lunch.map((x) => x.src), a.variants.plan.map((x) => x.src), id);
+    if (id === 'kani') assert.match(a.variants.lunch[0].src, /kani\/lunch\.webm$/, '카니는 밥 먹는 영상');
+    else assert.deepEqual(a.variants.lunch.map((x) => x.src), a.variants.plan.map((x) => x.src), id);
     assert.ok(a.variants.dance.length >= 1 && a.variants.cheer.length >= 1 && a.variants.plan.length >= 1, id);
   }
 });
