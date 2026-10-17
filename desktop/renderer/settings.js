@@ -659,7 +659,7 @@ function renderCharEditor() {
   // 다른 캐릭터 대사로 채우기(저장 전까지는 화면만)
   const fill = el('div', 'ce-row');
   const fillSel = sourceSelect(entry.from && charEntry(entry.from) ? entry.from : 'shisa');
-  const fillBtn = el('button', 'small ghost', '이 캐릭터 대사로 채우기');
+  const fillBtn = el('button', 'ghost', '이 캐릭터 대사로 채우기');
   fillBtn.type = 'button';
   fill.append(el('span', null, '대사 가져오기'), fillSel, fillBtn);
   box.append(el('h3', null, '대사'), el('p', 'hint', custom ? '비운 칸은 시사 말로 나와요. 저장하면 바로 바뀌어요.' : '고친 칸만 따로 저장해요(앱 파일은 그대로). 「기본값으로」를 누르면 처음으로 돌아가요.'), fill);
@@ -699,7 +699,7 @@ function renderCharEditor() {
   foot.append(status);
   if (!custom) {
     const n = entry.override ? Object.keys(flattenLines(entry.override)).length : 0;
-    const reset = el('button', 'small ghost', n ? `기본값으로(고친 ${n}칸)` : '기본값으로');
+    const reset = el('button', 'ghost ce-risky', n ? `기본값으로(고친 ${n}칸)` : '기본값으로');
     reset.type = 'button';
     reset.disabled = !n;
     reset.addEventListener('click', async () => {
@@ -712,7 +712,7 @@ function renderCharEditor() {
     });
     foot.append(reset);
   } else {
-    const del = el('button', 'small ghost danger', '이 캐릭터 지우기');
+    const del = el('button', 'danger-ghost ce-risky', '이 캐릭터 지우기');
     del.type = 'button';
     del.addEventListener('click', async () => {
       if (!window.confirm(`${name}을(를) 지울까요? 올린 그림도 같이 지워져요. 지금 쓰는 캐릭터면 시사로 돌아가요.`)) return;
