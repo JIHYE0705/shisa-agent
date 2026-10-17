@@ -89,7 +89,7 @@ test('목록 넣기: 사용자 캐릭터를 고를 수 있고 이름·그림·�
   assert.ok(applyCharacters(data()));
   assert.equal(okCharacter(U), U);
   assert.ok(characterIds().includes(U));
-  assert.deepEqual([...CHARACTER_IDS], ['shisa', 'hachi', 'rakko', 'momonga', 'usagi', 'kani'], '기본 여섯 목록은 그대로');
+  assert.deepEqual([...CHARACTER_IDS], ['shisa', 'hachi', 'rakko', 'momonga', 'usagi', 'kani', 'chiikawa', 'kuri'], '기본 여덟 목록은 그대로');
   assert.equal(characterName(U), '까망');
   assert.equal(appName(U), '까망 비서');
   assert.equal(characterAssets(U).clips.cheer.kind, 'img');
@@ -317,8 +317,8 @@ test('여러 개 넣는 칸: 칸 목록·설명, 파일마다 한마디·테두�
   assert.equal(rows.find((r) => r.slot === 'eyes_open').file, 'eyes_open-0a1b2c3d.png');
   // 예전 모양(clips 없음)은 칸의 파일 하나
   assert.deepEqual(slotRows({ cheer: 'cheer-0a1b2c3d.gif' }).find((r) => r.slot === 'cheer').files, [{ file: 'cheer-0a1b2c3d.gif', say: '' }]);
-  assert.ok(!SAY_SLOTS.includes('plan') && SAY_SLOTS.includes('dance'));
-  assert.equal(rows.find((r) => r.slot === 'plan').say, false, '일정 알림은 한마디 칸이 없다');
+  assert.ok(SAY_SLOTS.includes('plan') && SAY_SLOTS.includes('dance'));
+  assert.equal(rows.find((r) => r.slot === 'plan').say, true, '일정 알림 한마디는 일정 말풍선 대신(자리표시 있음)');
   assert.match(MULTI_HINT, /여러 개 넣으면 그때마다 랜덤으로 하나가 나와요/);
   assert.deepEqual(missingRequired({ eyes_open: 1, eyes_closed: 1, cheer: [], dance: [1] }), ['응원'], '빈 목록은 빠진 것');
   // 본문
@@ -352,7 +352,7 @@ test('여러 개 넣는 칸: 칸 목록·설명, 파일마다 한마디·테두�
   // 설정 창 화면: 여러 개 고르기·한마디 칸·설명
   const r = readFileSync(new URL('../renderer/settings.js', import.meta.url), 'utf8');
   assert.match(r, /input\.multiple = multi/);
-  assert.match(r, /SAY_PLACEHOLDER/);
+  assert.match(r, /sayPlaceholder\(r\.slot\)/);
   assert.match(r, /MULTI_HINT/);
   assert.match(r, /cy\.deleteCharacterMedia\(entry\.id, slot, file\)/);
   // 목록을 받으면 clips 도 캐릭터에

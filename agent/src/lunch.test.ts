@@ -56,11 +56,11 @@ test("점심 설정: 기본 켬, 설정 창에서 끄면 config.json 에도, 이
   assert.equal(s.view().lunchAlert, false);
 });
 
-test("점심 영상: 기본은 그 캐릭터의 일정 알림 영상(여러 개면 그 목록), 대사는 점심 인사", () => {
+test("점심 영상: 먹는 영상이 있으면 그것, 없으면(모몽가) 그 캐릭터의 일정 알림 영상, 대사는 점심 인사", () => {
   const bus = new Bus();
-  for (const id of ["shisa", "hachi", "rakko", "momonga", "usagi", "kani"]) {
+  for (const id of ["shisa", "hachi", "rakko", "momonga", "usagi", "kani", "chiikawa", "kuri"]) {
     setCharacter(id);
-    if (id === "kani") assert.deepEqual(characterClips("lunch").map((x) => x.file), ["lunch"], "카니는 밥 먹는 영상");
+    if (id !== "momonga") assert.deepEqual(characterClips("lunch").map((x) => x.file), ["lunch"], `${id}: 먹는 영상`);
     else assert.deepEqual(characterClips("lunch").map((x) => x.file), characterClips("plan").map((x) => x.file), id);
     const d = bus.activity.play(1000, "lunch");
     assert.equal(bus.state().danceClip, "lunch");

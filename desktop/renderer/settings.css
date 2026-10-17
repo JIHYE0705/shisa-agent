@@ -170,7 +170,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
 .dc-cmd code { background: var(--line); padding: 2px 6px; border-radius: 5px; font-size: 12px; user-select: text; overflow-wrap: anywhere; }
 .dc-acts { display: flex; gap: 6px; }
 
-/* 캐릭터 고르기: 그림 카드(기본 여섯 + 만든 캐릭터) */
+/* 캐릭터 고르기: 그림 카드(기본 여덟 + 만든 캐릭터) */
 .char-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
 .char-opt { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); cursor: pointer; font-size: 12px; user-select: none; }
 .char-opt img { width: 64px; height: 64px; object-fit: contain; }

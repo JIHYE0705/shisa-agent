@@ -16,8 +16,8 @@ const OTHERS = CHARACTER_IDS.filter((id) => id !== 'shisa');
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets');
 const fileOf = (url) => path.join(ASSETS, resolveAsset(url).rel);
 
-test('캐릭터: 여섯, 모르는 id 는 시사', () => {
-  assert.deepEqual(CHARACTER_IDS, ['shisa', 'hachi', 'rakko', 'momonga', 'usagi', 'kani']);
+test('캐릭터: 여덟, 모르는 id 는 시사', () => {
+  assert.deepEqual(CHARACTER_IDS, ['shisa', 'hachi', 'rakko', 'momonga', 'usagi', 'kani', 'chiikawa', 'kuri']);
   for (const bad of [undefined, null, '', 'nope', '__proto__', 'constructor', 'Hachi', 3]) assert.equal(okCharacter(bad), 'shisa', String(bad));
   assert.equal(characterAssets('nope').id, 'shisa');
 });
@@ -47,7 +47,9 @@ test('캐릭터 영상: 알파 캐릭터는 VP9 알파, 장면은 정사각형 5
     const meta = JSON.parse(fs.readFileSync(path.join(ASSETS, 'characters', id, 'video.json'), 'utf8'));
     for (const name of Object.keys(meta)) {
       assert.equal(meta[name].size, 512, `${id}/${name}`);
-      assert.equal(meta[name].scene, clipList(CHARACTER_CLIPS[id], name)[0].scene === true, `${id}/${name} scene`);
+      const item = Object.values(CHARACTER_CLIPS[id]).flat().find((x) => x?.file === name);
+      assert.ok(item, `${id}/${name}: clips.json 에 없는 영상`);
+      assert.equal(meta[name].scene, item.scene === true, `${id}/${name} scene`);
       assert.ok(meta[name].frames > 0);
     }
   }
@@ -64,7 +66,8 @@ test('우사기: 집중·알림·춤·응원은 각각 로컬 포스터와 투�
   const a = characterAssets('usagi');
   const meta = JSON.parse(fs.readFileSync(path.join(ASSETS, 'characters/usagi/video.json'), 'utf8'));
   const states = { study: a.videos.studying, plan: a.clips.plan, dance: a.clips.dance, cheer: a.clips.cheer };
-  assert.equal(a.clips.lunch.src, a.clips.plan.src, '점심시간 기본값은 일정 알림 영상');
+  assert.match(a.clips.lunch.src, /usagi\/lunch\.webm$/, '점심은 먹는 영상(투명)');
+  assert.equal(a.clips.lunch.scene, false);
   assert.equal(new Set(Object.values(states).map((v) => v.src)).size, 4);
   for (const [name, v] of Object.entries(states)) {
     assert.equal(v.scene, false);

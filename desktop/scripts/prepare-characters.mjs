@@ -40,14 +40,35 @@ export const SOURCES = {
     clips: {
       dance: { file: 'kani-cheer.gif', key: 'scene' }, cheer: { file: 'kani-cheer2.gif', key: 'scene' },
       lunch: { file: 'kani-eat.gif', key: 'scene' }, plan: { file: 'kani-plan.gif', key: 'scene', cx: 0.42 },
+      study: { file: 'kani-study.mp4', key: 'scene', zoom: 0.8, cx: 0.42, cy: 0.44 }, // 회색 배경 그대로(배경색이 몸 색과 가까워 지우면 몸까지 빠진다)
     },
+  },
+  // 치이카와: 춤 두 개(dance·dance2, 짧은 것은 반복), 일정 알림 두 개(plan·plan2 우는 장면)
+  chiikawa: {
+    stills: { open: 'chii-eyes-open.png', closed: 'chii-eyes-closed.png' },
+    clips: {
+      dance: { file: 'chii-dance.gif', key: 'scene' }, dance2: { file: 'chii-dance-2.gif', key: 'scene', repeat: 5 },
+      cheer: { file: 'chii-cheer.gif', key: 'scene', fps: 25 }, plan: { file: 'chii-plan.gif', key: 'scene' }, plan2: { file: 'chii-cry.gif', key: 'scene' },
+      study: { file: 'chii-study.gif', key: 'flood', repeat: 4 }, lunch: { file: 'chiikawa-eat.gif', key: 'scene' },
+    },
+  },
+  // 쿠리만쥬: 춤·일정 알림 영상은 없다(clips.json 에서 응원 영상을 쓴다)
+  kuri: {
+    stills: { open: 'kuri-eyes-open.png', closed: 'kuri-eyes-closed.png' },
+    clips: { cheer: { file: 'kuri-cheer.gif', key: 'scene' }, study: { file: 'kuri-focus.gif', key: 'scene' }, lunch: { file: 'kuri-eat.gif', key: 'scene' } },
   },
 };
 
 // 기본 캐릭터에 더한 영상(같은 칸에 여러 개 → 앱이 그중 하나를 랜덤으로. 어느 칸에 넣는지는 assets/characters/clips.json)
 export const EXTRA = {
-  shisa: { dir: path.join('..', 'character'), clips: { dance2: { file: 'shisa-dance2.gif', key: 'scene', cx: 0.44 } } }, // 「お酒」 메뉴판 춤
+  shisa: { dir: path.join('..', 'character'), clips: { dance2: { file: 'shisa-dance2.gif', key: 'scene', cx: 0.44 }, lunch: { file: 'shisa-eat.gif', key: 'scene' } } }, // 「お酒」 메뉴판 춤 · 점심
+  hachi: { dir: 'hachi', clips: { lunch: { file: 'hachi-eat.gif', key: 'scene' } } },
+  rakko: { dir: 'rakko', clips: { lunch: { file: 'rakko-eat.gif', key: 'scene' } } },
+  usagi: { dir: 'usagi', clips: { lunch: { file: 'usagi-eat.gif', key: 'flood', repeat: 2 } } }, // 흰 배경 → 투명(우사기는 투명 캐릭터)
 };
+// 몇 개만 다시 만들기: --clips lunch,dance2 (칸 이름) · --no-stills(정지 그림은 그대로)
+const ONLY_CLIPS = (() => { const i = process.argv.indexOf('--clips'); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1].split(',') : null; })();
+const wantClip = (name) => !ONLY_CLIPS || ONLY_CLIPS.includes(name);
 
 export const SIZE = 512;
 const MARGIN = 0.04; // 정사각형 각 변 여백(캐릭터 긴 변 대비)
@@ -181,7 +202,7 @@ async function clip(srcDir, outDir, name, spec) {
   const info = await probe(file);
   const isGif = info.codec === 'gif';
   // gif 는 프레임 간격이 들쭉날쭉할 수 있어 평균 fps 로 고르게 뽑는다
-  const fps = Math.round(info.fps * 1000) / 1000;
+  const fps = spec.fps ?? Math.round(info.fps * 1000) / 1000; // spec.fps: probe 가 틀리게 읽는 gif(프레임 간격이 1/100초로 잡힘)
   let frames;
   if (spec.key === 'green') {
     const key = await keyColor(file, info);
@@ -195,14 +216,17 @@ async function clip(srcDir, outDir, name, spec) {
     const c = frames[0], bg = [c[0], c[1], c[2]];
     for (const f of frames) floodKey(f, w, h, bg);
   }
+  // 아주 짧은 움짤은 몇 번 이어 붙여 한 바퀴를 늘린다(repeat, 배경을 지운 뒤에)
+  if (spec.repeat > 1) frames = Array.from({ length: spec.repeat }, () => frames).flat();
   if (alpha) {
     let box = null;
     for (const f of frames) box = union(box, alphaBox(f, w, h));
     sq = squareOf(box);
   } else {
     // 장면: 짧은 변 기준 가운데 정사각형(spec.cx = 가로 가운데 비율로 옮길 수 있다)
-    const side = Math.min(w, h), cx = spec.cx ?? 0.5;
-    sq = [Math.round(Math.max(0, Math.min(w - side, w * cx - side / 2))), Math.round((h - side) / 2), side];
+    // spec.zoom: 짧은 변의 몇 배만큼만 자른다(캐릭터가 작게 찍힌 영상) · spec.cy: 세로 가운데 비율
+    const side = Math.round(Math.min(w, h) * (spec.zoom ?? 1)), cx = spec.cx ?? 0.5, cy = spec.cy ?? 0.5;
+    sq = [Math.round(Math.max(0, Math.min(w - side, w * cx - side / 2))), Math.round(Math.max(0, Math.min(h - side, h * cy - side / 2))), side];
   }
   const out = path.join(outDir, `${name}.webm`);
   await encodeFrames(frames, w, h, fps, sq, out, alpha);
@@ -261,9 +285,10 @@ async function main() {
     const dir = path.join(outRoot, id);
     fs.mkdirSync(dir, { recursive: true });
     console.log(`- ${id}`);
-    await stills(src, dir, spec.stills);
-    const meta = {};
-    for (const [name, c] of Object.entries(spec.clips)) meta[name] = await clip(src, dir, name, c);
+    if (!process.argv.includes('--no-stills')) await stills(src, dir, spec.stills);
+    const metaFile = path.join(dir, 'video.json');
+    const meta = ONLY_CLIPS && fs.existsSync(metaFile) ? JSON.parse(fs.readFileSync(metaFile, 'utf8')) : {};
+    for (const [name, c] of Object.entries(spec.clips)) if (wantClip(name)) meta[name] = await clip(src, dir, name, c);
     fs.writeFileSync(path.join(dir, 'video.json'), JSON.stringify(meta, null, 2) + '\n');
   }
   for (const [id, spec] of Object.entries(EXTRA)) {
@@ -272,7 +297,7 @@ async function main() {
     console.log(`- ${id} (더한 영상)`);
     const metaFile = path.join(dir, 'video.json');
     const meta = fs.existsSync(metaFile) ? JSON.parse(fs.readFileSync(metaFile, 'utf8')) : {};
-    for (const [name, c] of Object.entries(spec.clips)) meta[name] = await clip(src, dir, name, c);
+    for (const [name, c] of Object.entries(spec.clips)) if (wantClip(name)) meta[name] = await clip(src, dir, name, c);
     fs.writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n');
   }
 }

@@ -55,5 +55,24 @@
       0,
       240
     ]
+  },
+  "lunch": {
+    "file": "lunch.webm",
+    "poster": "lunch.png",
+    "size": 512,
+    "fps": 20,
+    "frames": 127,
+    "duration": 6.35,
+    "scene": true,
+    "source": {
+      "file": "rakko-eat.gif",
+      "w": 274,
+      "h": 274
+    },
+    "square": [
+      0,
+      0,
+      274
+    ]
   }
 }

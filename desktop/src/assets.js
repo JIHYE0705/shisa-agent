@@ -1,6 +1,7 @@
 // cy-asset:// — 개인 캐릭터 그림·영상(~/.cy-agent/assets)을 샌드박스 렌더러에 내주는 주소. 순수 로직.
 // 원본은 레포의 assets/ (설치 때 ~/.cy-agent/assets 로 복사). 허용 목록에 있는 파일만, 경로 조작 없이 이름 그대로.
 import { IMAGES } from './bubbles.js';
+import { CHARACTER_CLIPS } from './character-clips.js';
 
 export const ASSET_SCHEME = 'cy-asset';
 // 캐릭터 상태 그림·영상(character/): 눈 뜬·감은 정지 그림(+@2x), 공부 중·춤 영상(VP9 알파 webm)과 첫 장면 포스터.
@@ -17,22 +18,19 @@ export const CHARACTER_FILES = [
   ['character/dance2.webm', 'video/webm'],
   ['character/dance2.png', 'image/png'],
 ];
-// 고를 수 있는 캐릭터(characters/<id>/): 정지 그림 · 집중(study)·일정 알림(plan)·춤·응원 영상과 첫 장면(+ 카니는 점심시간 lunch, 집중 영상 없음)
-export const PICKABLE = ['hachi', 'rakko', 'momonga', 'usagi', 'kani'];
-const NO_STUDY = ['kani'];
-const HAS_LUNCH = ['kani'];
+// 고를 수 있는 캐릭터(characters/<id>/): 정지 그림(눈 감은 그림은 깜빡이는 캐릭터만) + assets/characters/clips.json 에 적힌 영상과 첫 장면(webm·png)
+export const PICKABLE = ['hachi', 'rakko', 'momonga', 'usagi', 'kani', 'chiikawa', 'kuri'];
+const NO_BLINK = ['usagi'];
+const clipFiles = (id) => [...new Set(Object.values(CHARACTER_CLIPS[id] ?? {}).flatMap((v) => (Array.isArray(v) ? v.map((x) => x?.file).filter((f) => typeof f === 'string' && /^[a-z0-9_-]+$/.test(f)) : [])))];
 export const PICKABLE_FILES = PICKABLE.flatMap((id) => [
   [`characters/${id}/eyes_open.png`, 'image/png'],
-  ...(id === 'usagi' ? [] : [[`characters/${id}/eyes_closed.png`, 'image/png']]),
-  ...(NO_STUDY.includes(id) ? [] : [[`characters/${id}/study.webm`, 'video/webm'], [`characters/${id}/study.png`, 'image/png']]),
-  [`characters/${id}/plan.webm`, 'video/webm'],
-  [`characters/${id}/plan.png`, 'image/png'],
-  ...(HAS_LUNCH.includes(id) ? [[`characters/${id}/lunch.webm`, 'video/webm'], [`characters/${id}/lunch.png`, 'image/png']] : []),
-  [`characters/${id}/dance.webm`, 'video/webm'],
-  [`characters/${id}/dance.png`, 'image/png'],
-  [`characters/${id}/cheer.webm`, 'video/webm'],
-  [`characters/${id}/cheer.png`, 'image/png'],
+  ...(NO_BLINK.includes(id) ? [] : [[`characters/${id}/eyes_closed.png`, 'image/png']]),
+  ...clipFiles(id).flatMap((f) => [[`characters/${id}/${f}.webm`, 'video/webm'], [`characters/${id}/${f}.png`, 'image/png']]),
 ]);
+// 시사 영상(character/)도 clips.json 에 적힌 것은 허용(새로 더한 영상을 목록에 따로 적지 않아도 되게)
+for (const f of clipFiles('shisa')) for (const [ext, type] of [['webm', 'video/webm'], ['png', 'image/png']]) {
+  if (!CHARACTER_FILES.some(([r]) => r === `character/${f}.${ext}`)) CHARACTER_FILES.push([`character/${f}.${ext}`, type]);
+}
 export const ALLOWED = new Map([
   ['character.png', 'image/png'],
   ...CHARACTER_FILES,

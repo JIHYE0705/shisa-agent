@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { CLIPS_JSON, CLIP_KINDS, clipList, pickVariant, builtinClips } from "./clips.ts";
+import { CLIPS_JSON, CLIP_KINDS, clipList, pickVariant, builtinClips, SAY_VARS } from "./clips.ts";
 import { CHARACTER_IDS, characterClips, installCharacters, setCharacter } from "./characters.ts";
 import { ActivityTracker } from "./activity.ts";
 import { Bus } from "./bus.ts";
@@ -13,7 +13,7 @@ afterEach(() => { installCharacters({}); setCharacter("shisa"); });
 
 const SUIT = "스잇~ 스잇~ 스이 시~사 ~ 🎵";
 
-test("clips.json: 기본 캐릭터 여섯 다 있고, 시사 춤은 두 개(새 영상에 전용 한마디)", () => {
+test("clips.json: 기본 캐릭터 여덟 다 있고, 시사 춤은 두 개(새 영상에 전용 한마디)", () => {
   for (const id of CHARACTER_IDS) assert.ok(builtinClips(id), id);
   assert.equal(builtinClips("_help"), undefined);
   const dance = clipList(CLIPS_JSON.shisa, "dance");
@@ -21,15 +21,16 @@ test("clips.json: 기본 캐릭터 여섯 다 있고, 시사 춤은 두 개(새 
   assert.equal(dance[0].say, undefined);
   assert.equal(dance[1].say, SUIT);
   assert.equal(dance[1].scene, true);
-  // 일정 알림·응원·점심은 같은 목록이지만 한마디는 빼고(그 칸 기본 대사)
-  for (const k of ["plan", "cheer", "lunch"] as const) {
+  // 일정 알림·응원은 같은 목록이지만 한마디는 빼고(그 칸 기본 대사). 점심은 먹는 영상
+  assert.deepEqual(clipList(CLIPS_JSON.shisa, "lunch").map((x) => x.file), ["lunch"]);
+  for (const k of ["plan", "cheer"] as const) {
     const l = clipList(CLIPS_JSON.shisa, k);
     assert.deepEqual(l.map((x) => x.file), ["dance", "dance2"], k);
     assert.ok(l.every((x) => !x.say), k);
   }
-  // 점심시간 기본값 = 그 캐릭터의 일정 알림 영상(점심 영상을 따로 둔 카니 빼고)
-  assert.deepEqual(clipList(CLIPS_JSON.kani, "lunch").map((x) => x.file), ["lunch"]);
-  for (const id of CHARACTER_IDS.filter((x) => x !== "kani")) assert.deepEqual(clipList(CLIPS_JSON[id], "lunch").map((x) => x.file), clipList(CLIPS_JSON[id], "plan").map((x) => x.file), id);
+  // 점심시간: 먹는 영상이 있는 캐릭터는 그것, 모몽가는 일정 알림 영상(기본값)
+  for (const id of CHARACTER_IDS.filter((x) => x !== "momonga")) assert.deepEqual(clipList(CLIPS_JSON[id], "lunch").map((x) => x.file), ["lunch"], id);
+  for (const id of ["momonga"]) assert.deepEqual(clipList(CLIPS_JSON[id], "lunch").map((x) => x.file), clipList(CLIPS_JSON[id], "plan").map((x) => x.file), id);
   assert.deepEqual(clipList(CLIPS_JSON.hachi, "dance").map((x) => x.file), ["plan"]);
   assert.deepEqual(clipList(CLIPS_JSON.rakko, "cheer").map((x) => x.file), ["plan"]);
 });
@@ -43,8 +44,9 @@ test("빈 칸 대신 쓰는 순서: 응원↔춤, 일정 알림 → 춤 → 응�
   assert.deepEqual(clipList({ plan: [{ file: "p" }], dance: [{ file: "d" }] }, "lunch"), [{ file: "p" }]);
   assert.deepEqual(clipList({}, "dance"), []);
   assert.deepEqual(clipList({ dance: "cheer", cheer: "dance" } as any, "dance"), [], "서로 가리켜도 멈춘다");
-  // 일정 알림은 한마디를 쓰지 않는다(일정 말풍선)
-  assert.equal(clipList({ plan: [{ file: "p", say: "x" }] }, "plan")[0].say, undefined);
+  // 일정 알림 한마디는 그대로(일정 말풍선 글 대신, 자리표시는 meeting_alert 와 같다)
+  assert.equal(clipList({ plan: [{ file: "p", say: "x {mins}" }] }, "plan")[0].say, "x {mins}");
+  assert.equal(clipList({ dance: [{ file: "d", say: "x" }] }, "plan")[0].say, undefined, "대신 쓰면 빼고");
   for (const k of CLIP_KINDS) assert.ok(Array.isArray(clipList(undefined, k)));
 });
 
@@ -82,7 +84,7 @@ test("데몬이 고른 번호와 한마디가 맞다: state.danceVariant · play
     if (seen.length) assert.notEqual(d.variant, seen.at(-1), "연달아 같은 영상 안 나옴");
     seen.push(d.variant);
   }
-  // 일정 알림·응원·점심은 같은 영상이 나와도 한마디는 그 칸 기본(일정 말풍선·응원 글·점심 인사)
+  // 일정 알림·응원·점심은 한마디는 그 칸 기본(일정 말풍선·응원 글·점심 인사)
   for (const k of ["plan", "cheer", "lunch"] as const) for (let i = 0; i < 6; i++) assert.equal(bus.activity.play(1000, k).say, undefined);
   // 영상이 하나뿐인 캐릭터는 늘 0
   setCharacter("hachi");

@@ -74,5 +74,24 @@
       0,
       281
     ]
+  },
+  "study": {
+    "file": "study.webm",
+    "poster": "study.png",
+    "size": 512,
+    "fps": 30,
+    "frames": 113,
+    "duration": 3.767,
+    "scene": true,
+    "source": {
+      "file": "kani-study.mp4",
+      "w": 1024,
+      "h": 1024
+    },
+    "square": [
+      21,
+      41,
+      819
+    ]
   }
 }

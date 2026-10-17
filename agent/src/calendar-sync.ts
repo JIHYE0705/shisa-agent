@@ -166,9 +166,12 @@ export function onlineLabel(link?: string): string | undefined {
 
 // 말풍선 한 줄: "일정 10분 전이에요! 〈제목〉 13:00 · 📍 회의실 · 온라인(Teams)". 장소·링크가 없으면 그 부분만 뺀다(문구는 설정 창 meeting_alert).
 // mins: 몇 분 전({mins}). 사용자가 고친 문구에 {mins} 가 없으면 그 글 그대로
-export function alertText(m: Meeting, mins = 10): string {
+export function alertVars(m: Meeting, mins = 10): { mins: number; title: string; time: string; where: string } {
   const where = [m.location ? `📍 ${clip(m.location, LOCATION_MAX)}` : "", onlineLabel(m.link) ?? ""].filter(Boolean).join(" · ");
-  return phrase("meeting_alert", { mins, title: clip(m.subject, 40), time: kstHHMM(m.start), where: where ? ` · ${where}` : "" });
+  return { mins, title: clip(m.subject, 40), time: kstHHMM(m.start), where: where ? ` · ${where}` : "" };
+}
+export function alertText(m: Meeting, mins = 10): string {
+  return phrase("meeting_alert", alertVars(m, mins));
 }
 
 // 장소가 길어 한 줄에서 잘렸으면 전체를 detail 로(아니면 없음)

@@ -58,5 +58,24 @@
     "poseFps": 4,
     "alignment": "artwork/usagi/alignment.json",
     "jumpPixels": 0
+  },
+  "lunch": {
+    "file": "lunch.webm",
+    "poster": "lunch.png",
+    "size": 512,
+    "fps": 12.5,
+    "frames": 24,
+    "duration": 1.92,
+    "scene": false,
+    "source": {
+      "file": "usagi-eat.gif",
+      "w": 489,
+      "h": 498
+    },
+    "square": [
+      -18,
+      0,
+      518
+    ]
   }
 }

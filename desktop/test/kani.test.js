@@ -8,13 +8,13 @@ import { resolveAsset } from '../src/assets.js';
 
 const fileOf = (u) => new URL(`../../assets/${resolveAsset(u).rel}`, import.meta.url);
 
-test('카니: 고를 수 있고, 눈 뜬·감은 그림으로 깜빡이고, 춤·응원·일정 알림·점심은 각자 장면 영상, 집중은 정지 그림', () => {
+test('카니: 고를 수 있고, 눈 뜬·감은 그림으로 깜빡이고, 춤·응원·일정 알림·점심·집중은 각자 장면 영상', () => {
   assert.ok(CHARACTER_IDS.includes('kani'));
   assert.equal(appName('kani'), '카니 비서');
   const a = characterAssets('kani');
   assert.ok(a.closed, '깜빡임');
   for (const u of [a.open, a.closed]) assert.ok(fs.existsSync(fileOf(u)), u);
-  const want = { dance: 'dance', cheer: 'cheer', plan: 'plan', lunch: 'lunch' };
+  const want = { dance: 'dance', cheer: 'cheer', plan: 'plan', lunch: 'lunch', study: 'study' };
   for (const [k, f] of Object.entries(want)) {
     const v = a.variants[k];
     assert.equal(v.length, 1, k);
@@ -22,10 +22,10 @@ test('카니: 고를 수 있고, 눈 뜬·감은 그림으로 깜빡이고, 춤�
     assert.equal(v[0].scene, true, `${k}: 배경 있는 장면이라 테두리`);
     assert.ok(fs.existsSync(fileOf(v[0].src)) && fs.existsSync(fileOf(v[0].poster)), k);
   }
-  assert.equal(a.videos.studying, null, '집중 영상 없음 → 정지 그림');
-  assert.equal(resolveAsset('cy-asset://app/characters/kani/study.webm'), null);
+  assert.match(a.videos.studying.src, /kani\/study\.webm$/, '집중 영상(kani-study.mp4)');
   const meta = JSON.parse(fs.readFileSync(new URL('../../assets/characters/kani/video.json', import.meta.url), 'utf8'));
-  assert.deepEqual(Object.keys(meta).sort(), ['cheer', 'dance', 'lunch', 'plan']);
+  assert.deepEqual(Object.keys(meta).sort(), ['cheer', 'dance', 'lunch', 'plan', 'study']);
+  assert.equal(meta.study.source.file, 'kani-study.mp4');
   assert.equal(meta.dance.source.file, 'kani-cheer.gif');
   assert.equal(meta.cheer.source.file, 'kani-cheer2.gif');
   assert.equal(meta.lunch.source.file, 'kani-eat.gif');

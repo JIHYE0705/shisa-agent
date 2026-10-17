@@ -32,7 +32,7 @@ const bubble = (b) => emit('bubble', { id: `b${++seq}`, ...b });
 let curMood = 'idle';
 let activity = { activity: 'idle', runs: [] };
 let danceTimer = null;
-// FAKE_CHARACTER=hachi|rakko|momonga|usagi|kani 로 그 캐릭터로 시작(설정 창에서도 바뀐다)
+// FAKE_CHARACTER=hachi|rakko|momonga|usagi|kani|chiikawa|kuri 로 그 캐릭터로 시작(설정 창에서도 바뀐다)
 setCharacter(process.env.FAKE_CHARACTER);
 const stateFrame = () => ({ mood: curMood, ...activity, character: characterId() });
 const mood = (m) => { curMood = m; emit('state', stateFrame()); };

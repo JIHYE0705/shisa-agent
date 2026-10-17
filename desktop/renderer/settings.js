@@ -10,7 +10,7 @@ import {
 import { mountGuidelines } from '../src/guidelines.js';
 import { CHARACTERS, CHARACTER_IDS, characterAssets, characterName, okCharacterId, USER_CHAR_DIR, defaultFrame, MULTI_SLOTS } from '../src/character.js';
 import { applyCharacters, effectiveLines, defaultsOf } from '../src/character-registry.js';
-import { editorSections, flattenLines, unflattenLines, fieldText, fieldProblem, linesFromTexts, diffLines, slotRows, okMediaName, previewKind, missingRequired, sourceOptions, ACCEPT, MULTI_HINT, SAY_PLACEHOLDER, SAY_TITLE } from '../src/character-edit.js';
+import { editorSections, flattenLines, unflattenLines, fieldText, fieldProblem, linesFromTexts, diffLines, slotRows, okMediaName, previewKind, missingRequired, sourceOptions, ACCEPT, MULTI_HINT, sayPlaceholder, sayTitle } from '../src/character-edit.js';
 import { who, setWho, onWho } from './who.js';
 // 안내 글 속 이름(<span class="who">)도 캐릭터 이름으로
 onWho(() => { for (const n of document.querySelectorAll('.who')) n.textContent = who(); });
@@ -411,8 +411,8 @@ function slotList(rows, srcOf, nameOf, frames, h) {
       if (r.say) {
         const say = el('input', 'slot-say');
         say.type = 'text';
-        say.placeholder = SAY_PLACEHOLDER;
-        say.title = SAY_TITLE;
+        say.placeholder = sayPlaceholder(r.slot);
+        say.title = sayTitle(r.slot);
         say.value = it.say ?? '';
         say.setAttribute('aria-label', `${r.label} 한마디`);
         say.addEventListener('change', () => h.say(r.slot, it.file, say.value));
