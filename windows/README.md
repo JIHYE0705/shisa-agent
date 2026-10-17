@@ -44,6 +44,12 @@
   ```
 
   Claude Code가 코드를 고치려면 [Git for Windows](https://git-scm.com/download/win)도 있어야 합니다.
+
+  설치가 끝났는데 `claude`나 `claude auth login`을 「명령을 찾을 수 없음」이라며 인식하지 못하면, 설치 폴더(`%USERPROFILE%\.local\bin`)가 Path에 등록되지 않은 경우입니다. PowerShell에 아래 한 줄을 붙여 넣어 Path에 추가한 뒤, PowerShell을 껐다 다시 열고 `claude auth login`을 실행하면 됩니다.
+
+  ```powershell
+  [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\.local\bin", "User")
+  ```
 - Codex: [Codex CLI 설치 안내](https://developers.openai.com/codex)대로 설치하고 로그인하세요.
 - API 키: Gemini·OpenAI·Claude API 키가 있다면 설치 마법사에 붙여 넣기만 하면 됩니다.
 
@@ -80,6 +86,7 @@
 | 회사 PC라 「관리자가 이 앱을 차단했습니다」가 뜸 | 회사 보안 정책(AppLocker·Defender 등)이 서명 안 된 앱을 막는 경우입니다. 휴대용 zip도 똑같이 막힐 수 있으니 IT 담당자에게 문의해 주세요 |
 | 캐릭터가 안 보임 | 알림 영역(시계 옆 `^`)에 시사 아이콘이 있으면 이미 켜져 있는 것이니, 아이콘을 눌러 「패널 열기」를 해 보세요. 없으면 시작 메뉴에서 시사를 다시 엽니다 |
 | 패널에 「시사 꺼짐」이 계속 보임 | 시사를 종료했다가 다시 열어 주세요. 백신이 `resources\agent` 안의 파일을 막았을 수도 있습니다 |
+| PowerShell에서 `claude`(또는 `claude auth login`)를 인식하지 못함 | 설치 폴더 `%USERPROFILE%\.local\bin`이 Path에 없는 경우입니다. 위 [뇌(AI) 준비](#뇌ai-준비-선택)의 한 줄로 Path에 추가하고 PowerShell을 다시 열어 주세요 |
 | 뇌 고르기에서 Claude Code를 못 찾음 | PowerShell에서 `claude --version`이 되는지 확인하고, 시사를 껐다 다시 켜 주세요 |
 | 그래도 안 됨 | `%USERPROFILE%\.cy-agent\logs` 안의 `.log` 파일을 [의견 보내기](../README.md#의견-보내기)로 함께 보내 주세요 |
 
