@@ -44,6 +44,7 @@ import { addAgentWorktree, agentBranch, finishAgentWorktree, isolationSource, wo
 import { runBackgroundAgent } from "./chat.ts";
 import { inlineContext } from "./ctx-tools.ts";
 import { AttachmentStore, type Attachment } from "./attachments.ts";
+import { ManualProjects, applyProjectOps, parseNewProject, parseProjectPatch, type ManualProjectView } from "./manual-projects.ts";
 import { Guidelines, applyGuidelineOp, guidelinesApi, setGuidelineStore, type GuidelineCtx, type GuidelinesApi } from "./guidelines.ts";
 import { WAIT_SETUP, modelWorkAllowed, sessionsAllowed } from "./onboarding.ts";
 
@@ -121,6 +122,7 @@ export class Agent {
   private chatRunner: Chat;
   readonly rules: TodoRules; // 할 일 규칙(todo-rules.ts) — 새 할 일마다 결정적으로 적용
   readonly guidelines: Guidelines; // 행동 지침(guidelines.ts) — 대화·브리핑·코드 작업 프롬프트에 늘 붙는다
+  readonly projects: ManualProjects; // 직접 만든 프로젝트(manual-projects.ts) — 할 일을 묶는다
   slack?: SlackPort;
   readonly attachments: AttachmentStore; // 채팅 첨부(attachments.ts)
 
@@ -132,6 +134,7 @@ export class Agent {
     // 오늘 할 일은 할 일에 날을 단 것. 바꿀 때 같은 길(규칙·갱신 신호·진행률 반응)로
     this.plan = new DailyPlanService(store, { ports: { add: (t) => this.addTodo(t), edit: (id, patch) => this.editTodo(id, patch) } });
     this.guidelines = new Guidelines(store);
+    this.projects = new ManualProjects(store);
     setGuidelineStore(store); // 코드 작업(fixer.ts — store 를 안 받는다)이 읽는 지침
     this.actions = new Actions(cfg, store, this.deps.actions);
     this.actions.onChange = (a) => this.onActionChange(a);
@@ -187,6 +190,7 @@ export class Agent {
       // 채팅에서 시킨 코드 작업은 승인 단계 없이 바로 수정 run(PR 까지). 머지만 사용자 승인(머지 카드)
       propose: (pr, threadId) => this.propose(pr, undefined, true, threadId, true),
       todoOps: (ops) => this.applyTodoOps(ops),
+      projectOps: (ops) => this.applyProjectOps(ops),
       planOps: (ops) => this.plan.applyOps(ops),
       memoryOps: (ops) => applyMemoryOps(this.store, ops),
       addRule: (rule) => this.ruleFromModel(rule),
@@ -1068,9 +1072,12 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
         const ref = typeof op.source_ref === "string" ? op.source_ref.trim().slice(0, 300) : "";
         const origin = ref ? resolveOrigin(this.store, ref, { link: p.value.link ?? undefined, gitShow: this.deps.gitShow }) : undefined;
         const desc = typeof op.description === "string" ? op.description.trim().slice(0, 500) : "";
+        const proj = this.projectRef(op.project);
+        if (proj && "error" in proj) errors.push(proj.error);
         const t = this.addTodo({ title: p.value.title, priority: p.value.priority, link: p.value.link, note: p.value.note,
-          ...(desc ? { description: desc } : {}), ...(ref ? { sourceRef: ref } : {}), ...(origin && origin.kind !== "other" ? { origin } : {}) });
-        applied.push(`추가: ${t.title}`);
+          ...(desc ? { description: desc } : {}), ...(ref ? { sourceRef: ref } : {}), ...(origin && origin.kind !== "other" ? { origin } : {}),
+          ...(proj && "id" in proj && proj.id ? { projectId: proj.id } : {}) });
+        applied.push(`추가: ${t.title}${proj && "id" in proj && proj.id ? ` (프로젝트 ${proj.name})` : ""}`);
         added.push(t);
         continue;
       }
@@ -1085,12 +1092,67 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
         applied.push(`${op.op === "done" ? "완료" : "다시 열기"}: ${cur.title}`);
       } else {
         const { status: _s, ...patch } = p.value;
+        const proj = this.projectRef(op.project);
+        if (proj && "error" in proj) { errors.push(proj.error); if (!Object.keys(patch).length) continue; }
+        else if (proj) patch.projectId = proj.id;
         if (!Object.keys(patch).length) { errors.push(`id=${cur.id} 수정할 내용이 없었어요`); continue; }
         this.editTodo(cur.id, patch);
-        applied.push(`수정: ${patch.title ?? cur.title}`);
+        const moved = proj && !("error" in proj) ? (proj.id ? ` → 프로젝트 ${proj.name}` : " (프로젝트에서 뺌)") : "";
+        applied.push(`수정: ${patch.title ?? cur.title}${moved}`);
       }
     }
     return { applied, errors, added, trashed };
+  }
+
+  // todo op 의 project(id·이름) → 묶을 프로젝트. 안 줬으면 undefined, null·"" 은 빼기({ id: null })
+  private projectRef(ref: unknown): { id: string; name: string } | { id: null; name?: undefined } | { error: string } | undefined {
+    if (ref === undefined) return undefined;
+    if (ref === null || ref === "") return { id: null };
+    const p = typeof ref === "string" ? this.projects.find(ref) : undefined;
+    return p ? { id: p.id, name: p.name } : { error: `「${String(ref)}」 프로젝트를 못 찾아서 할 일을 묶지 못했어요` };
+  }
+
+  // ---- 직접 만든 프로젝트(manual-projects.ts): 패널 GET/POST/PATCH/DELETE /projects/manual · 채팅 project_ops ----
+  manualProjects(): ManualProjectView[] { return this.projects.views(); }
+  projectExists(id: string): boolean { return !!this.projects.get(id); }
+  manualProjectsApi() {
+    const missing = { status: 404, body: { error: "no such project" } };
+    return {
+      handle: (method: string, id: string | undefined, body: unknown): { status: number; body: unknown } => {
+        if (method === "GET" && !id) return { status: 200, body: { projects: this.projects.views() } };
+        if (method === "GET" && id) {
+          const p = this.projects.view(id);
+          return p ? { status: 200, body: { project: p, todos: this.projects.todos(id) } } : missing;
+        }
+        if (method === "POST" && !id) {
+          const r = parseNewProject(body);
+          if (!r.ok) return { status: 400, body: { error: r.error } };
+          const p = this.projects.add(r.value);
+          this.changed();
+          return { status: 201, body: { project: this.projects.view(p.id) } };
+        }
+        if (method === "PATCH" && id) {
+          const r = parseProjectPatch(body);
+          if (!r.ok) return { status: 400, body: { error: r.error } };
+          if (!this.projects.edit(id, r.value)) return missing;
+          this.changed();
+          return { status: 200, body: { project: this.projects.view(id) } };
+        }
+        if (method === "DELETE" && id) {
+          const r = this.projects.delete(id);
+          if (!r) return missing;
+          this.changed();
+          return { status: 200, body: { ok: true, unlinked: r.unlinked } };
+        }
+        return { status: 405, body: { error: "method not allowed" } };
+      },
+    };
+  }
+  // 채팅이 낸 project_ops 적용 — 할 일 op 보다 먼저(같은 답에서 만든 프로젝트에 할 일을 묶을 수 있게)
+  applyProjectOps(ops: unknown[]): { applied: string[]; errors: string[] } {
+    const r = applyProjectOps(this.projects, ops);
+    if (r.applied.length) this.changed();
+    return r;
   }
 
   // ---- 할 일 상세(패널에서 한 번 누르면): 설명 + 원본 + 링크. 없으면 원본은 KG·git에서 찾고 설명은 한 번만 만들어 저장 ----

@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveAsset, ALLOWED, parseRange, assetCandidates } from '../src/assets.js';
+import fs from 'node:fs';
+import { resolveAsset, ALLOWED, parseRange, assetCandidates, CHARACTER_FILES, PICKABLE_FILES } from '../src/assets.js';
+import { IMAGES } from '../src/bubbles.js';
 import { knockOutWhite } from '../scripts/prepare-assets.mjs';
 import { decodePNG, encodePNG } from '../scripts/png.mjs';
 
@@ -12,7 +14,11 @@ test('cy-asset: 허용 목록만, 경로 조작·다른 호스트·쿼리 거절
     'cy-asset://app/reactions/nope.jpg', 'cy-asset://evil/character.png', 'cy-asset://app/character.png?x=1',
     'file:///etc/passwd', 'https://app/character.png', 'cy-asset://app/config.json', 'not a url',
   ]) assert.equal(resolveAsset(bad), null, bad);
-  assert.equal(ALLOWED.size, 18 + 39); // 시사 18(두 번째 춤 dance2 포함) + 기존 세 캐릭터 × 10 + 우사기 9(감은 눈 제외)
+  // 시사 12(두 번째 춤 dance2·점심 포함) + 고를 수 있는 캐릭터 75(정지 그림 + clips.json 에 적힌 영상·첫 장면) + character.png + 반응 그림
+  assert.equal(CHARACTER_FILES.length, 12);
+  assert.equal(PICKABLE_FILES.length, 75);
+  assert.equal(ALLOWED.size, 1 + CHARACTER_FILES.length + PICKABLE_FILES.length + IMAGES.length);
+  for (const [rel] of [...CHARACTER_FILES, ...PICKABLE_FILES]) assert.ok(fs.existsSync(new URL(`../../assets/${rel}`, import.meta.url)), `${rel}: 허용 목록에 있는데 파일이 없음`);
 });
 
 test('cy-asset: 캐릭터 상태 그림·영상(character/) — 정확한 이름만, MIME 맞게', () => {

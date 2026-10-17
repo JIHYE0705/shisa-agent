@@ -12,7 +12,7 @@ import { HOME_DIR, type Config } from "./config.ts";
 import type { Store } from "./store.ts";
 import { addDays, kstDate } from "./calendar.ts";
 import { CONNECTORS, isWriteName, mcpTool, type Conn } from "./connectors.ts";
-import { eventsInWindow, fetchIcsText, type FetchText } from "./ics.ts";
+import { calendarName, eventsInWindow, fetchIcsText, type FetchText } from "./ics.ts";
 import { phrase } from "./phrases.ts";
 import { calendarAlertOf } from "./calendar-alert.ts";
 
@@ -26,6 +26,8 @@ export type CalEvent = {
   online: boolean; joinUrl?: string; webLink?: string; locationType?: string;
   location?: string; // 회의실·장소 이름(여러 곳이면 ", " 로 이음)
   attendees?: number; // 나 말고 참석자 수(응답에 attendees 가 있을 때만)
+  description?: string; attendeeNames?: string[]; // 설명·참석자 이름(일정에서 프로젝트 만들기 — manual-projects.ts)
+  calendar?: string; // 어느 캘린더(ICS 의 X-WR-CALNAME, 없으면 「캘린더 N」)
 };
 export type Meeting = { id: string; subject: string; start: string; end: string; link?: string; webLink?: string; response?: string; location?: string }; // response: 내 응답(accepted·notresponded·organizer…), location: 회의실·장소
 
@@ -166,9 +168,12 @@ export function onlineLabel(link?: string): string | undefined {
 
 // 말풍선 한 줄: "일정 10분 전이에요! 〈제목〉 13:00 · 📍 회의실 · 온라인(Teams)". 장소·링크가 없으면 그 부분만 뺀다(문구는 설정 창 meeting_alert).
 // mins: 몇 분 전({mins}). 사용자가 고친 문구에 {mins} 가 없으면 그 글 그대로
-export function alertText(m: Meeting, mins = 10): string {
+export function alertVars(m: Meeting, mins = 10): { mins: number; title: string; time: string; where: string } {
   const where = [m.location ? `📍 ${clip(m.location, LOCATION_MAX)}` : "", onlineLabel(m.link) ?? ""].filter(Boolean).join(" · ");
-  return phrase("meeting_alert", { mins, title: clip(m.subject, 40), time: kstHHMM(m.start), where: where ? ` · ${where}` : "" });
+  return { mins, title: clip(m.subject, 40), time: kstHHMM(m.start), where: where ? ` · ${where}` : "" };
+}
+export function alertText(m: Meeting, mins = 10): string {
+  return phrase("meeting_alert", alertVars(m, mins));
 }
 
 // 장소가 길어 한 줄에서 잘렸으면 전체를 detail 로(아니면 없음)
@@ -185,8 +190,12 @@ export function icsSource(urls: string[], opts: { timeZone: string; email?: stri
   return async (_cfg, w) => {
     const events: CalEvent[] = [];
     let errors = 0;
-    for (const url of urls) {
-      try { events.push(...eventsInWindow(await fetchText(url), Date.parse(w.from), Date.parse(w.to), opts)); }
+    for (const [i, url] of urls.entries()) {
+      try {
+        const text = await fetchText(url);
+        const name = calendarName(text) || (urls.length > 1 ? `캘린더 ${i + 1}` : "");
+        events.push(...eventsInWindow(text, Date.parse(w.from), Date.parse(w.to), opts).map((e) => (name ? { ...e, calendar: name } : e)));
+      }
       catch (e: any) { errors++; console.warn("[calendar] ICS 실패:", String(e?.message ?? e).slice(0, 80)); }
     }
     return { ok: !errors && urls.length > 0, events, calls: urls.length, errors, costUsd: 0 };
@@ -210,6 +219,9 @@ const MCP_EVENTS_SCHEMA = {
           online: { type: "boolean" }, joinUrl: { type: "string" }, webLink: { type: "string" },
           location: { type: "string", description: "회의실·장소 이름(있을 때만)" },
           attendees: { type: "integer", description: "나 말고 참석자 수(알 때만)" },
+          description: { type: "string", description: "일정 본문·설명(있을 때만, 그대로)" },
+          attendeeNames: { type: "array", items: { type: "string" }, description: "참석자 이름(없으면 메일 주소, 알 때만)" },
+          calendar: { type: "string", description: "어느 캘린더인지 이름(알 때만)" },
         },
       },
     },
@@ -274,6 +286,9 @@ export function mcpEventsToCal(list: unknown): CalEvent[] {
     if (typeof e.webLink === "string" && /^https:\/\//.test(e.webLink)) ev.webLink = e.webLink;
     if (Number.isInteger(e.attendees)) ev.attendees = e.attendees;
     if (typeof e.location === "string" && e.location.trim() && !/^https?:\/\//i.test(e.location.trim())) ev.location = e.location.trim();
+    if (typeof e.description === "string" && e.description.trim()) ev.description = e.description.trim();
+    if (Array.isArray(e.attendeeNames)) { const xs = e.attendeeNames.filter((x: unknown) => typeof x === "string" && x.trim()).map((x: string) => x.trim()); if (xs.length) ev.attendeeNames = xs; }
+    if (typeof e.calendar === "string" && e.calendar.trim()) ev.calendar = e.calendar.trim();
     out.push(ev);
   }
   return out;
@@ -394,6 +409,15 @@ export class CalendarSync {
       db.prepare("DELETE FROM meeting_alerts WHERE at < ?").run(old);
       db.exec("COMMIT");
     } catch (e) { db.exec("ROLLBACK"); throw e; }
+  }
+
+  // 일정에서 프로젝트 만들기(패널 ＋): 연결된 캘린더(ICS 여러 개·MCP)를 그 창으로 한 번 읽는다. 저장·알림과 상관없음.
+  // 연결 안 됐으면 { connected: false }. 읽다 실패하면 ok: false 와 받은 만큼
+  async browse(w: { from: string; to: string }): Promise<{ connected: boolean; ok: boolean; events: CalEvent[] }> {
+    const src = this.deps.source;
+    if (!src) return { connected: false, ok: false, events: [] };
+    const r = await (this.deps.wrapRun ? this.deps.wrapRun(() => src(this.cfg, w)) : src(this.cfg, w));
+    return { connected: true, ok: r.ok, events: r.events };
   }
 
   // 아직 안 끝난 회의(오늘·내일), 시작 순

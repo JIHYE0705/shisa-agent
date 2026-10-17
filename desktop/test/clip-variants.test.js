@@ -16,8 +16,9 @@ test('시사 춤: 기존 투명 춤과 새 장면(dance2) 두 개, 새 것만 �
   assert.equal(d[0].say, undefined);
   assert.equal(d[1].say, SUIT);
   assert.deepEqual(d.map((x) => x.scene), [false, true]);
-  // 일정 알림(시사는 같은 춤 영상 규칙 그대로)·응원·점심도 두 개 중 하나, 한마디는 그 칸 기본
-  for (const k of ['plan', 'cheer', 'lunch']) {
+  // 일정 알림(시사는 같은 춤 영상 규칙 그대로)·응원도 두 개 중 하나, 한마디는 그 칸 기본. 점심은 먹는 영상
+  assert.deepEqual(a.variants.lunch.map((x) => x.src), ['cy-asset://app/character/lunch.webm']);
+  for (const k of ['plan', 'cheer']) {
     assert.deepEqual(a.variants[k].map((x) => x.src), d.map((x) => x.src), k);
     assert.ok(a.variants[k].every((x) => !x.say), k);
   }
@@ -34,7 +35,8 @@ test('기본 캐릭터 영상 목록: 주소는 다 허용 목록 안·파일이
       assert.ok(resolveAsset(v.src) && resolveAsset(v.poster), `${id}/${k} ${v.src}`);
       assert.ok(fs.existsSync(fileOf(v.src)) && fs.existsSync(fileOf(v.poster)), `${id}/${k} 파일`);
     }
-    assert.deepEqual(a.variants.lunch.map((x) => x.src), a.variants.plan.map((x) => x.src), id);
+    if (id === 'momonga') assert.deepEqual(a.variants.lunch.map((x) => x.src), a.variants.plan.map((x) => x.src), '모몽가는 점심 영상이 없어 일정 알림 영상');
+    else assert.match(a.variants.lunch[0].src, /\/lunch\.webm$/, `${id}: 먹는 영상`);
     assert.ok(a.variants.dance.length >= 1 && a.variants.cheer.length >= 1 && a.variants.plan.length >= 1, id);
   }
 });
@@ -62,10 +64,10 @@ test('pickVariant: 범위 안, 두 개 이상이면 연달아 같은 번호가 �
   }
 });
 
-test('clipList: 다른 칸 이름·빈 칸 대신 쓰기는 한마디를 빼고, 일정 알림은 한마디를 안 쓴다', () => {
+test('clipList: 다른 칸 이름·빈 칸 대신 쓰기는 한마디를 빼고, 일정 알림 한마디는 그대로(일정 말풍선 대신)', () => {
   assert.deepEqual(clipList({ cheer: [{ file: 'c', say: 'x' }] }, 'dance'), [{ file: 'c' }]);
   assert.deepEqual(clipList({ cheer: [{ file: 'c' }] }, 'lunch'), [{ file: 'c' }]);
-  assert.deepEqual(clipList({ plan: [{ file: 'p', say: 'x' }] }, 'plan'), [{ file: 'p' }]);
+  assert.deepEqual(clipList({ plan: [{ file: 'p', say: 'x {mins}' }] }, 'plan'), [{ file: 'p', say: 'x {mins}' }]);
   assert.deepEqual(clipList({}, 'study'), []);
   assert.deepEqual(clipList(CHARACTER_CLIPS.hachi, 'dance').map((x) => x.file), ['plan']);
 });

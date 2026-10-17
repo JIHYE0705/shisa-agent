@@ -55,5 +55,24 @@
       0,
       300
     ]
+  },
+  "lunch": {
+    "file": "lunch.webm",
+    "poster": "lunch.png",
+    "size": 512,
+    "fps": 30,
+    "frames": 155,
+    "duration": 5.167,
+    "scene": true,
+    "source": {
+      "file": "hachi-eat.gif",
+      "w": 403,
+      "h": 498
+    },
+    "square": [
+      0,
+      48,
+      403
+    ]
   }
 }

@@ -83,6 +83,8 @@ test('gsk login 키: ~/.genspark-tool-cli/config.json 의 api_key 를 읽기만 
     fs.writeFileSync(file, raw);
     assert.equal(gskLoginKey(home), KEY);
     assert.equal(fs.readFileSync(file, 'utf8'), raw);
+    fs.writeFileSync(file, '\uFEFF' + raw); // 메모장 등이 붙인 BOM
+    assert.equal(gskLoginKey(home), KEY);
     fs.writeFileSync(file, '{broken');
     assert.equal(gskLoginKey(home), '');
     fs.writeFileSync(file, JSON.stringify({ api_key: 'sk-not-genspark' }));

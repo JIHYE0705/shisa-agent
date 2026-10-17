@@ -92,6 +92,7 @@ export function sanitizeTodoPatch(v, { allowStatus = true } = {}) {
   if (v.description === null || typeof v.description === 'string') out.description = v.description === null ? null : v.description;
   if (v.doing === null || typeof v.doing === 'boolean') out.doing = v.doing; // (진행중) 토글: true·false·null(자동)
   if (v.today === null || typeof v.today === 'boolean') out.today = v.today; // 오늘 할 일로 고르기(true)·빼기(false·null)
+  if (v.projectId === null || (typeof v.projectId === 'string' && /^proj:[\w-]{1,80}$/.test(v.projectId))) out.projectId = v.projectId; // 직접 만든 프로젝트에 묶기·빼기(null)
   if (allowStatus && (v.status === 'open' || v.status === 'done')) out.status = v.status;
   return Object.keys(out).length ? out : null;
 }

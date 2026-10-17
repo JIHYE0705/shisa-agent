@@ -3,6 +3,7 @@
 // 그 뒤로는 WATCH_MS 마다 — 앱을 껐다 바로 켜면 꺼지는 중인 옛 데몬이 아직 답하므로, 1분씩 비지 않게.
 // 죽으면 restartDelay 간격으로 다시 띄우고, stop() 은 SIGTERM → 기다려도 안 꺼지면 SIGKILL.
 // 데몬이 포트를 못 잡아 EXIT_PORT_TAKEN 으로 끝나면 충돌로 세지 않고 그 포트를 다시 지켜본다.
+import { connect as tcpConnect } from 'node:net';
 import { restartDelay, nextFailures, EXIT_PORT_TAKEN } from './bundle.js';
 
 export const WATCH_MS = 60_000; // 남의 데몬이 살아 있나 다시 보는 간격
@@ -11,7 +12,19 @@ export const FAST_FOR_MS = 60_000; // 이만큼 동안은 FAST_MS 마다
 export const STOPPING_MS = 1000; // 그 데몬이 "꺼지는 중"이라고 답하면
 export const KILL_AFTER_MS = 4000; // SIGTERM 뒤 이만큼 기다려도 안 꺼지면 SIGKILL
 
-// deps: { spawn() → child(on('exit'), kill(sig), pid) · probe() → Promise<true|false|'stopping'> · now() · setTimeout · clearTimeout · log?(msg) · onSpawn?(child) }
+// 그 포트가 비었나: 127.0.0.1 로 붙어 보아 거절되면 빈 것(데몬은 127.0.0.1 에 listen). 붙으면 누가 쥐고 있다
+export function portFree(port, { timeoutMs = 1000, connect = tcpConnect } = {}) {
+  return new Promise((resolve) => {
+    const sock = connect({ host: '127.0.0.1', port });
+    const done = (free) => { sock.destroy(); resolve(free); };
+    sock.setTimeout(timeoutMs, () => done(false)); // 받지도 거절하지도 않음 → 쥔 것으로
+    sock.once('connect', () => done(false));
+    sock.once('error', () => done(true)); // ECONNREFUSED 등
+  });
+}
+
+// deps: { spawn() → child(on('exit'), kill(sig), pid) · probe() → Promise<true|false|'stopping'> · now() · setTimeout · clearTimeout · log?(msg) · onSpawn?(child)
+//         · portFree?() → Promise<boolean>(그 포트가 비었나. 없으면 비었다고 본다) }
 export function createDaemonHost(deps) {
   const log = deps.log ?? (() => {});
   // watchSince: 지켜보기(external·port-taken)를 시작한 때. 지켜보던 데몬이 사라지거나 우리 데몬이 제대로 뜨고 죽으면 비운다
@@ -81,6 +94,15 @@ export function createDaemonHost(deps) {
     if (alive) {
       if (st.mode !== 'external') log('이 포트에 이미 데몬이 떠 있어요. 그 데몬을 써요');
       watch('external');
+      return;
+    }
+    // 시사 데몬은 아닌데 포트를 누가 쥐고 있다(다른 프로그램): 띄워 봐야 EXIT_PORT_TAKEN 으로 끝난다 → 띄우지 않고 지켜본다
+    let free = true;
+    if (deps.portFree) try { free = (await deps.portFree()) !== false; } catch { free = true; }
+    if (st.stopping || st.child) return;
+    if (!free) {
+      if (st.mode !== 'port-taken') log('이 포트를 다른 프로그램이 쓰고 있어요. 비면 데몬을 띄워요');
+      watch('port-taken');
       return;
     }
     // 지켜보던 데몬이 사라졌다 → 새로 띄운다(또 부딪히면 지켜보기를 처음부터 빠르게)

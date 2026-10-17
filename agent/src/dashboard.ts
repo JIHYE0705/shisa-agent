@@ -9,6 +9,7 @@ import { gitActivity, type Commit, type RepoActivity } from "./git.ts";
 import { listRules, ruleSummary } from "./todo-rules.ts";
 import { DailyPlanService, type DailyPlan } from "./daily-plan.ts";
 import { gitAllowed, sessionsAllowed } from "./onboarding.ts";
+import { ManualProjects, manualProjectsContext, type ManualProjectView } from "./manual-projects.ts";
 
 export type DashProject = {
   name: string; path: string; lastActive: string; sessions24h: number;
@@ -21,6 +22,7 @@ export type Dashboard = {
   briefing: { at: string; bubble: string; replyMd: string } | null;
   commitsToday: number;
   projects: DashProject[];
+  manualProjects: ManualProjectView[]; // 직접 만든 프로젝트(진행 중 먼저) — 패널 프로젝트 탭 위쪽
   todos: DashTodo[];
   recentDone: (DashTodo & { doneAt: string })[]; // 최근 3일 안에 끝난 것(최신순, 최대 10) — 패널 "최근 완료"
   proposals: { id: string; title: string; repo: string; status: ProposalStatus; result?: string; base?: string }[];
@@ -38,6 +40,7 @@ export type DashTodo = {
   appliedRule?: { id: string; text: string }; // 이 할 일에 적용된 할 일 규칙
   progress?: string; progressAt?: string; // 어디까지 됐는지(할 일 진행 확인 — todo-progress.ts)
   doing?: boolean; today?: string; // doing: 사용자가 누른 (진행중) 토글(▶/⏸)
+  projectId?: string; // 묶인 직접 만든 프로젝트
 };
 export type DashboardDeps = {
   git?: (cfg: Config) => Promise<RepoActivity[]>;
@@ -65,6 +68,7 @@ export async function buildDashboard(cfg: Config, store: Store, deps: DashboardD
     briefing: store.latestBriefing(),
     commitsToday: repos.reduce((n, r) => n + r.commitsToday.length, 0),
     projects: projects(store, repos, now, sessionsAllowed(cfg)),
+    manualProjects: new ManualProjects(store).views(),
     todos: store.openTodos().map(dashTodo),
     recentDone: store.recentlyDone(new Date(now.getTime() - 3 * DAY).toISOString(), 10)
       .map((t) => ({ ...dashTodo(t), doneAt: t.updated ?? t.created })),
@@ -89,6 +93,7 @@ function dashTodo(t: Todo): DashTodo {
     ...(t.doneBy === "auto" && t.autoEvidence?.permalink ? { autoEvidence: t.autoEvidence.permalink } : {}),
     ...(t.doing !== undefined ? { doing: t.doing } : {}),
     ...(t.today ? { today: t.today } : {}), // 오늘 할 일로 고른 날(KST). 그날이면 '오늘 할 일' 탭에도 보인다
+    ...(t.projectId ? { projectId: t.projectId } : {}),
   };
 }
 
@@ -140,7 +145,7 @@ function projects(store: Store, repos: RepoActivity[], now: Date, withSessions =
 
 // 채팅 프롬프트용 한 줄 요약들
 export function dashboardSummary(d: Dashboard): string {
-  const lines = [`## 대시보드 요약`, `오늘 내 커밋: ${d.commitsToday}개`, `### 최근 7일 프로젝트`];
+  const lines = [`## 대시보드 요약`, `오늘 내 커밋: ${d.commitsToday}개`, ...manualProjectsContext(d.manualProjects ?? []), `### 최근 7일 프로젝트`];
   if (!d.projects.length) lines.push("(없음)");
   const shown = d.projects.filter((p) => !p.hidden);
   if (!shown.length && d.projects.length) lines.push("(없음)");

@@ -1,6 +1,6 @@
 // 설정 창 「캐릭터」 편집 — 순수 로직: 대사 칸 묶기·글 ↔ 값·자리표시 검사·고친 칸만 고르기·그림 칸·만들기 본문.
 // 칸 목록(schema)·설명(help)·칸 이름(phrases.dance, flair.lead.happy …)은 데몬 GET /characters 가 준다(agent/src/character-store.ts).
-import { MEDIA_SLOTS, REQUIRED_SLOTS, MULTI_SLOTS, MEDIA_EXTS, clipKind } from './character.js';
+import { MEDIA_SLOTS, REQUIRED_SLOTS, MULTI_SLOTS, MEDIA_EXTS, SAY_VARS, clipKind } from './character.js';
 
 // 묶음 순서·제목. 설명은 lines.json _help 의 같은 이름 글
 export const SECTIONS = [
@@ -118,10 +118,12 @@ const SLOT_HINT = {
 };
 // 여러 개 넣는 칸(응원·춤·집중·일정 알림·점심시간) 설명
 export const MULTI_HINT = '여러 개 넣으면 그때마다 랜덤으로 하나가 나와요';
-// 파일마다 한마디를 넣는 칸(일정 알림은 일정 말풍선이 떠서 빼요)
-export const SAY_SLOTS = ['cheer', 'dance', 'study', 'lunch'];
+// 파일마다 한마디를 넣는 칸(여러 개 넣는 칸 전부). 일정 알림 한마디는 일정 말풍선 글을 대신하고 {mins}·{title}·{time}·{where} 를 쓸 수 있다
+export const SAY_SLOTS = ['cheer', 'dance', 'study', 'plan', 'lunch'];
 export const SAY_PLACEHOLDER = '한마디(비우면 기본 대사)';
 export const SAY_TITLE = '이 영상이 나올 때 할 한마디. 비우면 그 칸 기본 대사를 써요';
+export const sayPlaceholder = (slot) => (SAY_VARS[slot]?.length ? `한마디(${SAY_VARS[slot].map((v) => `{${v}}`).join(' ')} 쓸 수 있어요)` : SAY_PLACEHOLDER);
+export const sayTitle = (slot) => (slot === 'plan' ? '이 영상이 나올 때 일정 말풍선 대신 할 말. {mins} 몇 분 전 · {title} 제목 · {time} 시각 · {where} 장소. 비우면 기본 일정 알림 글' : SAY_TITLE);
 export const ACCEPT = MEDIA_EXTS.map((x) => `.${x}`).join(',');
 // media: 칸마다 첫 파일(예전 모양) · clips: 여러 개 넣는 칸의 목록 [{ file, say?, frame }] (데몬 GET /characters)
 export function slotRows(media = {}, clips = {}) {
@@ -141,7 +143,7 @@ export function missingRequired(chosen) {
   return REQUIRED_SLOTS.filter((s) => !chosen?.[s] || (Array.isArray(chosen[s]) && !chosen[s].length)).map((s) => SLOT_LABEL[s]);
 }
 
-// 「말투 가져오기」 고를 것: 기본 다섯 + 만든 캐릭터
+// 「말투 가져오기」 고를 것: 기본 여덟 + 만든 캐릭터
 export function sourceOptions(list) {
   return (Array.isArray(list) ? list : []).filter((c) => c && typeof c.id === 'string').map((c) => ({ id: c.id, name: c.name ?? c.id, custom: !!c.custom }));
 }

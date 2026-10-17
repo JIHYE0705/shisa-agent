@@ -25,18 +25,22 @@ export const CHARACTERS = {
   rakko: { name: '랏코', blink: true },
   momonga: { name: '모몽가', blink: true },
   usagi: { name: '우사기', blink: false },
+  kani: { name: '카니', blink: true },
+  chiikawa: { name: '치이카와', blink: true },
+  kuri: { name: '쿠리만쥬', blink: true },
 };
 export const DANCE_CLIPS = ['plan', 'dance', 'cheer', 'lunch'];
 export const CLIP_KINDS = ['plan', 'dance', 'cheer', 'study', 'lunch'];
 // 빈 칸 대신 쓰는 순서(데몬 clips.ts CLIP_FALLBACK 과 같다). 집중은 없으면 정지 그림
 export const CLIP_FALLBACK = { plan: ['dance', 'cheer'], dance: ['cheer'], cheer: ['dance'], study: [], lunch: ['plan', 'dance', 'cheer'] };
-export const NO_SAY = new Set(['plan']); // 일정 알림은 일정 말풍선이 뜬다
+// 한마디 자리표시(데몬 clips.ts SAY_VARS 와 같다): 일정 알림 한마디는 일정 말풍선을 대신해 같은 자리표시를 쓴다
+export const SAY_VARS = { plan: ['mins', 'title', 'time', 'where'], dance: [], cheer: [], study: [], lunch: [] };
 // 칸 하나의 목록(데몬 clips.ts clipList 와 같다): 직접 넣은 것(한마디 그대로) > 다른 칸 이름 > 빈 칸 대신 쓰는 순서(한마디 없이)
 export function clipList(t, kind) {
   const own = (k) => (Array.isArray(t?.[k]) && t[k].length ? t[k] : null);
   const strip = (l) => l.map(({ say: _s, ...x }) => x);
   const mine = own(kind);
-  if (mine) return NO_SAY.has(kind) ? strip(mine) : mine.map((x) => ({ ...x }));
+  if (mine) return mine.map((x) => ({ ...x }));
   const seen = new Set([kind]);
   let alias = t?.[kind];
   while (typeof alias === 'string' && CLIP_KINDS.includes(alias) && !seen.has(alias)) {
@@ -54,7 +58,7 @@ export function pickVariant(n, last, rand = Math.random) {
   const i = Math.min(n - 2, Math.floor(rand() * (n - 1)));
   return i >= last ? i + 1 : i;
 }
-export const CHARACTER_IDS = Object.freeze(Object.keys(CHARACTERS)); // 기본 다섯
+export const CHARACTER_IDS = Object.freeze(Object.keys(CHARACTERS)); // 기본 여덟
 export const characterIds = () => Object.keys(CHARACTERS); // 지금 고를 수 있는 것(사용자 캐릭터 포함)
 export const DEFAULT_CHARACTER = 'shisa';
 // 사용자 캐릭터 id 모양(데몬 character-store.ts USER_ID 와 같다). 있는지는 데몬이 다시 본다

@@ -4,7 +4,7 @@
 //     눈 뜬·감은 그림은 칸에 하나(media), 응원·춤·집중·일정 알림·점심시간은 여러 개(clips — 그때마다 하나가 랜덤으로, say = 그 영상의 한마디)
 //     예전 모양(media 에 칸마다 파일 하나, frames 에 칸마다 테두리)도 그대로 읽는다(읽을 때 clips 로 옮긴다)
 //   ~/.cy-agent/characters/<id>/<칸>-<무작위>.<확장자>  올린 그림·영상(이름은 여기서 새로 짓는다)
-//   ~/.cy-agent/characters/overrides/<기본 id>.json  기본 캐릭터(시사·하치와레·랏코·모몽가·우사기)에서 고친 칸만
+//   ~/.cy-agent/characters/overrides/<기본 id>.json  기본 캐릭터(시사·하치와레·랏코·모몽가·우사기·카니·치이카와·쿠리만쥬)에서 고친 칸만
 // 대사 모양은 assets/characters/lines.json 의 캐릭터 하나와 같다(characters.ts LinesEntry). 칸 이름은 점으로 잇는다(phrases.dance, flair.lead.happy).
 // 자리표시({title} 등)는 그 칸에 원래 있던 것만 쓸 수 있다(모르는 건 저장 거절 — phrases.ts unknownVars 와 같은 검사).
 // 바뀌면 installCharacters 로 데몬 목록(characters.ts)을 바로 바꾸고 onChange 로 알린다(main 이 SSE characters 를 보낸다).
@@ -18,7 +18,7 @@ import {
 } from "./characters.ts";
 import { PHRASES, unknownVars } from "./phrases.ts";
 import { LINES, QUICK_LINES, SHISA_EXTRA } from "./local-mode.ts";
-import { NO_SAY, type ClipTable } from "./clips.ts";
+import { SAY_VARS, type ClipKind, type ClipTable } from "./clips.ts";
 
 // ---- 그림·영상 칸 ----
 // 꼭 넣을 넷: 눈 뜬 것·눈 감은 것(깜빡임)·응원·춤. 고를 수 있는 것: 집중(공부 중)·일정 알림·점심시간(없으면 일정 알림 영상). 빈 칸은 데스크톱이 대신 쓸 것을 고른다(character.js customAssets)
@@ -348,7 +348,8 @@ export class CharacterStore {
       const items: MediaItem[] = [];
       for (const x of list) {
         if (!isObj(x) || !okFile(slot, x.file) || items.some((y) => y.file === x.file)) continue;
-        const say = NO_SAY.has(slot as never) ? undefined : cleanSay(x.say);
+        const said = cleanSay(x.say);
+        const say = typeof said === "string" && !unknownVars(said, SAY_VARS[slot as ClipKind] ?? []).length ? said : undefined;
         items.push({ file: x.file, ...(typeof say === "string" ? { say } : {}), ...(typeof x.frame === "boolean" ? { frame: x.frame } : {}) });
       }
       if (items.length) clips[slot as MediaSlot] = items;
@@ -491,7 +492,9 @@ export class CharacterStore {
         if ("say" in m) {
           const say = cleanSay(m.say);
           if (say && typeof say === "object") return fail(400, say.error);
-          if (say && NO_SAY.has(slot as never)) return fail(400, "일정 알림은 일정 말풍선이 떠서 한마디를 넣지 않아요");
+          const vars = SAY_VARS[slot as ClipKind] ?? [];
+          const bad = typeof say === "string" ? unknownVars(say, vars) : [];
+          if (bad.length) return fail(400, `모르는 자리표시 ${bad.map((x) => `{${x}}`).join(" ")}${vars.length ? ` · 쓸 수 있는 것: ${vars.map((x) => `{${x}}`).join(" ")}` : " · 이 칸 한마디는 자리표시를 못 써요"}`);
           if (say) item.say = say; else delete item.say;
         }
         if ("frame" in m) {

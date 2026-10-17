@@ -15,8 +15,8 @@ export type ClipItem = { file?: string; scene?: boolean; say?: string };
 export type ClipTable = Partial<Record<ClipKind, ClipItem[] | string>>;
 // 빈 칸 대신 쓰는 순서(데스크톱 character.js CLIP_FALLBACK 과 같다). 집중은 없으면 정지 그림
 export const CLIP_FALLBACK: Record<ClipKind, ClipKind[]> = { plan: ["dance", "cheer"], dance: ["cheer"], cheer: ["dance"], study: [], lunch: ["plan", "dance", "cheer"] };
-// 한마디를 쓰지 않는 칸: 일정 알림은 일정 말풍선이 뜬다
-export const NO_SAY: ReadonlySet<ClipKind> = new Set(["plan"]);
+// 한마디에 쓸 수 있는 자리표시: 일정 알림 한마디는 일정 말풍선(문구 meeting_alert)을 대신하므로 같은 자리표시를 쓴다. 다른 칸은 없음
+export const SAY_VARS: Readonly<Record<ClipKind, readonly string[]>> = { plan: ["mins", "title", "time", "where"], dance: [], cheer: [], study: [], lunch: [] };
 
 export const CLIPS_FILE = fileURLToPath(new URL("../../assets/characters/clips.json", import.meta.url));
 export const CLIPS_JSON = JSON.parse(readFileSync(CLIPS_FILE, "utf8")) as Record<string, ClipTable>;
@@ -28,7 +28,7 @@ const own = (t: ClipTable | undefined, k: ClipKind): ClipItem[] | undefined => {
 // 칸 하나의 목록: 직접 넣은 것(한마디 그대로) > 다른 칸 이름(한마디 없이) > 빈 칸 대신 쓰는 순서(한마디 없이). 없으면 []
 export function clipList(t: ClipTable | undefined, kind: ClipKind): ClipItem[] {
   const mine = own(t, kind);
-  if (mine) return mine.map((x) => ({ ...x, ...(NO_SAY.has(kind) ? { say: undefined } : {}) }));
+  if (mine) return mine.map((x) => ({ ...x }));
   const strip = (l: ClipItem[]) => l.map(({ say: _s, ...x }) => x);
   const seen = new Set<ClipKind>([kind]);
   let alias = t?.[kind];

@@ -16,8 +16,8 @@ const OTHERS = CHARACTER_IDS.filter((id) => id !== 'shisa');
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets');
 const fileOf = (url) => path.join(ASSETS, resolveAsset(url).rel);
 
-test('캐릭터: 다섯, 모르는 id 는 시사', () => {
-  assert.deepEqual(CHARACTER_IDS, ['shisa', 'hachi', 'rakko', 'momonga', 'usagi']);
+test('캐릭터: 여덟, 모르는 id 는 시사', () => {
+  assert.deepEqual(CHARACTER_IDS, ['shisa', 'hachi', 'rakko', 'momonga', 'usagi', 'kani', 'chiikawa', 'kuri']);
   for (const bad of [undefined, null, '', 'nope', '__proto__', 'constructor', 'Hachi', 3]) assert.equal(okCharacter(bad), 'shisa', String(bad));
   assert.equal(characterAssets('nope').id, 'shisa');
 });
@@ -25,7 +25,7 @@ test('캐릭터: 다섯, 모르는 id 는 시사', () => {
 test('캐릭터 그림·영상: 주소가 다 허용 목록에 있고 레포 assets 에 실제 파일이 있다(배포에 같이 들어간다)', () => {
   for (const id of CHARACTER_IDS) {
     const a = characterAssets(id);
-    const urls = [a.open, ...(a.closed ? [a.closed] : []), ...Object.values(a.videos).flatMap((v) => [v.src, v.poster])];
+    const urls = [a.open, ...(a.closed ? [a.closed] : []), ...Object.values(a.videos).filter(Boolean).flatMap((v) => [v.src, v.poster])];
     for (const u of urls) {
       assert.ok(resolveAsset(u), `${id}: ${u} 허용 목록에 없음`);
       assert.ok(fs.existsSync(fileOf(u)), `${id}: ${u} 파일 없음`);
@@ -45,9 +45,11 @@ test('캐릭터 그림·영상: 주소가 다 허용 목록에 있고 레포 ass
 test('캐릭터 영상: 알파 캐릭터는 VP9 알파, 장면은 정사각형 512', () => {
   for (const id of OTHERS) {
     const meta = JSON.parse(fs.readFileSync(path.join(ASSETS, 'characters', id, 'video.json'), 'utf8'));
-    for (const [name, view] of [['study', 'studying'], ['plan', 'dancing']]) {
+    for (const name of Object.keys(meta)) {
       assert.equal(meta[name].size, 512, `${id}/${name}`);
-      assert.equal(meta[name].scene, clipList(CHARACTER_CLIPS[id], name)[0].scene === true, `${id}/${name} scene`);
+      const item = Object.values(CHARACTER_CLIPS[id]).flat().find((x) => x?.file === name);
+      assert.ok(item, `${id}/${name}: clips.json 에 없는 영상`);
+      assert.equal(meta[name].scene, item.scene === true, `${id}/${name} scene`);
       assert.ok(meta[name].frames > 0);
     }
   }
@@ -64,7 +66,8 @@ test('우사기: 집중·알림·춤·응원은 각각 로컬 포스터와 투�
   const a = characterAssets('usagi');
   const meta = JSON.parse(fs.readFileSync(path.join(ASSETS, 'characters/usagi/video.json'), 'utf8'));
   const states = { study: a.videos.studying, plan: a.clips.plan, dance: a.clips.dance, cheer: a.clips.cheer };
-  assert.equal(a.clips.lunch.src, a.clips.plan.src, '점심시간 기본값은 일정 알림 영상');
+  assert.match(a.clips.lunch.src, /usagi\/lunch\.webm$/, '점심은 먹는 영상(투명)');
+  assert.equal(a.clips.lunch.scene, false);
   assert.equal(new Set(Object.values(states).map((v) => v.src)).size, 4);
   for (const [name, v] of Object.entries(states)) {
     assert.equal(v.scene, false);

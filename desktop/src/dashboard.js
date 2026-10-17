@@ -2,6 +2,7 @@
 import { isSafeLink } from './bubbles.js';
 import { shapeRules } from './todo-rules.js';
 import { PRIORITIES } from './todos.js';
+import { shapeManualProjects } from './manual-projects.js';
 
 export const SECTIONS = ['setup', 'overview', 'projects', 'todos', 'today', 'chat', 'models'];
 export const SECTION_LABELS = { setup: '설치', overview: '개요', projects: '프로젝트', todos: '할 일', today: '오늘 할 일', chat: '채팅', models: '모델' };
@@ -73,6 +74,7 @@ export function groupTodos(todos) {
       ...(str(t.progress) ? { progress: t.progress, progressAt: str(t.progressAt) } : {}), // 어디까지 됐는지(데몬 진행 확인)
       ...(typeof t.doing === 'boolean' ? { doing: t.doing } : {}), // 사용자가 누른 (진행중) 토글
       ...(str(t.today) ? { today: t.today } : {}), // 오늘 할 일로 고른 날(KST)
+      ...(str(t.projectId) ? { projectId: t.projectId } : {}), // 묶인 직접 만든 프로젝트
     });
   }
   return [...groups.entries()]
@@ -168,6 +170,7 @@ export function shapeDashboard(raw, now = Date.now()) {
   const projects = all.filter((p) => !p.hidden); // 숨긴 건 집계·목록에서 빼고 따로
   const hiddenProjects = all.filter((p) => p.hidden);
   const todoGroups = groupTodos(r.todos);
+  const manualProjects = shapeManualProjects(r.manualProjects, todoGroups.flatMap((g) => g.items), now); // 직접 만든 프로젝트(위쪽)
   // 백로그(P4 — 기한 없고 안 중요)는 열린 할 일 수·배지에서 뺀다
   const backlogTodos = todoGroups.find((g) => g.priority === 4)?.items.length ?? 0;
   const openTodos = todoGroups.reduce((n, g) => n + g.items.length, 0) - backlogTodos;
@@ -207,6 +210,7 @@ export function shapeDashboard(raw, now = Date.now()) {
     briefing: b ? { at: str(b.at), time: clockTime(b.at), rel: relativeTime(b.at, now), bubble: str(b.bubble), md: str(b.replyMd) } : null,
     projects,
     hiddenProjects,
+    manualProjects,
     todoGroups,
     todoRules: shapeRules(r.todoRules),
     recentDone: shapeRecentDone(r.recentDone, now),
