@@ -205,12 +205,26 @@ export function sanitizeCharacterBody(b, create = false) {
       out.frames = { ...v };
     }
     else if (k === 'lines') { if (!isPlain(v)) return null; out.lines = JSON.parse(JSON.stringify(v)); }
+    else if (k === 'files' && !create) {
+      // 파일마다 한마디·테두리: { 저장 이름: { say?: 글|null, frame?: 켬/끔|null } }
+      if (!isPlain(v)) return null;
+      const f = {};
+      for (const [file, m] of Object.entries(v)) {
+        if (!okStoredFile(file) || !isPlain(m) || !Object.keys(m).every((x) => x === 'say' || x === 'frame')) return null;
+        if ('say' in m && m.say !== null && typeof m.say !== 'string') return null;
+        if ('frame' in m && m.frame !== null && typeof m.frame !== 'boolean') return null;
+        f[file] = { ...m };
+      }
+      out.files = f;
+    }
     else return null;
   }
   if (create && typeof out.name !== 'string') return null;
   return out;
 }
 export const okMediaSlot = (s) => typeof s === 'string' && MEDIA_SLOTS.includes(s);
+// 데몬이 지은 저장 이름(<칸>-<무작위 8자>.<확장자>) — 여러 개 넣는 칸에서 하나만 빼거나 한마디를 달 때
+export const okStoredFile = (f) => typeof f === 'string' && /^[a-z_]{3,16}-[a-z0-9]{8}\.(png|jpg|webp|gif|webm|mp4)$/.test(f) && MEDIA_SLOTS.includes(f.split('-')[0]);
 
 // 연결 줄에서 패널로 보낼 수 있는 탭(설치 안내 · AI 고르기)
 export const PANEL_TARGETS = ['setup', 'models'];

@@ -134,7 +134,8 @@ export type BusHandlers = {
   // 집중하기(focus.ts): GET /focus · GET /focus/stats?from&to · POST /focus/start|pause|resume|stop. 없으면 503
   focus?: FocusApi;
   // 캐릭터 만들기·대사 고치기(character-store.ts): GET/POST /characters · GET/PUT/DELETE /characters/:id · DELETE /characters/:id/lines
-  // · PUT/DELETE /characters/:id/media/:slot(본문 = 파일 바이트, 이름은 x-file-name). 없으면 503
+  // · PUT/DELETE /characters/:id/media/:slot(본문 = 파일 바이트, 이름은 x-file-name — 여러 개 넣는 칸은 더한다)
+  // · DELETE /characters/:id/media/:slot/:file(그 파일 하나만). 없으면 503
   characters?: CharactersApi;
 };
 export type CharactersApi = { handle(method: string, parts: string[], body?: unknown, upload?: { name: string; bytes: Uint8Array }): { status: number; body: unknown } };
@@ -507,12 +508,14 @@ export class Bus {
       return;
     }
     // 캐릭터(character-store.ts) — 쓰기(POST·PUT·DELETE)는 POST 와 같은 헤더 규칙
-    const ch = url.pathname.match(/^\/characters(?:\/([\w-]{1,64})(?:\/(lines|media)(?:\/([\w-]{1,32}))?)?)?$/);
+    // /characters/:id/media/:slot/:file — 여러 개 넣는 칸에서 파일 하나(저장 이름)
+    const ch = url.pathname.match(/^\/characters(?:\/([\w-]{1,64})(?:\/(lines|media)(?:\/([\w-]{1,32})(?:\/([\w.-]{1,64}))?)?)?)?$/);
     if (ch) {
       const method = req.method ?? "GET";
       if (method !== "GET" && (req.headers["x-cy-agent"] !== "1" || (req.headers.origin && !req.headers.origin.startsWith("file://")))) return json(res, 403, { error: "forbidden" });
       if (!h.characters) return json(res, 503, { error: "characters unavailable" });
-      const parts = [ch[1], ch[2], ch[3]].filter((x): x is string => !!x);
+      if (ch[4] && ch[2] !== "media") return json(res, 404, { error: "not found" });
+      const parts = [ch[1], ch[2], ch[3], ch[4]].filter((x): x is string => !!x);
       let body: unknown, upload: { name: string; bytes: Uint8Array } | undefined;
       if (ch[2] === "media" && method === "PUT") {
         let name = "";

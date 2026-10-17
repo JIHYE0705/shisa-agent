@@ -1,6 +1,6 @@
 // 설정 창 「캐릭터」 편집 — 순수 로직: 대사 칸 묶기·글 ↔ 값·자리표시 검사·고친 칸만 고르기·그림 칸·만들기 본문.
 // 칸 목록(schema)·설명(help)·칸 이름(phrases.dance, flair.lead.happy …)은 데몬 GET /characters 가 준다(agent/src/character-store.ts).
-import { MEDIA_SLOTS, REQUIRED_SLOTS, MEDIA_EXTS, clipKind } from './character.js';
+import { MEDIA_SLOTS, REQUIRED_SLOTS, MULTI_SLOTS, MEDIA_EXTS, clipKind } from './character.js';
 
 // 묶음 순서·제목. 설명은 lines.json _help 의 같은 이름 글
 export const SECTIONS = [
@@ -106,7 +106,7 @@ export function diffLines(base, edited) {
 export const changedCount = (base, edited) => Object.keys(flattenLines(diffLines(base, edited))).length;
 
 // ---- 그림 칸 ----
-const SLOT_LABEL = { eyes_open: '눈 뜬 모습', eyes_closed: '눈 감은 모습', cheer: '응원', dance: '춤', study: '집중', plan: '일정 알림' };
+const SLOT_LABEL = { eyes_open: '눈 뜬 모습', eyes_closed: '눈 감은 모습', cheer: '응원', dance: '춤', study: '집중', plan: '일정 알림', lunch: '점심시간' };
 const SLOT_HINT = {
   eyes_open: '평소 모습. 정사각형이 아니어도 돼요',
   eyes_closed: '깜빡일 때 잠깐 보여요. 없으면 깜빡이지 않아요',
@@ -114,17 +114,30 @@ const SLOT_HINT = {
   dance: '「춤춰 줘」 때. 없으면 응원을 써요',
   study: '집중하기·작업 중일 때. 없으면 평소 모습 그대로',
   plan: '일정 몇 분 전 알림 때. 없으면 춤을 써요',
+  lunch: '점심시간(12시대)에 하루 한 번. 없으면 일정 알림을 써요',
 };
+// 여러 개 넣는 칸(응원·춤·집중·일정 알림·점심시간) 설명
+export const MULTI_HINT = '여러 개 넣으면 그때마다 랜덤으로 하나가 나와요';
+// 파일마다 한마디를 넣는 칸(일정 알림은 일정 말풍선이 떠서 빼요)
+export const SAY_SLOTS = ['cheer', 'dance', 'study', 'lunch'];
+export const SAY_PLACEHOLDER = '이 영상이 나올 때 할 한마디(비우면 기본 대사)';
 export const ACCEPT = MEDIA_EXTS.map((x) => `.${x}`).join(',');
-export function slotRows(media = {}) {
-  return MEDIA_SLOTS.map((slot) => ({ slot, label: SLOT_LABEL[slot], hint: SLOT_HINT[slot], required: REQUIRED_SLOTS.includes(slot), file: typeof media?.[slot] === 'string' ? media[slot] : null }));
+// media: 칸마다 첫 파일(예전 모양) · clips: 여러 개 넣는 칸의 목록 [{ file, say?, frame }] (데몬 GET /characters)
+export function slotRows(media = {}, clips = {}) {
+  return MEDIA_SLOTS.map((slot) => {
+    const multi = MULTI_SLOTS.includes(slot);
+    const one = typeof media?.[slot] === 'string' ? media[slot] : null;
+    const files = !multi ? [] : Array.isArray(clips?.[slot]) ? clips[slot].filter((x) => x && typeof x.file === 'string').map((x) => ({ file: x.file, say: typeof x.say === 'string' ? x.say : '', ...(typeof x.frame === 'boolean' ? { frame: x.frame } : {}) }))
+      : one ? [{ file: one, say: '' }] : [];
+    return { slot, label: SLOT_LABEL[slot], hint: SLOT_HINT[slot], required: REQUIRED_SLOTS.includes(slot), multi, say: SAY_SLOTS.includes(slot), file: multi ? (files[0]?.file ?? null) : one, files };
+  });
 }
 // 고른 파일 이름이 받는 종류인가(내용은 데몬이 다시 본다)
 export const okMediaName = (name) => MEDIA_EXTS.includes(String(name ?? '').toLowerCase().split('.').pop() ?? '') && /\./.test(String(name ?? ''));
 export const previewKind = (name) => clipKind(name);
 // 만들 때 꼭 넣을 것 중 빠진 것(라벨)
 export function missingRequired(chosen) {
-  return REQUIRED_SLOTS.filter((s) => !chosen?.[s]).map((s) => SLOT_LABEL[s]);
+  return REQUIRED_SLOTS.filter((s) => !chosen?.[s] || (Array.isArray(chosen[s]) && !chosen[s].length)).map((s) => SLOT_LABEL[s]);
 }
 
 // 「말투 가져오기」 고를 것: 기본 다섯 + 만든 캐릭터

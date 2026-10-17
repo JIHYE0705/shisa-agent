@@ -33,6 +33,6 @@ contextBridge.exposeInMainWorld('cy', {
   resetCharacter: (id) => ipcRenderer.invoke('characters-reset', String(id)),
   deleteCharacter: (id) => ipcRenderer.invoke('characters-delete', String(id)),
   putCharacterMedia: (id, slot, name, mime, bytes) => ipcRenderer.invoke('characters-media-put', String(id), String(slot), String(name), String(mime ?? ''), bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)),
-  deleteCharacterMedia: (id, slot) => ipcRenderer.invoke('characters-media-delete', String(id), String(slot)),
+  deleteCharacterMedia: (id, slot, file) => ipcRenderer.invoke('characters-media-delete', String(id), String(slot), file == null ? null : String(file)),
   onCharacters: (cb) => { const h = (_e, p) => cb(p); ipcRenderer.on('characters', h); return () => ipcRenderer.removeListener('characters', h); },
 });

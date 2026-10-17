@@ -8,9 +8,9 @@ import {
   ALERT_DEFAULT, cleanCalendarAlert, alertMinutesNext, parseAlertMinutes, alertChoices, calendarAlertSummary,
 } from '../src/settings.js';
 import { mountGuidelines } from '../src/guidelines.js';
-import { CHARACTERS, CHARACTER_IDS, characterAssets, characterName, okCharacterId, USER_CHAR_DIR, defaultFrame } from '../src/character.js';
+import { CHARACTERS, CHARACTER_IDS, characterAssets, characterName, okCharacterId, USER_CHAR_DIR, defaultFrame, MULTI_SLOTS } from '../src/character.js';
 import { applyCharacters, effectiveLines, defaultsOf } from '../src/character-registry.js';
-import { editorSections, flattenLines, unflattenLines, fieldText, fieldProblem, linesFromTexts, diffLines, slotRows, okMediaName, previewKind, missingRequired, sourceOptions, ACCEPT } from '../src/character-edit.js';
+import { editorSections, flattenLines, unflattenLines, fieldText, fieldProblem, linesFromTexts, diffLines, slotRows, okMediaName, previewKind, missingRequired, sourceOptions, ACCEPT, MULTI_HINT, SAY_PLACEHOLDER } from '../src/character-edit.js';
 import { who, setWho, onWho } from './who.js';
 // 안내 글 속 이름(<span class="who">)도 캐릭터 이름으로
 onWho(() => { for (const n of document.querySelectorAll('.who')) n.textContent = who(); });
@@ -339,55 +339,93 @@ function mediaPreview(src, name) {
   return im;
 }
 
-// 그림 칸 목록. chosen: 만들 때 고른 파일들({ 칸: { file, url } }) · entry: 고칠 때(바로 올린다)
-// frames: 칸마다 지금 테두리(없는 칸은 파일 종류 기본값) · onFrame(칸, 켬/끔)
-function slotList(entry, chosen, onChange, frames = {}, onFrame = () => {}) {
+// 그림 칸 목록. rows: slotRows(만들 때는 고른 파일로 지은 것) · srcOf(파일) → 미리보기 주소 · nameOf(파일) → 종류를 볼 이름
+// h: { pick(칸, [File], err) 고르기·더하기 · remove(칸, 파일|null, err) 빼기 · frame(칸, 파일|null, 켬, 체크박스) · say(칸, 파일, 글) }
+// 눈 뜬·감은 그림은 칸에 하나(바꾸기), 응원·춤·집중·일정 알림·점심시간은 여러 개(더하기·하나씩 빼기·파일마다 테두리·한마디)
+function slotList(rows, srcOf, nameOf, frames, h) {
   const box = el('div', 'slots');
-  for (const r of slotRows(entry?.media)) {
-    const row = el('div', 'slot');
-    const head = el('div', 'slot-head');
-    head.append(el('b', null, r.label), el('span', r.required ? 'slot-req' : 'faint', r.required ? '꼭 넣어 주세요' : '골라도 돼요'));
-    const local = chosen?.[r.slot];
-    const src = local ? local.url : r.file ? `${USER_CHAR_DIR}/${entry.id}/${r.file}` : null;
-    const fileName = local ? local.file.name : r.file;
-    const pic = mediaPreview(src, fileName);
-    const framed = src ? (typeof frames[r.slot] === 'boolean' ? frames[r.slot] : defaultFrame(fileName)) : false;
-    if (src) pic.classList.toggle('framed', framed); // 오버레이와 같은 둥근 네모 카드로 미리 보기
+  const fileInput = (multi, onPick) => {
     const input = el('input');
     input.type = 'file';
     input.accept = ACCEPT;
+    input.multiple = multi;
     input.hidden = true;
-    const pick = el('button', 'small', src ? '바꾸기' : '고르기');
-    pick.type = 'button';
-    pick.addEventListener('click', () => input.click());
+    input.addEventListener('change', () => { const fs = [...(input.files ?? [])]; input.value = ''; if (fs.length) onPick(fs); });
+    return input;
+  };
+  const frameBox = (framed, pic, onFrame) => {
+    // 테두리: 투명 배경 png·webm 은 기본 끔, 배경 있는 jpg·gif·mp4 등은 기본 켬
+    const fl = el('label', 'slot-frame');
+    const fc = el('input');
+    fc.type = 'checkbox';
+    fc.checked = framed;
+    fc.addEventListener('change', () => { pic.classList.toggle('framed', fc.checked); onFrame(fc.checked, fc); });
+    fl.append(fc, document.createTextNode('테두리'));
+    return fl;
+  };
+  for (const r of rows) {
+    const row = el('div', `slot${r.multi ? ' slot-multi' : ''}`);
+    const head = el('div', 'slot-head');
+    head.append(el('b', null, r.label), el('span', r.required ? 'slot-req' : 'faint', r.required ? '꼭 넣어 주세요' : '골라도 돼요'));
     const err = el('span', 'ph-err');
-    input.addEventListener('change', async () => {
-      const f = input.files?.[0];
-      input.value = '';
-      if (!f) return;
-      if (!okMediaName(f.name)) { err.textContent = 'png·jpg·webp·gif·webm·mp4 파일만 넣을 수 있어요'; return; }
-      err.textContent = '';
-      await onChange(r.slot, f, err);
-    });
-    const btns = el('div', 'slot-btns');
-    btns.append(pick);
-    if (src) {
-      // 칸마다 테두리: 투명 배경 png·webm 은 기본 끔, 배경 있는 jpg·gif·mp4 등은 기본 켬
-      const fl = el('label', 'slot-frame');
-      const fc = el('input');
-      fc.type = 'checkbox';
-      fc.checked = framed;
-      fc.addEventListener('change', () => { pic.classList.toggle('framed', fc.checked); onFrame(r.slot, fc.checked, fc); });
-      fl.append(fc, document.createTextNode('테두리'));
-      btns.append(fl);
+    const check = (fs) => { if (fs.some((f) => !okMediaName(f.name))) { err.textContent = 'png·jpg·webp·gif·webm·mp4 파일만 넣을 수 있어요'; return false; } err.textContent = ''; return true; };
+    row.append(head);
+    if (!r.multi) {
+      const src = r.file ? srcOf(r.file) : null;
+      const pic = mediaPreview(src, r.file ? nameOf(r.file) : null);
+      const framed = src ? (typeof frames[r.slot] === 'boolean' ? frames[r.slot] : defaultFrame(nameOf(r.file))) : false;
+      if (src) pic.classList.toggle('framed', framed); // 오버레이와 같은 둥근 네모 카드로 미리 보기
+      const input = fileInput(false, async (fs) => { if (check(fs)) await h.pick(r.slot, fs, err); });
+      const pick = el('button', 'small', src ? '바꾸기' : '고르기');
+      pick.type = 'button';
+      pick.addEventListener('click', () => input.click());
+      const btns = el('div', 'slot-btns');
+      btns.append(pick);
+      if (src) btns.append(frameBox(framed, pic, (on, fc) => h.frame(r.slot, null, on, fc)));
+      if (src) {
+        const rm = el('button', 'small ghost', '빼기');
+        rm.type = 'button';
+        rm.addEventListener('click', () => h.remove(r.slot, null, err));
+        btns.append(rm);
+      }
+      row.append(pic, el('p', 'faint', r.hint), btns, err, input);
+      box.append(row);
+      continue;
     }
-    if (src) {
+    // 여러 개: 파일마다 미리보기·테두리·한마디·빼기, 맨 아래 더하기
+    const list = el('div', 'slot-files');
+    if (!r.files.length) list.append(mediaPreview(null));
+    for (const it of r.files) {
+      const item = el('div', 'slot-file');
+      const src = srcOf(it.file);
+      const pic = mediaPreview(src, nameOf(it.file));
+      const framed = typeof it.frame === 'boolean' ? it.frame : defaultFrame(nameOf(it.file));
+      pic.classList.toggle('framed', framed);
+      const btns = el('div', 'slot-btns');
+      btns.append(frameBox(framed, pic, (on, fc) => h.frame(r.slot, it.file, on, fc)));
       const rm = el('button', 'small ghost', '빼기');
       rm.type = 'button';
-      rm.addEventListener('click', () => onChange(r.slot, null, err));
+      rm.addEventListener('click', () => h.remove(r.slot, it.file, err));
       btns.append(rm);
+      item.append(pic, btns);
+      if (r.say) {
+        const say = el('input', 'slot-say');
+        say.type = 'text';
+        say.placeholder = SAY_PLACEHOLDER;
+        say.value = it.say ?? '';
+        say.setAttribute('aria-label', `${r.label} 한마디`);
+        say.addEventListener('change', () => h.say(r.slot, it.file, say.value));
+        item.append(say);
+      }
+      list.append(item);
     }
-    row.append(head, pic, el('p', 'faint', r.hint), btns, err, input);
+    const input = fileInput(true, async (fs) => { if (check(fs)) await h.pick(r.slot, fs, err); });
+    const add = el('button', 'small', r.files.length ? '＋ 더 넣기' : '고르기');
+    add.type = 'button';
+    add.addEventListener('click', () => input.click());
+    const btns = el('div', 'slot-btns');
+    btns.append(add);
+    row.append(list, el('p', 'faint', r.hint), el('p', 'faint slot-multi-hint', MULTI_HINT), btns, err, input);
     box.append(row);
   }
   return box;
@@ -486,23 +524,41 @@ function renderCharEditor() {
   const status = el('span', 'ph-err ce-status');
   if (editing.mode === 'new') {
     head.append(el('h3', null, '새 캐릭터 만들기'), close);
+    // 고른 파일: 눈 그림은 { 칸: { key, file, url } }, 여러 개 넣는 칸은 { 칸: [{ key, file, url, say, frame? }] }
     const chosen = {};
+    let seq = 0;
+    const byKey = new Map(); // 미리보기 키 → 고른 파일
     const nameIn = el('input', 'ce-name');
     nameIn.type = 'text';
     nameIn.placeholder = '이름(예: 까망이)';
     nameIn.addEventListener('input', () => { editDirty = true; });
     const src = sourceSelect('shisa');
-    const frames = {}; // 사용자가 고른 테두리만(나머지는 파일 종류 기본값)
+    const frames = {}; // 눈 그림 칸마다 사용자가 고른 테두리(나머지는 파일 종류 기본값)
     let slotsBox = null;
+    const chosenRows = () => slotRows().map((r) => {
+      const c = chosen[r.slot];
+      if (!r.multi) return { ...r, file: c ? c.key : null };
+      return { ...r, files: (c ?? []).map((x) => ({ file: x.key, say: x.say, ...(typeof x.frame === 'boolean' ? { frame: x.frame } : {}) })), file: c?.[0]?.key ?? null };
+    });
+    const take = (f) => { const x = { key: `k${++seq}`, file: f, url: URL.createObjectURL(f), say: '' }; byKey.set(x.key, x); return x; };
+    const drop = (x) => { if (x) { URL.revokeObjectURL(x.url); byKey.delete(x.key); } };
     const redrawSlots = () => {
-      const next = slotList(null, chosen, (slot, f) => {
-        editDirty = true;
-        if (chosen[slot]) URL.revokeObjectURL(chosen[slot].url);
-        delete frames[slot]; // 새 파일이면 그 종류 기본값부터
-        if (f) chosen[slot] = { file: f, url: URL.createObjectURL(f) };
-        else delete chosen[slot];
-        redrawSlots();
-      }, frames, (slot, on) => { frames[slot] = on; editDirty = true; });
+      const next = slotList(chosenRows(), (k) => byKey.get(k)?.url ?? null, (k) => byKey.get(k)?.file.name ?? '', frames, {
+        pick: (slot, fs) => {
+          editDirty = true;
+          if (MULTI_SLOTS.includes(slot)) chosen[slot] = [...(chosen[slot] ?? []), ...fs.map(take)];
+          else { drop(chosen[slot]); delete frames[slot]; chosen[slot] = take(fs[0]); } // 새 파일이면 그 종류 기본값부터
+          redrawSlots();
+        },
+        remove: (slot, key) => {
+          editDirty = true;
+          if (Array.isArray(chosen[slot])) { drop(byKey.get(key)); chosen[slot] = chosen[slot].filter((x) => x.key !== key); if (!chosen[slot].length) delete chosen[slot]; }
+          else { drop(chosen[slot]); delete chosen[slot]; delete frames[slot]; }
+          redrawSlots();
+        },
+        frame: (slot, key, on) => { editDirty = true; if (key) byKey.get(key).frame = on; else frames[slot] = on; },
+        say: (slot, key, text) => { editDirty = true; byKey.get(key).say = text; },
+      });
       if (slotsBox) slotsBox.replaceWith(next);
       slotsBox = next;
     };
@@ -521,10 +577,18 @@ function renderCharEditor() {
       const r = await cy.createCharacter({ name, from: src.value, lines: from ? effectiveLines(from) : {}, frames }).catch(() => null);
       if (!r?.ok) { make.disabled = false; status.textContent = r?.data?.error ?? `만들지 못했어요 · ${who()}에 연결되지 않았어요`; return; }
       const id = r.data.character.id;
+      const meta = {}; // 올린 뒤 데몬이 지은 이름마다 한마디·테두리
       for (const [slot, c] of Object.entries(chosen)) {
-        const u = await cy.putCharacterMedia(id, slot, c.file.name, c.file.type, new Uint8Array(await c.file.arrayBuffer())).catch(() => null);
-        if (!u?.ok) status.textContent = `${slot} 그림을 넣지 못했어요: ${u?.data?.error ?? '연결 안 됨'}`;
-        URL.revokeObjectURL(c.url);
+        for (const x of Array.isArray(c) ? c : [c]) {
+          const u = await cy.putCharacterMedia(id, slot, x.file.name, x.file.type, new Uint8Array(await x.file.arrayBuffer())).catch(() => null);
+          if (!u?.ok) status.textContent = `${slot} 그림을 넣지 못했어요: ${u?.data?.error ?? '연결 안 됨'}`;
+          else if (Array.isArray(c) && (x.say?.trim() || typeof x.frame === 'boolean')) meta[u.data.file] = { ...(x.say?.trim() ? { say: x.say.trim() } : {}), ...(typeof x.frame === 'boolean' ? { frame: x.frame } : {}) };
+          drop(x);
+        }
+      }
+      if (Object.keys(meta).length) {
+        const m = await cy.updateCharacter(id, { files: meta }).catch(() => null);
+        if (!m?.ok) status.textContent = `한마디·테두리를 저장하지 못했어요: ${m?.data?.error ?? '연결 안 됨'}`;
       }
       editDirty = false;
       await save({ character: id }); // 만들면 바로 그 캐릭터로
@@ -537,7 +601,7 @@ function renderCharEditor() {
     srcRow.append(el('span', null, '말투 가져오기'), src, el('span', 'faint', '그 캐릭터의 대사를 전부 복사해서 시작해요. 이름이 든 줄은 새 이름으로 바꿔요'));
     const nameRow = el('label', 'ce-row');
     nameRow.append(el('span', null, '이름'), nameIn);
-    form.append(nameRow, srcRow, el('h3', null, '그림·영상'), el('p', 'hint', '움직이는 gif·webp, 영상(webm·mp4)도 돼요. 크기 제한은 없어요. 「테두리」를 켜면 둥근 네모 카드로 보여요.'), slotsBox);
+    form.append(nameRow, srcRow, el('h3', null, '그림·영상'), el('p', 'hint', `움직이는 gif·webp, 영상(webm·mp4)도 돼요. 크기 제한은 없어요. 「테두리」를 켜면 둥근 네모 카드로 보여요. 응원·춤·집중·일정 알림·점심시간은 ${MULTI_HINT}(춤 모션이나 일정 알림을 여러 개 넣어 보세요).`), slotsBox);
     const foot = el('div', 'ce-foot');
     foot.append(status, make);
     box.append(head, form, foot);
@@ -560,22 +624,36 @@ function renderCharEditor() {
     nameIn.addEventListener('input', () => { editDirty = true; });
     const nameRow = el('label', 'ce-row');
     nameRow.append(el('span', null, '이름'), nameIn);
-    // 칸마다 테두리: 바꾸면 바로 저장
-    const onFrame = async (slot, on, box) => {
-      const r = await cy.updateCharacter(entry.id, { frames: { [slot]: on } }).catch(() => null);
-      if (r?.ok) flash('저장했어요 · 바로 적용돼요'); else { box.checked = !on; flash(r?.data?.error ?? '저장 못 했어요', true); }
-    };
-    // 그림은 고르면 바로 올린다. 새 목록이 오면 편집 화면을 다시 그린다(고치던 글이 있으면 그림 칸만)
-    const onSlot = async (slot, f, err) => {
-      const r = f ? await cy.putCharacterMedia(entry.id, slot, f.name, f.type, new Uint8Array(await f.arrayBuffer())).catch(() => null)
-        : await cy.deleteCharacterMedia(entry.id, slot).catch(() => null);
-      if (!r?.ok) { err.textContent = r?.data?.error ?? '넣지 못했어요'; return; }
-      flash(f ? '그림을 넣었어요' : '그림을 뺐어요');
+    // 그림은 고르면 바로 올리고, 테두리·한마디도 바꾸면 바로 저장. 새 목록이 오면 편집 화면을 다시 그린다(고치던 글이 있으면 그림 칸만)
+    const done = async (r, ok, err) => {
+      if (!r?.ok) { if (err) err.textContent = r?.data?.error ?? '저장하지 못했어요'; else flash(r?.data?.error ?? '저장 못 했어요', true); return false; }
+      flash(ok);
       await loadCharacters();
-      if (editDirty) { const e2 = charEntry(entry.id); const n = slotList(e2, null, onSlot, e2?.frames, onFrame); slots.replaceWith(n); slots = n; }
+      if (editDirty) { const n = drawSlots(charEntry(entry.id)); slots.replaceWith(n); slots = n; }
+      return true;
     };
-    let slots = slotList(entry, null, onSlot, entry.frames, onFrame);
-    box.append(nameRow, el('h3', null, '그림·영상'), el('p', 'hint', '「테두리」를 켜면 둥근 네모 카드로 보여요(배경이 있는 그림에 어울려요).'), slots);
+    const handlers = {
+      pick: async (slot, fs, err) => {
+        let last = null;
+        for (const f of fs) {
+          last = await cy.putCharacterMedia(entry.id, slot, f.name, f.type, new Uint8Array(await f.arrayBuffer())).catch(() => null);
+          if (!last?.ok) break;
+        }
+        await done(last, fs.length > 1 ? `그림 ${fs.length}개를 넣었어요` : '그림을 넣었어요', err);
+      },
+      remove: async (slot, file, err) => done(await cy.deleteCharacterMedia(entry.id, slot, file).catch(() => null), '그림을 뺐어요', err),
+      frame: async (slot, file, on, fc) => {
+        const r = await cy.updateCharacter(entry.id, file ? { files: { [file]: { frame: on } } } : { frames: { [slot]: on } }).catch(() => null);
+        if (r?.ok) flash('저장했어요 · 바로 적용돼요'); else { fc.checked = !on; flash(r?.data?.error ?? '저장 못 했어요', true); }
+      },
+      say: async (slot, file, text) => {
+        const r = await cy.updateCharacter(entry.id, { files: { [file]: { say: text.trim() || null } } }).catch(() => null);
+        if (r?.ok) flash(text.trim() ? '한마디를 저장했어요' : '기본 대사로 돌렸어요'); else flash(r?.data?.error ?? '저장 못 했어요', true);
+      },
+    };
+    const drawSlots = (e) => slotList(slotRows(e?.media, e?.clips), (f) => `${USER_CHAR_DIR}/${entry.id}/${f}`, (f) => f, e?.frames ?? {}, handlers);
+    let slots = drawSlots(entry);
+    box.append(nameRow, el('h3', null, '그림·영상'), el('p', 'hint', `「테두리」를 켜면 둥근 네모 카드로 보여요(배경이 있는 그림에 어울려요). 응원·춤·집중·일정 알림·점심시간은 ${MULTI_HINT}.`), slots);
   }
   // 다른 캐릭터 대사로 채우기(저장 전까지는 화면만)
   const fill = el('div', 'ce-row');

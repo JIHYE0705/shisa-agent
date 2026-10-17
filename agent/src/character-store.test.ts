@@ -4,8 +4,9 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  CharacterStore, validateLines, diffLines, renameLines, flattenLines, unflattenLines, linesSchema, mediaKind, sniffMedia, newUserId, isUserId, STORED_FILE, shisaDefaults,
+  CharacterStore, validateLines, diffLines, renameLines, flattenLines, unflattenLines, linesSchema, mediaKind, sniffMedia, newUserId, isUserId, STORED_FILE, shisaDefaults, firstMedia, cleanSay,
 } from "./character-store.ts";
+import { characterClips } from "./characters.ts";
 import { CHARACTERS, SHISA_PERSONA, SHISA_TONE, character, characterId, characterOptions, installCharacters, isCharacterId, setCharacter, withCharacter } from "./characters.ts";
 import { SYSTEM } from "./brain.ts";
 import { CHAT_SYSTEM } from "./chat.ts";
@@ -248,7 +249,7 @@ test("그림 올리기: 저장 이름은 새로 짓고, 예전 파일은 지우�
   assert.ok(!existsSync(join(dir, "characters", id, f1)), "예전 파일은 지운다");
   store.putMedia(id, "dance", "d.webm", WEBM);
   store.putMedia(id, "cheer", "c.mp4", MP4);
-  assert.deepEqual(Object.keys(store.user(id)!.media).sort(), ["cheer", "dance", "eyes_open"]);
+  assert.deepEqual(Object.keys(firstMedia(store.user(id)!)).sort(), ["cheer", "dance", "eyes_open"]);
   // 테두리: 칸마다. 기본은 png·webm 끔, gif·mp4 켬, 고르면 그 값(다시 읽어도)
   const view = () => (store.view().characters.find((c: any) => c.id === id) as any).frames;
   assert.deepEqual(view(), { eyes_open: true, dance: false, cheer: true }, "eyes_open 은 지금 gif");
@@ -261,7 +262,7 @@ test("그림 올리기: 저장 이름은 새로 짓고, 예전 파일은 지우�
   assert.equal(store.mediaPath(id, f1), undefined, "목록에 없는 파일은 안 준다");
   assert.equal(store.mediaPath(id, "character.json"), undefined);
   assert.equal(store.removeMedia(id, "dance").status, 200);
-  assert.equal(store.user(id)!.media.dance, undefined);
+  assert.equal(firstMedia(store.user(id)!).dance, undefined);
   assert.deepEqual(readdirSync(join(dir, "characters", id)).filter((f) => f.startsWith("dance")), []);
   // 다시 읽을 때도 저장 이름 모양·파일이 있는 것만
   const cj = join(dir, "characters", id, "character.json");
@@ -271,7 +272,7 @@ test("그림 올리기: 저장 이름은 새로 짓고, 예전 파일은 지우�
   writeFileSync(cj, JSON.stringify(raw));
   const again = new CharacterStore(join(dir, "characters"));
   again.load();
-  assert.deepEqual(Object.keys(again.user(id)!.media).sort(), ["cheer", "eyes_open"]);
+  assert.deepEqual(Object.keys(firstMedia(again.user(id)!)).sort(), ["cheer", "eyes_open"]);
 });
 
 test("읽기: 깨진 파일·모르는 폴더·심볼릭 링크 폴더는 건너뛰거나 링크만 지운다", () => {
@@ -352,4 +353,106 @@ test("HTTP: GET/POST/PUT/DELETE /characters, 그림 올리기(바이트), 쓰기
     ac.abort();
     bus.close();
   }
+});
+
+test("여러 개 넣는 칸: 더하기·하나씩 빼기·파일마다 한마디·테두리, 데몬 목록에도, 개수 상한 없음", () => {
+  const dir = tmp();
+  const store = new CharacterStore(join(dir, "characters"));
+  store.load();
+  const id = ((store.create({ name: "까망", frames: { dance: true } }).body as any).character).id;
+  const files: string[] = [];
+  for (let i = 0; i < 12; i++) files.push((store.putMedia(id, "dance", `d${i}.${i % 2 ? "webm" : "gif"}`, i % 2 ? WEBM : GIF).body as any).file);
+  assert.equal(new Set(files).size, 12);
+  const c = () => store.view().characters.find((x: any) => x.id === id) as any;
+  assert.deepEqual(c().clips.dance.map((x: any) => x.file), files, "넣은 순서대로 다 남는다");
+  assert.ok(c().clips.dance.every((x: any) => x.frame === true), "만들 때 고른 칸 테두리가 파일마다");
+  assert.equal(c().media.dance, files[0], "예전 모양(칸에 하나)으로 읽는 쪽에는 첫 파일");
+  for (const f of files) assert.ok(existsSync(join(dir, "characters", id, f)));
+  // 눈 그림은 하나(바꾸면 예전 파일을 지운다)
+  const e1 = (store.putMedia(id, "eyes_open", "a.png", PNG).body as any).file;
+  const e2 = (store.putMedia(id, "eyes_open", "b.png", PNG).body as any).file;
+  assert.ok(!existsSync(join(dir, "characters", id, e1)) && c().media.eyes_open === e2);
+  // 파일마다 한마디·테두리
+  assert.equal(store.update(id, { files: { [files[1]]: { say: "  까망\n춤!  ", frame: false } } }).status, 200);
+  assert.deepEqual(c().clips.dance[1], { file: files[1], say: "까망 춤!", frame: false });
+  assert.equal(store.update(id, { files: { "dance-zzzzzzzz.gif": { say: "x" } } }).status, 400, "남의 파일");
+  assert.equal(store.update(id, { files: { [files[1]]: { nope: 1 } } }).status, 400);
+  assert.equal(store.update(id, { files: { [files[1]]: { frame: "yes" } } }).status, 400);
+  setCharacter(id);
+  assert.equal(characterClips("dance").length, 12);
+  assert.equal(characterClips("dance")[1].say, "까망 춤!", "데몬이 고른 번호의 한마디");
+  // 하나만 빼기 · 칸 비우기
+  assert.equal(store.removeMedia(id, "dance", files[0]).status, 200);
+  assert.ok(!existsSync(join(dir, "characters", id, files[0])));
+  assert.equal(c().clips.dance.length, 11);
+  assert.equal(store.removeMedia(id, "dance", files[0]).status, 404);
+  assert.equal(store.removeMedia(id, "cheer", files[1]).status, 404, "다른 칸 파일은 못 뺀다");
+  // 다시 읽어도 그대로
+  const re = new CharacterStore(join(dir, "characters"));
+  re.load();
+  assert.deepEqual((re.view().characters.find((x: any) => x.id === id) as any).clips.dance, c().clips.dance);
+  assert.equal(store.removeMedia(id, "dance").status, 200);
+  assert.equal(c().clips.dance, undefined);
+  assert.deepEqual(readdirSync(join(dir, "characters", id)).filter((f) => f.startsWith("dance")), []);
+  // 일정 알림은 한마디를 넣지 않는다(일정 말풍선)
+  const p = (store.putMedia(id, "plan", "p.png", PNG).body as any).file;
+  assert.equal(store.update(id, { files: { [p]: { say: "일정!" } } }).status, 400);
+  assert.equal(store.update(id, { files: { [p]: { frame: true } } }).status, 200);
+});
+
+test("예전 character.json(칸에 파일 하나·칸 테두리)도 그대로 읽힌다", () => {
+  const dir = tmp();
+  const cdir = join(dir, "characters");
+  const id = "u-old12345";
+  mkdirSync(join(cdir, id), { recursive: true });
+  for (const f of ["eyes_open-0a1b2c3d.png", "dance-0a1b2c3d.gif", "cheer-0a1b2c3d.webm"]) writeFileSync(join(cdir, id, f), "x");
+  writeFileSync(join(cdir, id, "character.json"), JSON.stringify({
+    id, name: "옛것", from: "shisa", created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
+    frames: { dance: false, eyes_open: true }, media: { eyes_open: "eyes_open-0a1b2c3d.png", dance: "dance-0a1b2c3d.gif", cheer: "cheer-0a1b2c3d.webm" }, lines: { name: "옛것" },
+  }));
+  const store = new CharacterStore(cdir);
+  store.load();
+  const c = store.view().characters.find((x: any) => x.id === id) as any;
+  assert.deepEqual(c.media, { eyes_open: "eyes_open-0a1b2c3d.png", dance: "dance-0a1b2c3d.gif", cheer: "cheer-0a1b2c3d.webm" });
+  assert.deepEqual(c.frames, { eyes_open: true, dance: false, cheer: false });
+  assert.deepEqual(c.clips, { dance: [{ file: "dance-0a1b2c3d.gif", frame: false }], cheer: [{ file: "cheer-0a1b2c3d.webm", frame: false }] });
+  assert.equal(store.mediaPath(id, "dance-0a1b2c3d.gif"), join(cdir, id, "dance-0a1b2c3d.gif"));
+  // 하나 더 넣으면 새 모양으로 저장(예전 파일은 그대로 첫째)
+  const f = (store.putMedia(id, "dance", "x.webm", WEBM).body as any).file;
+  const saved = JSON.parse(readFileSync(join(cdir, id, "character.json"), "utf8"));
+  assert.deepEqual(saved.clips.dance.map((x: any) => x.file), ["dance-0a1b2c3d.gif", f]);
+  assert.equal(saved.media.dance, undefined);
+  assert.deepEqual(saved.frames, { eyes_open: true, dance: false });
+  assert.equal(saved.clips.dance[1].frame, false, "칸 테두리가 새 파일의 기본값");
+});
+
+test("cleanSay: 한 줄로, 비면 기본, 글이 아니면 거절", () => {
+  assert.equal(cleanSay("  a\n b\t"), "a b");
+  assert.equal(cleanSay("   "), undefined);
+  assert.equal(cleanSay(null), undefined);
+  assert.deepEqual(cleanSay(3), { error: "한마디는 글이어야 해요" });
+});
+
+test("HTTP: DELETE /characters/:id/media/:slot/:file 로 하나만 빼기", async () => {
+  const dir = tmp();
+  const store = new CharacterStore(join(dir, "characters"));
+  store.load();
+  const bus = new Bus();
+  await bus.listen(0, {
+    approve: async () => "", hold: async () => "", briefing: async () => "", dashboard: async () => ({}), todoDone: () => true, chat: () => "c", chatHistory: () => [],
+    characters: store,
+  });
+  const base = `http://127.0.0.1:${(bus.server!.address() as any).port}`;
+  try {
+    const id = ((store.create({ name: "까망" }).body as any).character).id;
+    const put = async (n: string) => (await (await fetch(`${base}/characters/${id}/media/cheer`, { method: "PUT", headers: { "x-cy-agent": "1", "x-file-name": n }, body: GIF })).json()).file;
+    const a = await put("a.gif"), b = await put("b.gif");
+    assert.equal((await fetch(`${base}/characters/${id}/media/cheer/${a}`, { method: "DELETE" })).status, 403, "헤더 필수");
+    const r = await fetch(`${base}/characters/${id}/media/cheer/${a}`, { method: "DELETE", headers: { "x-cy-agent": "1" } });
+    assert.equal(r.status, 200);
+    assert.deepEqual((await r.json()).character.clips.cheer.map((x: any) => x.file), [b]);
+    assert.equal((await fetch(`${base}/characters/${id}/lines/x/${b}`, { method: "DELETE", headers: { "x-cy-agent": "1" } })).status, 404);
+    const u = await fetch(`${base}/characters/${id}`, { method: "PUT", headers: { "x-cy-agent": "1", "content-type": "application/json" }, body: JSON.stringify({ files: { [b]: { say: "응원!" } } }) });
+    assert.equal((await u.json()).character.clips.cheer[0].say, "응원!");
+  } finally { bus.server?.close(); }
 });

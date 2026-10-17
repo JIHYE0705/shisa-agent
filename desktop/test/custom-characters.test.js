@@ -305,3 +305,57 @@ test('시사 대사 모양: 데스크톱 코드 기본값을 lines.json 과 같�
   assert.deepEqual(keys(s.tour), keys(CHARACTER_LINES.hachi.tour));
   assert.equal(s.prompt.persona, SISA_BASE);
 });
+
+test('여러 개 넣는 칸: 칸 목록·설명, 파일마다 한마디·테두리 본문, 하나만 빼기 IPC, 그 파일만 cy-asset 으로', async () => {
+  const { MULTI_HINT, SAY_SLOTS } = await import('../src/character-edit.js');
+  const { okStoredFile } = await import('../src/settings.js');
+  const rows = slotRows({ eyes_open: 'eyes_open-0a1b2c3d.png', dance: 'dance-0a1b2c3d.gif' }, { dance: [{ file: 'dance-0a1b2c3d.gif', say: '까망 춤!', frame: true }, { file: 'dance-1a1b2c3d.webm', frame: false }] });
+  const dance = rows.find((r) => r.slot === 'dance');
+  assert.equal(dance.multi, true);
+  assert.deepEqual(dance.files, [{ file: 'dance-0a1b2c3d.gif', say: '까망 춤!', frame: true }, { file: 'dance-1a1b2c3d.webm', say: '', frame: false }]);
+  assert.equal(rows.find((r) => r.slot === 'eyes_open').multi, false);
+  assert.equal(rows.find((r) => r.slot === 'eyes_open').file, 'eyes_open-0a1b2c3d.png');
+  // 예전 모양(clips 없음)은 칸의 파일 하나
+  assert.deepEqual(slotRows({ cheer: 'cheer-0a1b2c3d.gif' }).find((r) => r.slot === 'cheer').files, [{ file: 'cheer-0a1b2c3d.gif', say: '' }]);
+  assert.ok(!SAY_SLOTS.includes('plan') && SAY_SLOTS.includes('dance'));
+  assert.equal(rows.find((r) => r.slot === 'plan').say, false, '일정 알림은 한마디 칸이 없다');
+  assert.match(MULTI_HINT, /여러 개 넣으면 그때마다 랜덤으로 하나가 나와요/);
+  assert.deepEqual(missingRequired({ eyes_open: 1, eyes_closed: 1, cheer: [], dance: [1] }), ['응원'], '빈 목록은 빠진 것');
+  // 본문
+  assert.deepEqual(sanitizeCharacterBody({ files: { 'dance-0a1b2c3d.gif': { say: 'x', frame: null } } }), { files: { 'dance-0a1b2c3d.gif': { say: 'x', frame: null } } });
+  for (const bad of [{ files: { '../x.gif': { say: 'x' } } }, { files: { 'dance-0a1b2c3d.gif': { say: 1 } } }, { files: { 'dance-0a1b2c3d.gif': { evil: 1 } } }, { files: [] }]) assert.equal(sanitizeCharacterBody(bad), null, JSON.stringify(bad));
+  assert.equal(sanitizeCharacterBody({ name: 'x', files: {} }, true), null, '만들 땐 files 없음');
+  assert.ok(okStoredFile('cheer-0a1b2c3d.gif') && !okStoredFile('nope-0a1b2c3d.gif') && !okStoredFile('cheer-0a1b2c3d.svg'));
+  // IPC: 하나만 빼기
+  const handlers = {}, requests = [];
+  const fakeWin = { webContents: { setWindowOpenHandler() {}, on() {} }, loadFile() {}, once() {}, on() {}, show() {}, focus() {}, isDestroyed: () => false };
+  class BW { constructor() { return fakeWin; } }
+  const ui = setupSettings({
+    BrowserWindow: BW, ipcMain: { handle: (c, f) => { handlers[c] = f; }, on: () => {} }, shell: {},
+    request: async (...a) => { requests.push(a); return { ok: true }; }, upload: async () => ({ ok: true }), fromOurs: () => false, preload: 'p', html: 'h',
+  });
+  ui.show();
+  const mine = { sender: fakeWin.webContents };
+  await handlers['characters-media-delete'](mine, U, 'dance', 'dance-0a1b2c3d.gif');
+  await handlers['characters-media-delete'](mine, U, 'dance', null);
+  assert.equal((await handlers['characters-media-delete'](mine, U, 'dance', 'cheer-0a1b2c3d.gif')).ok, false, '다른 칸 파일');
+  assert.equal((await handlers['characters-media-delete'](mine, U, 'dance', '../../x')).ok, false);
+  assert.deepEqual(requests.map((r) => r.slice(0, 2)), [['DELETE', `/characters/${U}/media/dance/dance-0a1b2c3d.gif`], ['DELETE', `/characters/${U}/media/dance`]]);
+  // cy-asset: clips 의 파일도 그 캐릭터 파일
+  const root0 = fs.mkdtempSync(path.join(os.tmpdir(), 'cy-ucf2-'));
+  const root = path.join(root0, 'characters');
+  fs.mkdirSync(path.join(root, U), { recursive: true });
+  fs.writeFileSync(path.join(root, U, 'dance-1a1b2c3d.webm'), 'x');
+  const list = [{ id: U, custom: true, media: { dance: 'dance-0a1b2c3d.gif' }, clips: { dance: [{ file: 'dance-0a1b2c3d.gif' }, { file: 'dance-1a1b2c3d.webm' }] } }];
+  const got = userCharacterFile(resolveAsset(`cy-asset://app/user-characters/${U}/dance-1a1b2c3d.webm`), root, list, { realpath: fs.realpathSync, lstat: fs.lstatSync }, path);
+  assert.equal(got, fs.realpathSync(path.join(root, U, 'dance-1a1b2c3d.webm')));
+  // 설정 창 화면: 여러 개 고르기·한마디 칸·설명
+  const r = readFileSync(new URL('../renderer/settings.js', import.meta.url), 'utf8');
+  assert.match(r, /input\.multiple = multi/);
+  assert.match(r, /SAY_PLACEHOLDER/);
+  assert.match(r, /MULTI_HINT/);
+  assert.match(r, /cy\.deleteCharacterMedia\(entry\.id, slot, file\)/);
+  // 목록을 받으면 clips 도 캐릭터에
+  applyCharacters({ characters: [{ id: U, name: '까망', custom: true, media: list[0].media, clips: list[0].clips, frames: {}, lines: { name: '까망' } }] });
+  assert.equal(characterAssets(U).variants.dance.length, 2);
+});

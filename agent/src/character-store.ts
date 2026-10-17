@@ -1,5 +1,8 @@
 // 사용자 캐릭터와 기본 캐릭터 대사 고치기(덮어쓰기). 파일은 사용자 데이터 폴더에만 쓴다(레포·앱 번들은 건드리지 않는다).
-//   ~/.cy-agent/characters/<id>/character.json  사용자가 만든 캐릭터 하나: { id, name, from, created, updated, frames: { 칸: 테두리 }, media: { 칸: 저장 이름 }, lines }
+//   ~/.cy-agent/characters/<id>/character.json  사용자가 만든 캐릭터 하나:
+//     { id, name, from, created, updated, frames: { 눈 칸: 테두리 }, media: { 눈 칸: 저장 이름 }, clips: { 칸: [{ file, say?, frame? }] }, lines }
+//     눈 뜬·감은 그림은 칸에 하나(media), 응원·춤·집중·일정 알림·점심시간은 여러 개(clips — 그때마다 하나가 랜덤으로, say = 그 영상의 한마디)
+//     예전 모양(media 에 칸마다 파일 하나, frames 에 칸마다 테두리)도 그대로 읽는다(읽을 때 clips 로 옮긴다)
 //   ~/.cy-agent/characters/<id>/<칸>-<무작위>.<확장자>  올린 그림·영상(이름은 여기서 새로 짓는다)
 //   ~/.cy-agent/characters/overrides/<기본 id>.json  기본 캐릭터(시사·하치와레·랏코·모몽가·우사기)에서 고친 칸만
 // 대사 모양은 assets/characters/lines.json 의 캐릭터 하나와 같다(characters.ts LinesEntry). 칸 이름은 점으로 잇는다(phrases.dance, flair.lead.happy).
@@ -15,20 +18,26 @@ import {
 } from "./characters.ts";
 import { PHRASES, unknownVars } from "./phrases.ts";
 import { LINES, QUICK_LINES, SHISA_EXTRA } from "./local-mode.ts";
+import { NO_SAY, type ClipTable } from "./clips.ts";
 
 // ---- 그림·영상 칸 ----
-// 꼭 넣을 넷: 눈 뜬 것·눈 감은 것(깜빡임)·응원·춤. 고를 수 있는 둘: 집중(공부 중)·일정 알림. 빈 칸은 데스크톱이 대신 쓸 것을 고른다(character.js customAssets)
+// 꼭 넣을 넷: 눈 뜬 것·눈 감은 것(깜빡임)·응원·춤. 고를 수 있는 것: 집중(공부 중)·일정 알림. 빈 칸은 데스크톱이 대신 쓸 것을 고른다(character.js customAssets)
+// multi: 파일을 여러 개 넣는 칸(그때마다 하나가 랜덤으로). 개수 상한은 없다
 export const MEDIA_SLOTS = [
-  { slot: "eyes_open", label: "눈 뜬 모습", required: true },
-  { slot: "eyes_closed", label: "눈 감은 모습", required: true },
-  { slot: "cheer", label: "응원", required: true },
-  { slot: "dance", label: "춤", required: true },
-  { slot: "study", label: "집중", required: false },
-  { slot: "plan", label: "일정 알림", required: false },
+  { slot: "eyes_open", label: "눈 뜬 모습", required: true, multi: false },
+  { slot: "eyes_closed", label: "눈 감은 모습", required: true, multi: false },
+  { slot: "cheer", label: "응원", required: true, multi: true },
+  { slot: "dance", label: "춤", required: true, multi: true },
+  { slot: "study", label: "집중", required: false, multi: true },
+  { slot: "plan", label: "일정 알림", required: false, multi: true },
 ] as const;
 export type MediaSlot = (typeof MEDIA_SLOTS)[number]["slot"];
 const SLOT_IDS: readonly string[] = MEDIA_SLOTS.map((s) => s.slot);
 export const isMediaSlot = (v: unknown): v is MediaSlot => typeof v === "string" && SLOT_IDS.includes(v);
+export const MULTI_SLOTS: readonly MediaSlot[] = MEDIA_SLOTS.filter((s) => s.multi).map((s) => s.slot);
+export const isMultiSlot = (v: unknown): boolean => isMediaSlot(v) && MULTI_SLOTS.includes(v);
+// 여러 개 넣는 칸의 파일 하나: say = 이 영상이 나올 때 할 한마디(없으면 그 칸 기본 대사) · frame = 테두리(없으면 파일 종류로)
+export type MediaItem = { file: string; say?: string; frame?: boolean };
 // 받는 파일(그 밖은 거절). 크기·개수 상한은 두지 않는다
 export const MEDIA_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif", webm: "video/webm", mp4: "video/mp4" };
 const NAME_EXT: Record<string, string> = { png: "png", jpg: "jpg", jpeg: "jpg", webp: "webp", gif: "gif", webm: "webm", mp4: "mp4", m4v: "mp4" };
@@ -79,6 +88,13 @@ function cleanFrames(v: unknown): Partial<Record<MediaSlot, boolean>> | { error:
 }
 // 저장 파일 이름: <칸>-<무작위 8자>.<확장자>. cy-asset 도 이 모양만 준다
 export const STORED_FILE = /^(eyes_open|eyes_closed|cheer|dance|study|plan)-[a-z0-9]{8}\.(png|jpg|webp|gif|webm|mp4)$/;
+// 영상 한마디 다듬기: 제어 문자·줄바꿈 없이 한 줄로. 비면 undefined(그 칸 기본 대사). 길이 제한은 없다
+export function cleanSay(v: unknown): string | undefined | { error: string } {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v !== "string") return { error: "한마디는 글이어야 해요" };
+  const t = v.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  return t || undefined;
+}
 
 // ---- 대사 칸(스키마) ----
 const MOODS: Mood[] = ["happy", "excited", "calm", "busy"];
@@ -219,10 +235,13 @@ export function renameLines(e: LinesPatch, from: string, to: string): LinesPatch
 // ---- 저장소 ----
 export type UserCharacter = {
   id: string; name: string; from: string; created: string; updated: string;
-  frames: Partial<Record<MediaSlot, boolean>>; // 사용자가 칸마다 고른 테두리(없는 칸은 파일 종류로 defaultFrame)
-  media: Partial<Record<MediaSlot, string>>;
+  frames: Partial<Record<MediaSlot, boolean>>; // 눈 그림 칸마다 고른 테두리(없는 칸은 파일 종류로 defaultFrame)
+  media: Partial<Record<MediaSlot, string>>; // 눈 뜬·감은 그림(칸에 하나)
+  clips: Partial<Record<MediaSlot, MediaItem[]>>; // 여러 개 넣는 칸(MULTI_SLOTS)
   lines: LinesPatch;
 };
+// 그 캐릭터의 저장 파일 전부
+const filesOf = (c: Pick<UserCharacter, "media" | "clips">): string[] => [...Object.values(c.media), ...Object.values(c.clips).flatMap((l) => (l ?? []).map((x) => x.file))].filter((x): x is string => !!x);
 type Result = { status: number; body: unknown };
 const fail = (status: number, error: string): Result => ({ status, body: { error } });
 
@@ -233,11 +252,46 @@ function writeJson(path: string, v: unknown) {
 }
 const readJson = (path: string): unknown => { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; } };
 
-// 칸마다 지금 테두리(그림이 있는 칸만): 사용자가 고른 값 > 파일 종류 기본값
-export function framesOf(c: Pick<UserCharacter, "media" | "frames">): Partial<Record<MediaSlot, boolean>> {
+// 칸마다 지금 테두리(그림이 있는 칸만, 여러 개 넣는 칸은 첫 파일): 사용자가 고른 값 > 파일 종류 기본값
+export function framesOf(c: Pick<UserCharacter, "media" | "frames"> & { clips?: UserCharacter["clips"] }): Partial<Record<MediaSlot, boolean>> {
   const out: Partial<Record<MediaSlot, boolean>> = {};
   for (const [slot, file] of Object.entries(c.media) as [MediaSlot, string][]) out[slot] = c.frames[slot] ?? defaultFrame(file);
+  for (const [slot, l] of Object.entries(c.clips ?? {}) as [MediaSlot, MediaItem[]][]) if (l?.length) out[slot] = l[0].frame ?? defaultFrame(l[0].file);
   return out;
+}
+// 칸마다 첫 파일(예전 모양 — 칸에 파일 하나만 아는 쪽이 읽어도 그림이 나오게)
+export function firstMedia(c: Pick<UserCharacter, "media" | "clips">): Partial<Record<MediaSlot, string>> {
+  const out: Partial<Record<MediaSlot, string>> = { ...c.media };
+  for (const [slot, l] of Object.entries(c.clips) as [MediaSlot, MediaItem[]][]) if (l?.length) out[slot] = l[0].file;
+  return out;
+}
+// 화면·데몬 목록에 내보내는 칸별 목록(테두리는 지금 값으로)
+export function clipsView(c: Pick<UserCharacter, "clips">): Partial<Record<MediaSlot, { file: string; say?: string; frame: boolean }[]>> {
+  const out: Partial<Record<MediaSlot, { file: string; say?: string; frame: boolean }[]>> = {};
+  for (const slot of MULTI_SLOTS) {
+    const l = c.clips[slot];
+    if (l?.length) out[slot] = l.map((x) => ({ file: x.file, ...(x.say ? { say: x.say } : {}), frame: x.frame ?? defaultFrame(x.file) }));
+  }
+  return out;
+}
+// 데몬 캐릭터 목록(characters.ts)에 넣을 칸별 목록(파일 이름·한마디)
+const clipTable = (c: Pick<UserCharacter, "clips">): ClipTable => {
+  const t: ClipTable = {};
+  for (const slot of MULTI_SLOTS) {
+    const l = c.clips[slot];
+    if (l?.length) (t as Record<string, unknown>)[slot] = l.map((x) => ({ file: x.file, ...(x.say ? { say: x.say } : {}) }));
+  }
+  return t;
+};
+
+const cloneClips = (c: UserCharacter["clips"]): UserCharacter["clips"] => Object.fromEntries(Object.entries(c).map(([k, l]) => [k, (l ?? []).map((x) => ({ ...x }))]));
+// 칸 테두리(frames: { 칸: 켬/끔 }) 넣기: 눈 그림은 그 칸, 여러 개 넣는 칸은 그 칸 파일 전부 + 앞으로 더할 파일의 기본값
+function applyFrames(c: UserCharacter, f: Partial<Record<MediaSlot, boolean>>) {
+  for (const [slot, on] of Object.entries(f) as [MediaSlot, boolean][]) {
+    const l = isMultiSlot(slot) ? c.clips[slot] : undefined;
+    if (l?.length) for (const x of l) x.frame = on;
+    c.frames[slot] = on; // 여러 개 넣는 칸은 앞으로 더할 파일의 기본 테두리이기도 하다
+  }
 }
 
 export class CharacterStore {
@@ -277,23 +331,42 @@ export class CharacterStore {
     if (!isObj(raw)) return undefined;
     const v = validateLines(raw.lines ?? {});
     if (!v.ok) { console.warn(`[characters] ${id} 를 건너뜀: ${v.error}`); return undefined; }
+    const okFile = (slot: string, file: unknown): file is string => typeof file === "string" && STORED_FILE.test(file) && file.startsWith(`${slot}-`) && existsSync(join(this.dir, id, file));
+    const rawFrames = (() => { const f = cleanFrames(raw.frames ?? {}); return "error" in f ? {} : f; })();
     const media: UserCharacter["media"] = {};
+    const clips: UserCharacter["clips"] = {};
+    const frames: UserCharacter["frames"] = {};
     for (const [slot, file] of Object.entries(isObj(raw.media) ? raw.media : {})) {
-      if (isMediaSlot(slot) && typeof file === "string" && STORED_FILE.test(file) && file.startsWith(`${slot}-`) && existsSync(join(this.dir, id, file))) media[slot] = file;
+      if (!isMediaSlot(slot)) continue;
+      if (!isMultiSlot(slot)) { if (okFile(slot, file)) media[slot] = file; continue; }
+      // 예전 모양: 여러 개 넣는 칸에 파일 하나 + 칸 테두리 → 목록 하나
+      if (okFile(slot, file)) clips[slot] = [{ file, ...(typeof rawFrames[slot] === "boolean" ? { frame: rawFrames[slot] } : {}) }];
     }
+    for (const [slot, list] of Object.entries(isObj(raw.clips) ? raw.clips : {})) {
+      if (!isMultiSlot(slot) || !Array.isArray(list)) continue;
+      const items: MediaItem[] = [];
+      for (const x of list) {
+        if (!isObj(x) || !okFile(slot, x.file) || items.some((y) => y.file === x.file)) continue;
+        const say = NO_SAY.has(slot as never) ? undefined : cleanSay(x.say);
+        items.push({ file: x.file, ...(typeof say === "string" ? { say } : {}), ...(typeof x.frame === "boolean" ? { frame: x.frame } : {}) });
+      }
+      if (items.length) clips[slot as MediaSlot] = items;
+    }
+    // 테두리 칸 값: 그림이 있는 칸만(여러 개 넣는 칸은 앞으로 더할 파일의 기본값)
+    for (const [slot, on] of Object.entries(rawFrames) as [MediaSlot, boolean][]) if (media[slot] || clips[slot]) frames[slot] = on;
     const name = (typeof v.lines.name === "string" && v.lines.name) || (typeof raw.name === "string" && raw.name.trim()) || "새 캐릭터";
     return {
       id, name, from: typeof raw.from === "string" ? raw.from : "shisa",
       created: typeof raw.created === "string" ? raw.created : this.now().toISOString(),
       updated: typeof raw.updated === "string" ? raw.updated : this.now().toISOString(),
-      frames: (() => { const f = cleanFrames(raw.frames ?? {}); return "error" in f ? {} : f; })(), media, lines: { ...v.lines, name },
+      frames, media, clips, lines: { ...v.lines, name },
     };
   }
 
   // 데몬 목록(characters.ts)에 반영. 지금 캐릭터가 없어졌으면 true
   private install(): boolean {
     const users = [...this.users.values()].sort((a, b) => a.created.localeCompare(b.created) || a.id.localeCompare(b.id));
-    return installCharacters({ overrides: this.overrides, users: users.map((u) => ({ id: u.id, lines: u.lines as Partial<LinesEntry> })) });
+    return installCharacters({ overrides: this.overrides, users: users.map((u) => ({ id: u.id, lines: u.lines as Partial<LinesEntry>, clips: clipTable(u) })) });
   }
   private changed(): void {
     const removedCurrent = this.install();
@@ -309,7 +382,7 @@ export class CharacterStore {
   user = (id: string) => this.users.get(id);
   mediaPath(id: string, file: string): string | undefined {
     const c = this.users.get(id);
-    return c && STORED_FILE.test(file) && Object.values(c.media).includes(file) ? join(this.dir, id, file) : undefined;
+    return c && STORED_FILE.test(file) && filesOf(c).includes(file) ? join(this.dir, id, file) : undefined;
   }
 
   // GET /characters
@@ -320,7 +393,7 @@ export class CharacterStore {
         lines: this.linesOf(id), defaults: builtinDefaults(id), override: this.overrides[id] ?? null,
       })),
       ...[...this.users.values()].sort((a, b) => a.created.localeCompare(b.created) || a.id.localeCompare(b.id)).map((u) => ({
-        id: u.id, name: u.name, custom: true, from: u.from, frames: framesOf(u), media: { ...u.media }, lines: u.lines, created: u.created, updated: u.updated,
+        id: u.id, name: u.name, custom: true, from: u.from, frames: framesOf(u), media: firstMedia(u), clips: clipsView(u), lines: u.lines, created: u.created, updated: u.updated,
       })),
     ];
     return {
@@ -353,7 +426,8 @@ export class CharacterStore {
     if (!v.ok) return fail(400, v.error);
     const id = newUserId((x) => this.users.has(x) || existsSync(join(this.dir, x)));
     const at = this.now().toISOString();
-    const c: UserCharacter = { id, name, from, created: at, updated: at, frames, media: {}, lines: v.lines };
+    const c: UserCharacter = { id, name, from, created: at, updated: at, frames: {}, media: {}, clips: {}, lines: v.lines };
+    applyFrames(c, frames); // 만들 때 고른 테두리(파일을 넣기 전이라 칸 값으로 — 파일이 들어오면 그 값으로 시작)
     try { this.saveUser(c); } catch (e: any) { return fail(500, `저장하지 못했어요(${e?.code ?? "오류"})`); }
     this.users.set(id, c);
     this.changed();
@@ -365,7 +439,8 @@ export class CharacterStore {
     writeJson(join(this.dir, c.id, "character.json"), c);
   }
 
-  // PUT /characters/:id — 사용자 캐릭터: { name?, lines?, frames? }(lines 는 통째로 바뀐다, frames 는 준 칸만)
+  // PUT /characters/:id — 사용자 캐릭터: { name?, lines?, frames?, files? }(lines 는 통째로 바뀐다, frames 는 준 칸만 — 여러 개 넣는 칸은 그 칸 파일 전부,
+  //                       files 는 { 저장 이름: { say?, frame? } } — 파일마다 한마디·테두리, null 이면 기본으로)
   //                       기본 캐릭터: { lines }(고친 칸 묶음, 통째로 바뀐다 — 기본값과 같은 칸은 빠진다. 다 같으면 덮어쓰기 파일을 지운다)
   update(id: string, body: unknown): Result {
     if (!isObj(body)) return fail(400, "json object required");
@@ -386,8 +461,8 @@ export class CharacterStore {
     }
     const c = this.users.get(id);
     if (!c) return fail(404, "no such character");
-    for (const k of Object.keys(body)) if (!["name", "lines", "frames"].includes(k)) return fail(400, `unknown key: ${k}`);
-    const next: UserCharacter = { ...c, updated: this.now().toISOString() };
+    for (const k of Object.keys(body)) if (!["name", "lines", "frames", "files"].includes(k)) return fail(400, `unknown key: ${k}`);
+    const next: UserCharacter = { ...c, frames: { ...c.frames }, clips: cloneClips(c.clips), updated: this.now().toISOString() };
     if (body.lines !== undefined) {
       const v = validateLines(body.lines);
       if (!v.ok) return fail(400, v.error);
@@ -403,7 +478,27 @@ export class CharacterStore {
     if (body.frames !== undefined) {
       const f = cleanFrames(body.frames);
       if ("error" in f) return fail(400, f.error);
-      next.frames = { ...c.frames, ...f };
+      applyFrames(next, f);
+    }
+    if (body.files !== undefined) {
+      if (!isObj(body.files)) return fail(400, "files 는 { 저장 이름: { say?, frame? } } 여야 해요");
+      for (const [file, m] of Object.entries(body.files)) {
+        const slot = MULTI_SLOTS.find((s) => next.clips[s]?.some((x) => x.file === file));
+        const item = slot && next.clips[slot]!.find((x) => x.file === file);
+        if (!slot || !item) return fail(400, `이 캐릭터의 파일이 아니에요: ${file}`);
+        if (!isObj(m) || Object.keys(m).some((k) => k !== "say" && k !== "frame")) return fail(400, `files.${file} 는 { say?, frame? } 여야 해요`);
+        if ("say" in m) {
+          const say = cleanSay(m.say);
+          if (say && typeof say === "object") return fail(400, say.error);
+          if (say && NO_SAY.has(slot as never)) return fail(400, "일정 알림은 일정 말풍선이 떠서 한마디를 넣지 않아요");
+          if (say) item.say = say; else delete item.say;
+        }
+        if ("frame" in m) {
+          if (m.frame === null) delete item.frame;
+          else if (typeof m.frame === "boolean") item.frame = m.frame;
+          else return fail(400, `files.${file}.frame 은 true|false|null 이어야 해요`);
+        }
+      }
     }
     try { this.saveUser(next); } catch (e: any) { return fail(500, `저장하지 못했어요(${e?.code ?? "오류"})`); }
     this.users.set(id, next);
@@ -442,7 +537,11 @@ export class CharacterStore {
     if ("error" in k) return fail(400, k.error);
     const file = `${slot}-${randomBytes(4).toString("hex")}.${k.ext}`;
     const dir = join(this.dir, id);
-    const next: UserCharacter = { ...c, media: { ...c.media, [slot]: file }, updated: this.now().toISOString() };
+    const multi = isMultiSlot(slot);
+    const clips = cloneClips(c.clips);
+    // 여러 개 넣는 칸은 더하고(만들 때 고른 칸 테두리가 남아 있으면 그 값으로), 눈 그림은 바꾼다
+    if (multi) clips[slot] = [...(clips[slot] ?? []), { file, ...(typeof c.frames[slot] === "boolean" ? { frame: c.frames[slot] } : {}) }];
+    const next: UserCharacter = { ...c, frames: { ...c.frames }, clips, media: multi ? { ...c.media } : { ...c.media, [slot]: file }, updated: this.now().toISOString() };
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       const tmp = join(dir, `.${file}.tmp`);
@@ -450,7 +549,7 @@ export class CharacterStore {
       renameSync(tmp, join(dir, file));
       this.saveUser(next);
     } catch (e: any) { return fail(500, `저장하지 못했어요(${e?.code ?? "오류"})`); }
-    const old = c.media[slot];
+    const old = multi ? undefined : c.media[slot];
     if (old && old !== file) try { rmSync(join(dir, old), { force: true }); } catch { /* 남아도 쓰지 않는다 */ }
     this.users.set(id, next);
     this.changed();
@@ -458,18 +557,24 @@ export class CharacterStore {
   }
 
   // DELETE /characters/:id/media/:slot — 그 칸 비우기(대신 쓰는 규칙으로 돌아간다)
-  removeMedia(id: string, slot: string): Result {
+  // DELETE /characters/:id/media/:slot/:file — 여러 개 넣는 칸에서 그 파일 하나만 빼기
+  removeMedia(id: string, slot: string, file?: string): Result {
     const c = this.users.get(id);
     if (!c) return fail(404, "no such character");
     if (!isMediaSlot(slot)) return fail(400, "모르는 칸이에요");
-    const old = c.media[slot];
-    if (!old) return { status: 200, body: { character: this.view().characters.find((x) => x.id === id) } };
+    const inSlot = isMultiSlot(slot) ? (c.clips[slot] ?? []).map((x) => x.file) : c.media[slot] ? [c.media[slot]!] : [];
+    if (file !== undefined && !inSlot.includes(file)) return fail(404, "그 칸에 없는 파일이에요");
+    const gone = file !== undefined ? [file] : inSlot;
+    if (!gone.length) return { status: 200, body: { character: this.view().characters.find((x) => x.id === id) } };
     const media = { ...c.media };
-    delete media[slot];
+    const clips = cloneClips(c.clips);
     const frames = { ...c.frames };
-    delete frames[slot];
-    const next = { ...c, media, frames, updated: this.now().toISOString() };
-    try { this.saveUser(next); rmSync(join(this.dir, id, old), { force: true }); } catch (e: any) { return fail(500, `지우지 못했어요(${e?.code ?? "오류"})`); }
+    if (isMultiSlot(slot)) {
+      const left = (clips[slot] ?? []).filter((x) => !gone.includes(x.file));
+      if (left.length) clips[slot] = left; else { delete clips[slot]; delete frames[slot]; }
+    } else { delete media[slot]; delete frames[slot]; }
+    const next = { ...c, media, clips, frames, updated: this.now().toISOString() };
+    try { this.saveUser(next); for (const f of gone) rmSync(join(this.dir, id, f), { force: true }); } catch (e: any) { return fail(500, `지우지 못했어요(${e?.code ?? "오류"})`); }
     this.users.set(id, next);
     this.changed();
     return { status: 200, body: { character: this.view().characters.find((x) => x.id === id) } };
@@ -477,7 +582,7 @@ export class CharacterStore {
 
   // bus.ts 가 부른다: 경로 조각 → 처리. bytes 는 그림 올리기 본문
   handle(method: string, parts: string[], body?: unknown, upload?: { name: string; bytes: Uint8Array }): Result {
-    const [id, sub, slot] = parts;
+    const [id, sub, slot, file] = parts;
     if (!id) {
       if (method === "GET") return { status: 200, body: this.view() };
       if (method === "POST") return this.create(body);
@@ -492,8 +597,8 @@ export class CharacterStore {
     }
     if (sub === "lines" && !slot) return method === "DELETE" ? this.reset(id) : fail(405, "method not allowed");
     if (sub === "media" && slot) {
-      if (method === "PUT") return upload ? this.putMedia(id, slot, upload.name, upload.bytes) : fail(400, "file required");
-      if (method === "DELETE") return this.removeMedia(id, slot);
+      if (method === "PUT" && !file) return upload ? this.putMedia(id, slot, upload.name, upload.bytes) : fail(400, "file required");
+      if (method === "DELETE") return this.removeMedia(id, slot, file);
       return fail(405, "method not allowed");
     }
     return fail(404, "not found");

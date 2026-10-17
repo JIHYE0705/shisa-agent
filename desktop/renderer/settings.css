@@ -204,6 +204,11 @@ button.danger { background: var(--err-fg); color: #fff; }
 .slot-pic { width: 100%; height: 96px; object-fit: contain; border-radius: 6px; background: var(--code); }
 .slot-empty { display: flex; align-items: center; justify-content: center; height: 96px; border-radius: 6px; border: 1px dashed var(--line); color: var(--faint); font-size: 11.5px; }
 .slot p { margin: 0; }
+.slot-multi { grid-column: 1 / -1; }
+.slot-files { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.slot-file { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
+.slot-say { width: 100%; box-sizing: border-box; font-size: 11.5px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: inherit; }
+.slot-multi-hint { color: var(--accent); }
 .slot-btns { display: flex; gap: 6px; }
 .char-lines details { border-top: 1px solid var(--line); }
 .char-lines .ph-list { display: flex; flex-direction: column; gap: 6px; }

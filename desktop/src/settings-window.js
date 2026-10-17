@@ -1,6 +1,6 @@
 // 설정 창(메인 프로세스 쪽): 창 하나 + 이 창에서만 받는 IPC. 일렉트론 객체는 main.js 가 넘긴다(시험은 가짜로).
 // 모델·브리핑 출처 저장(PUT /settings) · 연결 상태(GET /connections, POST /connections/check) · 패널의 설치 안내·모델 탭 열기.
-import { sanitizeSettingsPatch, sanitizeAppPrefs, okCheckId, okPanelTarget, sanitizeCharacterBody, okMediaSlot } from './settings.js';
+import { sanitizeSettingsPatch, sanitizeAppPrefs, okCheckId, okPanelTarget, sanitizeCharacterBody, okMediaSlot, okStoredFile } from './settings.js';
 import { okCharacterId } from './character.js';
 import { cleanUpload } from './attachments.js';
 import { sanitizeGuidelineAdd, sanitizeGuidelinePatch, okGuidelineId } from './guidelines.js';
@@ -107,7 +107,12 @@ export function setupSettings(deps) {
     const u = isMine(e) && okCharacterId(id) && okMediaSlot(slot) && deps.upload ? cleanUpload(name, mime, bytes) : null;
     return u ? deps.upload('PUT', `/characters/${id}/media/${slot}`, u.name, u.mime, u.bytes) : denied();
   });
-  ipcMain.handle('characters-media-delete', (e, id, slot) => (isMine(e) && okCharacterId(id) && okMediaSlot(slot) ? deps.request('DELETE', `/characters/${id}/media/${slot}`) : denied()));
+  // file 이 있으면 그 칸에서 그 파일 하나만(여러 개 넣는 칸), 없으면 칸 비우기
+  ipcMain.handle('characters-media-delete', (e, id, slot, file) => {
+    if (!isMine(e) || !okCharacterId(id) || !okMediaSlot(slot)) return denied();
+    if (file === undefined || file === null || file === '') return deps.request('DELETE', `/characters/${id}/media/${slot}`);
+    return okStoredFile(file) && file.startsWith(`${slot}-`) ? deps.request('DELETE', `/characters/${id}/media/${slot}/${file}`) : denied();
+  });
 
   // 사용법 다시 보기
   ipcMain.on('settings-tour', (e) => { if (isMine(e)) deps.startTour?.(); });
