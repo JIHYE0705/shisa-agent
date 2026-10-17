@@ -21,7 +21,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const SOURCES = {
   hachi: {
-    stills: { open: 'hachi_open_eyes.png', closed: 'hachi_closed_eyes.png' },
+    stills: { open: 'new_eyes_open.png', closed: 'new_eyes_closed.png' }, // 2026-10 새로 받은 그림(테두리 정리)
     clips: { plan: { file: 'hachi_plan.mp4', key: 'green' }, study: { file: 'hachi_study.mp4', key: 'flood' }, cheer: { file: 'hachi-응원.gif', key: 'scene' } },
   },
   rakko: {
