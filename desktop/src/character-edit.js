@@ -120,7 +120,8 @@ const SLOT_HINT = {
 export const MULTI_HINT = '여러 개 넣으면 그때마다 랜덤으로 하나가 나와요';
 // 파일마다 한마디를 넣는 칸(일정 알림은 일정 말풍선이 떠서 빼요)
 export const SAY_SLOTS = ['cheer', 'dance', 'study', 'lunch'];
-export const SAY_PLACEHOLDER = '이 영상이 나올 때 할 한마디(비우면 기본 대사)';
+export const SAY_PLACEHOLDER = '한마디(비우면 기본 대사)';
+export const SAY_TITLE = '이 영상이 나올 때 할 한마디. 비우면 그 칸 기본 대사를 써요';
 export const ACCEPT = MEDIA_EXTS.map((x) => `.${x}`).join(',');
 // media: 칸마다 첫 파일(예전 모양) · clips: 여러 개 넣는 칸의 목록 [{ file, say?, frame }] (데몬 GET /characters)
 export function slotRows(media = {}, clips = {}) {
