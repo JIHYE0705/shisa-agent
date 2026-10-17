@@ -42,11 +42,15 @@ type Bubble = {
 ```
 
 - `studying`: 데몬이 스스로 돌리는 세션(run)이 있을 때다(사용자 대화 `chat` 제외).
-- `dancing`: 일정 알림(기본 10분 전, 설정 `calendarAlert`), 「춤」·「춤춰 줘」·「응원해 줘」, 점심시간 알림(설정 `lunchAlert`) 때 8초 동안이다.
+- `dancing`: 일정 알림(기본 10분 전, 설정 `calendarAlert`), 「춤」·「춤춰 줘」·「응원해 줘」, 점심시간 알림(설정 `lunchAlert`), 퇴근 10분 전 인사(설정 `leaveAlert`, `danceClip: "plan"`) 때 8초 동안이다.
 - 앱은 캐릭터마다 다른 영상을 튼다. 기본 캐릭터의 칸별 영상 목록은 `assets/characters/clips.json`(렌더러 사본 `desktop/src/character-clips.js`, `node desktop/scripts/sync-character-lines.mjs`로 맞춘다)에 있다. 시사는 `assets/character/`, 다른 캐릭터는 `assets/characters/<id>/`의 파일이다.
 - 한 칸에 영상이 여러 개면 그때마다 하나가 나온다. 춤 자리는 데몬이 춤을 시작할 때(`activity.play`) 번호를 골라 `danceVariant`로 알리고, 그 영상에 전용 한마디(`say`)가 있으면 기본 대사 대신 그 말을 말풍선·답으로 띄운다. 두 개 이상이면 같은 번호가 연달아 나오지 않는다. 앱은 그 번호의 영상을 튼다. 데몬과 끊겨 있을 때 앱이 스스로 추는 춤은 앱이 번호를 고르고 그 한마디를 앱 말풍선으로 띄운다. 집중 영상은 앱이 들어갈 때마다 고른다.
 - 칸 목록이 없으면 대신 쓴다: 응원은 춤, 춤은 응원, 일정 알림은 춤(그다음 응원), 점심시간은 일정 알림(그다음 춤, 응원)이다. 다른 칸 목록을 대신 쓸 때는 한마디를 빼고 그 칸 기본 대사를 쓴다. 일정 알림 영상의 한마디는 일정 말풍선 글(문구 `meeting_alert`)을 대신하고 같은 자리표시 `{mins}`·`{title}`·`{time}`·`{where}`를 쓴다(예: 치이카와의 우는 장면). 다른 칸 한마디는 자리표시를 쓰지 않는다.
-- 점심시간 알림: 로컬 12시대에 하루 한 번 `danceClip: "lunch"`로 추고 점심 인사(`local.lunch`, 그 영상에 한마디가 있으면 그 말)를 띄운다. 날짜는 `~/.cy-agent/lunch.json`에 남겨 같은 날 다시 켜도 또 뜨지 않는다.
+- 근무 시간 알림(설정 `workStart`·`lunchTime`·`workEnd`·`workDays`, 로컬 시간대, 자정을 넘기는 근무는 다루지 않는다). 근무 요일에 하루 한 번씩이고, 날짜는 `~/.cy-agent/lunch.json`(`{ last: 점심, start, leave }`)에 남겨 같은 날 다시 켜도 또 뜨지 않는다.
+  - 출근 인사(`startAlert`): 출근 시각부터 퇴근 시각 전까지 처음 확인할 때 아침 인사(`local.morning`, 영상 없음)를 고정 id `local-greet`로 띄운다. 로컬 뇌 브리핑의 아침 인사와 같은 기록을 써서 하루에 한 번만 뜬다.
+  - 점심(`lunchAlert`): 점심 시각부터 한 시간 안에 `danceClip: "lunch"`로 추고 점심 인사(`local.lunch`, 그 영상에 한마디가 있으면 그 말)를 띄운다.
+  - 퇴근(`leaveAlert`): 퇴근 10분 전부터 퇴근 시각 전까지 `danceClip: "plan"`(그 캐릭터의 일정 알림 영상)으로 추고 퇴근 인사(`local.leave`, `{mins}` = 퇴근까지 남은 분)를 띄운다. 일정 알림 영상의 한마디는 일정용이라 쓰지 않는다.
+- 채팅 맥락 머리말에 근무 시간 한 줄(`- 근무: 월~금 09:00~18:00 · 점심 12:00 · 퇴근까지 1시간 5분`)이 붙는다.
 
 ## 상태·설정
 
@@ -84,7 +88,7 @@ type Bubble = {
 `GET` 응답은 아래 값을 준다.
 - `models{quick,general,code,light}`, `modelRoles`, `modelOptions`, `envLocked`
 - `briefing{exclude,sources}`, `phrases[]`, `autoMerge[]`
-- `todayReminder{mode,everyHours,times}`, `calendarAlert{minutesBefore[]}`, `lunchAlert`(점심시간 알림, 기본 `true`)
+- `todayReminder{mode,everyHours,times}`, `calendarAlert{minutesBefore[]}`, `lunchAlert`(점심시간 알림, 기본 `true`), 근무 시간 `workStart`(기본 `"09:00"`)·`lunchTime`(`"12:00"`)·`workEnd`(`"18:00"`)·`workDays`(`[1,2,3,4,5]`, 0 일~6 토)·`startAlert`·`leaveAlert`(기본 `true`)
 - `brain{provider,model,keys{gemini,openai,anthropic: boolean}}`
 - `user{name?}`, `repoRoots[]`, `configPath`
 - `onboarded`(설치 마법사를 마쳤나), `readSessions`(이 맥의 Claude Code·Codex 작업 기록을 읽나)
@@ -105,6 +109,9 @@ type Bubble = {
   "onboarded": true,                                      // 설치 마법사를 마침(마법사가 보낸다)
   "calendarAlert": { "minutesBefore": [15, 5] },          // 일정 몇 분 전(양의 정수, 개수·크기 상한 없음). [] = 알림 끔, 기본 [10]
   "lunchAlert": false,                                    // 점심시간 알림 켜고 끄기(기본 켬)
+  "workStart": "09:30", "lunchTime": "12:30", "workEnd": "18:30", // HH:MM(24시간). 아니면 400, 출근이 퇴근보다 늦거나 같아도 400
+  "workDays": [1, 2, 3, 4, 5],                            // 0 일~6 토, 하나 이상
+  "startAlert": true, "leaveAlert": true,                 // 출근 인사·퇴근 10분 전 인사 켜고 끄기(기본 켬)
   "character": "hachi"                                    // shisa·hachi·rakko·momonga·usagi·kani·chiikawa·kuri. 모르는 값은 400
 }
 ```
