@@ -42,10 +42,11 @@ test("치이카와 영상: 춤 두 개 중 랜덤, 일정 알림 두 번째(우�
 test("쿠리만쥬: 술 영상(응원·춤)엔 크아·캬아·크으, 먹는 영상(점심)엔 얌 얌 얌, 일반 말은 느긋한 소리 + 괄호", () => {
   setCharacter("kuri");
   assert.equal(CHARACTERS.kuri.name, "쿠리만쥬");
-  const DRINK = /^(크아아아아|캬아|크으으) \(/;
+  // 술 소리로 시작(괄호 없이 소리만인 줄도 있다 — 사용자가 고친 대사)
+  const DRINK = /^(크아+|캬아|크으+)/;
   for (const l of CHARACTERS.kuri.cheer!) assert.match(l, DRINK, l);
   for (const l of CHARACTERS.kuri.phrases.dance) assert.match(l, DRINK, l);
-  for (let i = 0; i < 20; i++) { assert.match(localAsk("cheer", src)!.text, DRINK); assert.match(localAsk("dance", src)!.text, /^(크아아아아|캬아|크으으) \(춤/); }
+  for (let i = 0; i < 20; i++) { assert.match(localAsk("cheer", src)!.text, DRINK); assert.match(localAsk("dance", src)!.text, DRINK); }
   assert.match(localLine("lunch"), /^얌 얌 얌 \(/);
   for (const [k, l] of Object.entries(CHARACTERS.kuri.lines)) assert.match(l as string, /^\S.*? \(.*\)$/, `local.${k}`);
   // 춤·일정 알림 영상이 없어 응원 영상(맥주 캔), 집중은 술상, 점심은 타코

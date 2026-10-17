@@ -7,7 +7,8 @@ import { CHAT_SYSTEM } from "./chat.ts";
 import { Bus } from "./bus.ts";
 
 afterEach(() => { installCharacters({}); setCharacter("shisa"); });
-const SOUND = /^(으응\?|으으으\.\.\.|으아아!!|헤 헤 헤|헤헤헤\.\.\.|으아아~|으으윽\.\.|으윽\.\.|헤헤헤|헤헤|헤헤\.\.|헤헤헤\.\.|헤, 헤헤\.\.|앗\? 헤헤헤|앗\? 헤헤|앗\? 헤, 헤헤헤|앗\? 헤헤헤\.\.) \(/;
+// 소리(사용자가 lines.json 에서 자유롭게 고친다) 뒤에 괄호로 할 말
+const SOUND = /^\S[^(]*? \(/;
 
 test("카니: 소리 뒤 괄호 안에 할 말(반말), 고정 문구·정해진 말 전부", () => {
   setCharacter("kani");
