@@ -137,7 +137,7 @@ test("퇴근 인사: 일정 알림(plan) 영상, 대사는 local.leave(영상 �
   setCharacter("shisa");
   assert.equal(localLine("leave"), "{mins}분 뒤면 퇴근이에요. 오늘도 고생 많으셨어요, 안녕히 가세요.");
   setCharacter("hachi");
-  assert.equal(localLine("leave"), "곧 퇴근이야! 오늘도 고생했어, 안녕~");
+  assert.match(localLine("leave"), /퇴근/); // 글은 lines.json(사용자가 고친다)
   // 사용자 캐릭터 대사 칸에도 local.leave(자리표시 {mins})
   assert.deepEqual(linesSchema().find((d) => d.path === "local.leave")?.vars, ["mins"]);
   bus.activity.stop();
