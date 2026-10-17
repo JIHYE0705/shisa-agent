@@ -85,7 +85,7 @@ export function applyCharacters(data) {
     const name = typeof l.name === 'string' && l.name.trim() ? l.name.trim() : (builtin ? BASE.characters[e.id].name : '새 캐릭터');
     CHARACTERS[e.id] = builtin
       ? { ...BASE.characters[e.id], name }
-      : { name, custom: true, media: isObj(e.media) ? { ...e.media } : {}, frames: isObj(e.frames) ? { ...e.frames } : {} };
+      : { name, custom: true, media: isObj(e.media) ? { ...e.media } : {}, frames: isObj(e.frames) ? { ...e.frames } : {}, clips: isObj(e.clips) ? structuredClone(e.clips) : {} };
     // 빈 칸은 시사 말(기본값)이 받는다
     LOCAL_SAY[e.id] = { ...SHISA_SAY_LOCAL, ...(isObj(l.overlay) ? l.overlay : {}) };
     SETUP_SAY[e.id] = isObj(l.setup) ? { ...l.setup } : {};

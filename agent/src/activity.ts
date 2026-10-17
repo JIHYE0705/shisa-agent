@@ -6,13 +6,19 @@
 // 아직 runs 로 감싸지 않은 일을 begin() 으로 직접 알린 것. 주기 중계(슬랙·캘린더·자동 완료·프로필)는
 // grace 안에 끝나면 아예 안 보인다(몇 초짜리 정기 작업마다 영상이 깜빡이지 않게).
 import { randomUUID } from "node:crypto";
+import { pickVariant } from "./clips.ts";
 
 export type Activity = "idle" | "studying" | "dancing";
 export type ActivityRun = { id: string; kind: string; title: string; startedAt: string };
-// 춤 영상 종류: plan = 일정 알림 · dance = 「춤」(채팅·춤춰 줘 칩) · cheer = 응원해 줘 칩. 앱이 캐릭터마다 맞는 영상을 고른다
-export type DanceClip = "plan" | "dance" | "cheer";
-export const DANCE_CLIPS: readonly DanceClip[] = ["plan", "dance", "cheer"];
-export type ActivitySnapshot = { activity: Activity; runs: ActivityRun[]; danceId?: string; danceClip?: DanceClip };
+// 춤 영상 종류: plan = 일정 알림 · dance = 「춤」(채팅·춤춰 줘 칩) · cheer = 응원해 줘 칩 · lunch = 점심시간. 앱이 캐릭터마다 맞는 영상을 고른다
+export type DanceClip = "plan" | "dance" | "cheer" | "lunch";
+export const DANCE_CLIPS: readonly DanceClip[] = ["plan", "dance", "cheer", "lunch"];
+// danceVariant: 그 칸에 영상이 여러 개일 때 데몬이 고른 번호(0부터). 앱은 이 번호의 영상을 튼다
+export type ActivitySnapshot = { activity: Activity; runs: ActivityRun[]; danceId?: string; danceClip?: DanceClip; danceVariant?: number };
+// 춤 하나를 시작한 결과: 고른 번호와 그 영상의 한마디(없으면 undefined → 부른 곳이 그 칸 기본 대사)
+export type DanceStart = { id: string; clip: DanceClip; variant: number; say?: string };
+// 칸 → 영상 목록(길이 = 변형 수, say = 영상마다 한마디). bus 가 지금 캐릭터 것으로 넣는다(characters.ts characterClips)
+export type VariantSource = (clip: DanceClip) => readonly { say?: string }[];
 
 // runs.ts RunRegistry 의 필요한 부분만(구조적 타입 — 순환 의존 없이)
 export type RunSource = {
@@ -48,7 +54,10 @@ export class ActivityTracker {
   private source?: RunSource;
   private unsub?: () => void;
   private recheck?: Timer;
-  private dance?: { id: string; timer: Timer; clip: DanceClip };
+  private dance?: { id: string; timer: Timer; clip: DanceClip; variant: number };
+  private lastVariant = new Map<DanceClip, number>(); // 칸마다 지난번 번호(연달아 같은 것이 안 나오게)
+  variants: VariantSource = () => [];
+  rand: () => number = Math.random;
   private last = "";
   private deps: ActivityDeps;
   onChange?: (s: ActivitySnapshot) => void;
@@ -89,20 +98,29 @@ export class ActivityTracker {
     try { return await fn(); } finally { end(); }
   }
 
-  // 춤 ms 동안. 춤 중에 또 부르면 새 춤으로 늘린다. 끝나면 그 전 상태로
-  startDance(ms = 8000, clip: DanceClip = "plan"): string {
+  // 춤 ms 동안. 춤 중에 또 부르면 새 춤으로 늘린다. 끝나면 그 전 상태로.
+  // 그 칸에 영상이 여러 개면 여기서 번호를 고른다(대사와 영상이 어긋나지 않게 고르는 곳은 여기 하나)
+  play(ms = 8000, clip: DanceClip = "plan"): DanceStart {
     if (this.dance) this.deps.clearTimer(this.dance.timer);
     const id = randomUUID();
-    this.dance = { id, clip, timer: this.deps.setTimer(() => { if (this.dance?.id === id) { this.dance = undefined; this.refresh(true); } }, ms) };
+    let list: readonly { say?: string }[] = [];
+    try { list = this.variants(clip) ?? []; } catch { list = []; }
+    const variant = pickVariant(list.length, this.lastVariant.get(clip), this.rand);
+    if (list.length > 1) this.lastVariant.set(clip, variant);
+    const say = typeof list[variant]?.say === "string" && list[variant].say!.trim() ? list[variant].say!.trim() : undefined;
+    this.dance = { id, clip, variant, timer: this.deps.setTimer(() => { if (this.dance?.id === id) { this.dance = undefined; this.refresh(true); } }, ms) };
     this.refresh(true);
-    return id;
+    return { id, clip, variant, ...(say ? { say } : {}) };
+  }
+  startDance(ms = 8000, clip: DanceClip = "plan"): string {
+    return this.play(ms, clip).id;
   }
 
   snapshot(): ActivitySnapshot {
     const active: ActivityRun[] = [...(this.source?.active().filter((r) => r.status === "running") ?? []).map(({ id, kind, title, startedAt }) => ({ id, kind, title, startedAt })), ...this.manual.values()];
     const { runs } = visibleRuns(active, this.deps.now().getTime());
     const s: ActivitySnapshot = { activity: deriveActivity(runs.length, !!this.dance), runs };
-    if (this.dance) { s.danceId = this.dance.id; s.danceClip = this.dance.clip; }
+    if (this.dance) { s.danceId = this.dance.id; s.danceClip = this.dance.clip; s.danceVariant = this.dance.variant; }
     return s;
   }
 

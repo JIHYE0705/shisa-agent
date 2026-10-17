@@ -11,7 +11,7 @@ import { createAttachTray } from './attach-tray.js';
 import { hasFiles, filesFromTransfer, ATTACH_ERRORS } from '../src/attachments.js';
 import { normFocus, focusBubble, doingBubble } from '../src/focus.js';
 import { who, setWho } from './who.js';
-import { characterAssets, okCharacter, localSay, clipFor, danceClipOf, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf, fitBox } from '../src/character.js';
+import { characterAssets, okCharacter, localSay, clipFor, danceClipOf, danceVariantOf, variantsOf, pickVariant, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf, fitBox } from '../src/character.js';
 import { applyCharacters } from '../src/character-registry.js';
 
 const cy = window.cy;
@@ -141,8 +141,11 @@ function showVideo(k) {
   clipImg.classList.toggle('on', useImg);
   wrap.classList.toggle('video-on', !!k);
 }
-// 그 자리에 틀 영상: 춤 자리는 종류(일정 알림·춤·응원)에 따라 다르다. null = 그 칸이 없음(정지 그림)
-const clipOf = (k) => (k === 'dancing' ? clipFor(charA, danceClipOf(act)) : charA.videos[k] ?? null);
+// 그 자리에 틀 영상: 춤 자리는 종류(일정 알림·춤·응원·점심)와 번호(데몬이 고른 state.danceVariant)에 따라 다르다.
+// 집중 자리는 영상이 여러 개면 들어갈 때마다 앱이 하나를 고른다(studyVariant). null = 그 칸이 없음(정지 그림)
+let studyVariant = 0;
+let lastStudy;
+const clipOf = (k) => (k === 'dancing' ? clipFor(charA, danceClipOf(act), danceVariantOf(act)) : k === 'studying' ? clipFor(charA, 'study', studyVariant) : null);
 function startVideo(k) {
   const v = videos[k];
   const c = clipOf(k);
@@ -162,8 +165,9 @@ function startVideo(k) {
 let shownClip = null;
 function applyActivity() {
   const view = viewOf(act);
-  const clip = view === 'dancing' ? danceClipOf(act) : null;
+  const clip = view === 'dancing' ? `${danceClipOf(act)}:${danceVariantOf(act)}` : null; // 종류·번호가 바뀌면 새 영상
   if (view === shownView && clip === shownClip) return;
+  if (view === 'studying' && shownView !== 'studying') pickStudy();
   const sameView = view === shownView;
   shownView = view;
   shownClip = clip;
@@ -174,6 +178,14 @@ function applyActivity() {
   if (view === 'dancing') danceCap = setTimeout(() => dispatchActivity({ type: 'danceEnd' }), DANCE_MAX_MS);
   if (sameView) showVideo(null); // 춤 종류만 바뀜(예: 칩 춤 → 데몬 응원) — 새 영상 첫 장면이 나올 때 다시 켠다
   startVideo(view);
+}
+// 집중 영상 고르기(여러 개면 지난번과 다른 것). 그 영상에 한마디가 있으면 잠깐 말풍선으로
+function pickStudy() {
+  const list = variantsOf(charA, 'study');
+  studyVariant = pickVariant(list.length, lastStudy);
+  if (list.length > 1) lastStudy = studyVariant;
+  const say = list[studyVariant]?.say;
+  if (say) showBubble({ id: 'study-say', text: say, kind: 'info', ttlMs: 6000 });
 }
 // 캐릭터 바꾸기: 정지 그림을 새로 찾고, 영상은 새 주소로(지금 영상 중이면 새 캐릭터 영상으로 이어서)
 // force: 같은 id 라도 그림을 바꿨을 수 있다(캐릭터 목록을 새로 받음) — 주소가 다 같으면 그대로 둔다
@@ -622,7 +634,7 @@ function takeCharacters(data) {
 }
 cy.getCharacters?.().then(takeCharacters).catch(() => {});
 cy.onCharacters?.(takeCharacters);
-cy.onState((p) => { if (typeof p?.character === 'string') setCharacter(p.character); setMood(p?.mood); dispatchActivity({ type: 'state', activity: p?.activity, runs: p?.runs, danceId: p?.danceId, danceClip: p?.danceClip }); }); // danceClip: 일정 알림·춤·응원 중 어느 영상
+cy.onState((p) => { if (typeof p?.character === 'string') setCharacter(p.character); setMood(p?.mood); dispatchActivity({ type: 'state', activity: p?.activity, runs: p?.runs, danceId: p?.danceId, danceClip: p?.danceClip, danceVariant: p?.danceVariant }); }); // danceClip: 일정 알림·춤·응원·점심 중 어느 칸 · danceVariant: 그 칸의 몇 번째 영상(데몬이 고른다)
 
 cy.onConnection(({ connected }) => {
   wrap.classList.toggle('sleepy', !connected);
@@ -961,10 +973,16 @@ cy.onBrain?.((v) => { if (v) brain = v; if (brain.ready === false && askOpen) hi
 let danceOff = null;
 let chipSeq = 0; // 칩을 새로 누르면 앞선 「다시 띄우기」는 버린다
 const CHIPS_AGAIN_MS = 2000; // 답을 보여 주고 이만큼 뒤에 칩을 다시
+// 데몬이 꺼져 있을 때만 쓴다(켜져 있으면 데몬이 영상 번호를 골라 state 로 알린다). 영상 번호는 여기서 고르고 그 영상의 한마디를 돌려준다
+const lastLocal = {};
 function localDance(ms, clip = 'dance') {
-  dispatchActivity({ type: 'localDance', on: true, clip });
+  const list = variantsOf(charA, clip);
+  const variant = pickVariant(list.length, lastLocal[clip]);
+  if (list.length > 1) lastLocal[clip] = variant;
+  dispatchActivity({ type: 'localDance', on: true, clip, variant });
   clearTimeout(danceOff);
   danceOff = setTimeout(() => dispatchActivity({ type: 'localDance', on: false }), ms);
+  return list[variant]?.say ?? null;
 }
 function noBrain() {
   chipSeq++;
@@ -977,14 +995,18 @@ async function quickChip(id) {
   if (a.type === 'open') { cy.openItem(a.section, a.id); return; }
   const seq = ++chipSeq;
   const acting = a.id === 'cheer' || a.id === 'dance';
-  if (acting) localDance(8000, a.id); // 바로 영상(데몬도 같은 영상을 튼다 — 꺼져 있어도 보이게)
-  pauseAsk(acting ? 8000 : 4000); // 행동하고 정해진 말 하는 동안은 입력창을 잠깐 숨긴다 // 바로 영상(데몬도 같은 영상을 튼다 — 꺼져 있어도 보이게)
+  // 데몬과 끊겨 있으면 바로 앱이 고른 영상으로(꺼져 있어도 보이게). 붙어 있으면 데몬이 영상 번호를 골라 state 로 알린다(대사와 같은 번호)
+  let ownSay = null;
+  if (acting && !act.connected) ownSay = localDance(8000, a.id);
+  pauseAsk(acting ? 8000 : 4000); // 행동하고 정해진 말 하는 동안은 입력창을 잠깐 숨긴다
   const ask = async () => { try { return await cy.localAsk(a.id); } catch (e) { return { ok: false, error: e?.message }; } };
   let r = await ask();
   if (!r?.ok) { await new Promise((ok) => setTimeout(ok, 800)); r = await ask(); } // 데몬이 잠깐 바빴으면 한 번 더
   if (seq !== chipSeq) return;
+  if (acting && !r?.ok && !act.localDance) ownSay = localDance(8000, a.id); // 붙어 있다고 봤는데 답이 없으면 앱이 춘다
   for (const x of queue.items.filter((x) => x.id.startsWith('local-ask-'))) dismiss(x.id); // 앞선 답은 내린다
-  showBubble(answerBubble(a.id, r));
+  // 앱이 혼자 춘 영상에 한마디가 있으면 그 말(데몬 답이 없을 때)
+  showBubble(!r?.ok && ownSay ? answerBubble(a.id, { ok: true, data: { answer: { id: a.id, kind: 'done', text: ownSay } } }) : answerBubble(a.id, r));
   setTimeout(() => { if (seq === chipSeq) showBubble(quickBubble(brain, charA.id)); }, CHIPS_AGAIN_MS);
 }
 // 입력창 잠깐 숨기기(열린 채로 — 포커스·내용은 그대로). ms 뒤 아직 열려 있으면 다시 보인다. 그 사이 또 부르면 늘린다

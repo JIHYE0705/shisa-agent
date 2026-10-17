@@ -4,6 +4,7 @@
 //   plan.webm  · plan.png            일정 알림(n분 전) 영상과 첫 장면
 //   dance.webm · cheer.webm          「춤춰 줘」·「응원해 줘」 영상(있는 캐릭터만 — 없으면 앱이 다른 영상으로 대신한다)
 //   video.json                       { study: {...}, plan: {...} } — scene: true 면 배경이 있는 장면(네모 카드로 보인다)
+// 시사(assets/character/)는 예전 그림·영상을 그대로 두고 더한 영상만 만든다(EXTRA — video.json 에 그 칸만 더한다)
 // 배경 처리(key): green = 초록 배경 크로마키(prepare-videos.mjs 와 같은 그래프) · flood = 가장자리에서 이어진 단색 배경을 지움
 //                 scene = 배경을 그대로 두고 가운데를 정사각형으로 자름
 // 사용: node scripts/prepare-characters.mjs [--src ~/Downloads] [--out ../assets/characters] [--only hachi]
@@ -32,6 +33,11 @@ export const SOURCES = {
     stills: { open: 'momonga_open_eyes.png', closed: 'momonga_closed_eyes.png' },
     clips: { plan: { file: 'momonga_plan.mp4', key: 'scene' }, study: { file: 'momonga_study.gif', key: 'scene' }, dance: { file: 'momonga_dance.gif', key: 'scene' } },
   },
+};
+
+// 기본 캐릭터에 더한 영상(같은 칸에 여러 개 → 앱이 그중 하나를 랜덤으로. 어느 칸에 넣는지는 assets/characters/clips.json)
+export const EXTRA = {
+  shisa: { dir: path.join('..', 'character'), clips: { dance2: { file: 'shisa-dance2.gif', key: 'scene', cx: 0.44 } } }, // 「お酒」 메뉴판 춤
 };
 
 export const SIZE = 512;
@@ -250,6 +256,15 @@ async function main() {
     const meta = {};
     for (const [name, c] of Object.entries(spec.clips)) meta[name] = await clip(src, dir, name, c);
     fs.writeFileSync(path.join(dir, 'video.json'), JSON.stringify(meta, null, 2) + '\n');
+  }
+  for (const [id, spec] of Object.entries(EXTRA)) {
+    if (only && only !== id) continue;
+    const dir = path.join(outRoot, spec.dir);
+    console.log(`- ${id} (더한 영상)`);
+    const metaFile = path.join(dir, 'video.json');
+    const meta = fs.existsSync(metaFile) ? JSON.parse(fs.readFileSync(metaFile, 'utf8')) : {};
+    for (const [name, c] of Object.entries(spec.clips)) meta[name] = await clip(src, dir, name, c);
+    fs.writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n');
   }
 }
 

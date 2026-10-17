@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { CHARACTERS, CHARACTER_IDS, characterAssets, okCharacter, VIDEOS } from '../src/character.js';
+import { CHARACTERS, CHARACTER_IDS, characterAssets, okCharacter, VIDEOS, clipList } from '../src/character.js';
+import { CHARACTER_CLIPS } from '../src/character-clips.js';
 import { resolveAsset } from '../src/assets.js';
 import { sanitizeSettingsPatch } from '../src/settings.js';
 import { cannedReply, resetCanned, CANNED_KEYS } from '../src/canned.js';
@@ -46,7 +47,7 @@ test('캐릭터 영상: 알파 캐릭터는 VP9 알파, 장면은 정사각형 5
     const meta = JSON.parse(fs.readFileSync(path.join(ASSETS, 'characters', id, 'video.json'), 'utf8'));
     for (const [name, view] of [['study', 'studying'], ['plan', 'dancing']]) {
       assert.equal(meta[name].size, 512, `${id}/${name}`);
-      assert.equal(meta[name].scene, CHARACTERS[id].scenes[name] === true, `${id}/${name} scene`);
+      assert.equal(meta[name].scene, clipList(CHARACTER_CLIPS[id], name)[0].scene === true, `${id}/${name} scene`);
       assert.ok(meta[name].frames > 0);
     }
   }
@@ -62,7 +63,8 @@ test('설정 저장 본문: character 는 아는 id 만', () => {
 test('우사기: 집중·알림·춤·응원은 각각 로컬 포스터와 투명 루프를 사용한다', () => {
   const a = characterAssets('usagi');
   const meta = JSON.parse(fs.readFileSync(path.join(ASSETS, 'characters/usagi/video.json'), 'utf8'));
-  const states = { study: a.videos.studying, ...a.clips };
+  const states = { study: a.videos.studying, plan: a.clips.plan, dance: a.clips.dance, cheer: a.clips.cheer };
+  assert.equal(a.clips.lunch.src, a.clips.plan.src, '점심시간 기본값은 일정 알림 영상');
   assert.equal(new Set(Object.values(states).map((v) => v.src)).size, 4);
   for (const [name, v] of Object.entries(states)) {
     assert.equal(v.scene, false);

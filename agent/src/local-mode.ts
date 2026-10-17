@@ -133,7 +133,8 @@ export type QuickFacts = {
   open?: LocalTodo[]; // 열린 할 일(우선순위 순)
   calendar?: { enabled: boolean; meetings: QuickMeeting[] };
 };
-export type QuickAnswer = { id: QuickAskId; text: string; detail?: string; kind: "info" | "done"; open?: { section: "today" | "todos" | "setup"; id?: string } };
+// variant: 응원·춤 때 데몬이 고른 영상 번호(state.danceVariant 와 같다)
+export type QuickAnswer = { id: QuickAskId; text: string; detail?: string; kind: "info" | "done"; open?: { section: "today" | "todos" | "setup"; id?: string }; variant?: number };
 
 export const QUICK_LINES = {
   todayEmpty: "오늘 할 일이 아직 비어 있어요. 오늘 할 일 탭에 적어 주시면 같이 챙길게요.",

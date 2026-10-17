@@ -12,7 +12,7 @@ test('cy-asset: 허용 목록만, 경로 조작·다른 호스트·쿼리 거절
     'cy-asset://app/reactions/nope.jpg', 'cy-asset://evil/character.png', 'cy-asset://app/character.png?x=1',
     'file:///etc/passwd', 'https://app/character.png', 'cy-asset://app/config.json', 'not a url',
   ]) assert.equal(resolveAsset(bad), null, bad);
-  assert.equal(ALLOWED.size, 16 + 39); // 시사 16 + 기존 세 캐릭터 × 10 + 우사기 9(감은 눈 제외)
+  assert.equal(ALLOWED.size, 18 + 39); // 시사 18(두 번째 춤 dance2 포함) + 기존 세 캐릭터 × 10 + 우사기 9(감은 눈 제외)
 });
 
 test('cy-asset: 캐릭터 상태 그림·영상(character/) — 정확한 이름만, MIME 맞게', () => {
@@ -21,6 +21,7 @@ test('cy-asset: 캐릭터 상태 그림·영상(character/) — 정확한 이름
     'character/eyes_open@2x.png': 'image/png', 'character/eyes_closed@2x.png': 'image/png',
     'character/studying.webm': 'video/webm', 'character/dance.webm': 'video/webm',
     'character/studying.png': 'image/png', 'character/dance.png': 'image/png',
+    'character/dance2.webm': 'video/webm', 'character/dance2.png': 'image/png',
   };
   for (const [rel, type] of Object.entries(ok)) assert.deepEqual(resolveAsset(`cy-asset://app/${rel}`), { rel, type }, rel);
   assert.deepEqual(resolveAsset('cy-asset://app/character/eyes_open%402x.png'), { rel: 'character/eyes_open@2x.png', type: 'image/png' });

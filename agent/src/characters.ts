@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { builtinClips, clipList, type ClipKind, type ClipTable } from "./clips.ts";
 
 // 고를 수 있는 캐릭터: 시사(기본)·하치와레·랏코·모몽가·우사기 + 사용자가 만든 캐릭터(character-store.ts, ~/.cy-agent/characters/).
 // 캐릭터마다 이름·말투(모델 프롬프트)·말투 양념(voice.ts)·고정 문구 기본값(phrases.ts)·AI 없이 하는 정해진 말(local-mode.ts)이 다르다.
@@ -30,6 +31,7 @@ export type Character = {
   phrases: Record<string, readonly string[]>; // phrases.ts 키 → 이 캐릭터의 기본 줄들(없는 키는 phrases.ts 기본값)
   lines: Partial<Record<LocalLineKey, string>>; // local-mode.ts 의 정해진 말(없는 키는 시사 말)
   cheer?: readonly string[]; // local-mode.ts 응원 칩
+  clips?: ClipTable; // 칸마다 영상 목록·영상마다 한마디(clips.ts) — 기본 캐릭터는 clips.json, 사용자 캐릭터는 character.json media
 };
 
 export type LocalLineKey =
@@ -60,6 +62,7 @@ const SHISA: Character = {
   },
   phrases: {},
   lines: {},
+  clips: builtinClips("shisa"),
 };
 
 // 시사 외 캐릭터의 말은 전부 assets/characters/lines.json 에 있다(사람이 고치는 파일 — 데스크톱도 같은 파일을 쓴다).
@@ -106,10 +109,10 @@ function fromLines(id: CharacterId, e: Partial<LinesEntry>, extra: Partial<Chara
 // 고치지 않은 기본 캐릭터(시사 상수는 voice.ts TONE·MOODS 가 이걸 본다)
 export const CHARACTERS: Record<BuiltinId, Character> = {
   shisa: SHISA,
-  hachi: fromLines("hachi", LINES_JSON.hachi as LinesEntry),
-  rakko: fromLines("rakko", LINES_JSON.rakko as LinesEntry),
-  momonga: fromLines("momonga", LINES_JSON.momonga as LinesEntry),
-  usagi: fromLines("usagi", LINES_JSON.usagi as LinesEntry),
+  hachi: fromLines("hachi", LINES_JSON.hachi as LinesEntry, { clips: builtinClips("hachi") }),
+  rakko: fromLines("rakko", LINES_JSON.rakko as LinesEntry, { clips: builtinClips("rakko") }),
+  momonga: fromLines("momonga", LINES_JSON.momonga as LinesEntry, { clips: builtinClips("momonga") }),
+  usagi: fromLines("usagi", LINES_JSON.usagi as LinesEntry, { clips: builtinClips("usagi") }),
 };
 
 // 시사를 고친 것: 고친 칸만 바뀌고 나머지는 시사 기본(문구·정해진 말은 phrases.ts·local-mode.ts 기본값이 받는다)
@@ -133,14 +136,14 @@ let order: string[] = [...CHARACTER_IDS];
 export const isCharacterId = (v: unknown): v is CharacterId => typeof v === "string" && Object.hasOwn(table, v);
 
 // character-store.ts 가 시작할 때·바뀔 때 부른다. 지금 캐릭터가 사라졌으면 시사로(돌려준 값이 true)
-export function installCharacters(o: { overrides?: Record<string, LinesPatch>; users?: { id: string; lines: Partial<LinesEntry> }[] }): boolean {
+export function installCharacters(o: { overrides?: Record<string, LinesPatch>; users?: { id: string; lines: Partial<LinesEntry>; clips?: ClipTable }[] }): boolean {
   const next: Record<string, Character> = {};
   for (const id of CHARACTER_IDS) {
     const ov = o.overrides?.[id];
-    next[id] = !ov ? CHARACTERS[id] : id === "shisa" ? shisaWith(ov) : fromLines(id, mergeLines(LINES_JSON[id] as LinesEntry, ov));
+    next[id] = !ov ? CHARACTERS[id] : id === "shisa" ? shisaWith(ov) : fromLines(id, mergeLines(LINES_JSON[id] as LinesEntry, ov), { clips: builtinClips(id) });
   }
   const users = (o.users ?? []).filter((u) => !isBuiltinId(u.id) && !Object.hasOwn(next, u.id));
-  for (const u of users) next[u.id] = fromLines(u.id, u.lines, { custom: true });
+  for (const u of users) next[u.id] = fromLines(u.id, u.lines, { custom: true, clips: u.clips ?? {} });
   table = next;
   order = [...CHARACTER_IDS, ...users.map((u) => u.id)];
   if (isCharacterId(current)) return false;
@@ -157,6 +160,8 @@ export function setCharacter(id: unknown): CharacterId {
 export const characterId = (): CharacterId => current;
 export const character = (): Character => table[current] ?? SHISA;
 export const characterById = (id: string): Character | undefined => (isCharacterId(id) ? table[id] : undefined);
+// 지금 캐릭터의 그 칸 영상 목록(clips.ts clipList). 길이가 변형 수, say 가 영상마다 한마디
+export const characterClips = (kind: ClipKind, id: string = current) => clipList((isCharacterId(id) ? table[id] : SHISA).clips, kind);
 export const characterOptions = () => order.map((id) => ({ id, name: table[id].name, ...(table[id].custom ? { custom: true } : {}) }));
 
 // 프롬프트의 시사 첫 문장+말투(brain.ts BASE)를 지금 캐릭터 것으로 바꾼다. 시사 그대로면 글자 하나 안 바뀐다(프롬프트 캐시도 그대로).

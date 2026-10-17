@@ -208,7 +208,7 @@ function setupChat(converse: Converse) {
   const danced: number[] = [];
   const chat = new Chat(loadConfig(), store, {
     emit: (e) => events.push(e), openPanel: () => {}, changed: () => {}, propose: async () => {},
-    dance: (ms) => danced.push(ms), attachments,
+    dance: (ms) => { danced.push(ms); }, attachments,
   }, converse);
   return { store, chat, events, attachments, dir, danced };
 }

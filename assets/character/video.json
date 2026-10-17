@@ -225,5 +225,24 @@
         "bytes": 2502845
       }
     }
+  },
+  "dance2": {
+    "file": "dance2.webm",
+    "poster": "dance2.png",
+    "size": 512,
+    "fps": 14.286,
+    "frames": 52,
+    "duration": 3.64,
+    "scene": true,
+    "source": {
+      "file": "shisa-dance2.gif",
+      "w": 498,
+      "h": 302
+    },
+    "square": [
+      68,
+      0,
+      302
+    ]
   }
 }

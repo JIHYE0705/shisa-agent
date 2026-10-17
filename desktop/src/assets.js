@@ -3,7 +3,8 @@
 import { IMAGES } from './bubbles.js';
 
 export const ASSET_SCHEME = 'cy-asset';
-// 캐릭터 상태 그림·영상(character/): 눈 뜬·감은 정지 그림(+@2x), 공부 중·춤 영상(VP9 알파 webm)과 첫 장면 포스터
+// 캐릭터 상태 그림·영상(character/): 눈 뜬·감은 정지 그림(+@2x), 공부 중·춤 영상(VP9 알파 webm)과 첫 장면 포스터.
+// dance2: 두 번째 춤(배경 있는 장면, 「お酒」 메뉴판) — 춤 칸에서 dance 와 번갈아 랜덤(assets/characters/clips.json)
 export const CHARACTER_FILES = [
   ['character/eyes_open.png', 'image/png'],
   ['character/eyes_closed.png', 'image/png'],
@@ -13,6 +14,8 @@ export const CHARACTER_FILES = [
   ['character/dance.webm', 'video/webm'],
   ['character/studying.png', 'image/png'],
   ['character/dance.png', 'image/png'],
+  ['character/dance2.webm', 'video/webm'],
+  ['character/dance2.png', 'image/png'],
 ];
 // 고를 수 있는 캐릭터(characters/<id>/): 정지 그림 · 집중(study)·일정 알림(plan) 영상과 첫 장면
 export const PICKABLE = ['hachi', 'rakko', 'momonga', 'usagi'];
@@ -38,7 +41,7 @@ export const ALLOWED = new Map([
 // 사용자가 만든 캐릭터(~/.cy-agent/characters/<id>/): 데몬이 지은 저장 이름(<칸>-<무작위 8자>.<확장자>)만, 확장자로 종류를 정한다.
 // 이 목록은 파일마다 고정이 아니라 모양으로 본다. 실제로 그 캐릭터의 파일인지(데몬 목록)와 폴더 밖으로 안 나가는지는 main 이 다시 본다(userCharacterFile)
 export const USER_MEDIA_TYPES = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', webm: 'video/webm', mp4: 'video/mp4' };
-const USER_REL = /^user-characters\/(u-[a-z0-9]{4,32})\/((?:eyes_open|eyes_closed|cheer|dance|study|plan)-[a-z0-9]{8}\.(png|jpg|webp|gif|webm|mp4))$/;
+const USER_REL = /^user-characters\/(u-[a-z0-9]{4,32})\/((?:eyes_open|eyes_closed|cheer|dance|study|plan|lunch)-[a-z0-9]{8}\.(png|jpg|webp|gif|webm|mp4))$/;
 
 // 'cy-asset://app/reactions/merge.jpg' → { rel: 'reactions/merge.jpg', type: 'image/jpeg' } | null
 // 사용자 캐릭터 파일이면 { rel, type, user: { id, file } }
@@ -60,7 +63,9 @@ export function resolveAsset(url) {
 export function userCharacterFile(a, root, list, fsx, path) {
   if (!a?.user || !root) return null;
   const c = (Array.isArray(list) ? list : []).find((x) => x && x.id === a.user.id && x.custom);
-  if (!c || !Object.values(c.media ?? {}).includes(a.user.file)) return null;
+  // 그 캐릭터의 파일인가: 칸마다 하나(media) 또는 여러 개 넣는 칸의 목록(clips)
+  const files = [...Object.values(c?.media ?? {}), ...Object.values(c?.clips ?? {}).flatMap((l) => (Array.isArray(l) ? l.map((x) => x?.file) : []))];
+  if (!c || !files.includes(a.user.file)) return null;
   try {
     const dir = fsx.realpath(path.join(root, a.user.id));
     const rootReal = fsx.realpath(root);

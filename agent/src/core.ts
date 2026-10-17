@@ -194,9 +194,11 @@ export class Agent {
       summary: async () => dashboardSummary(await this.dashboard()),
       dashboard: () => this.dashboard(),
       mood: (busy) => this.bus.setMood(busy ? "thinking" : "idle"),
-      dance: (ms, say) => {
-        this.bus.activity.startDance(ms, "dance"); // 「춤」이 든 말 → 춤 영상(일정 알림 영상 아님)
-        if (say) this.bus.bubble({ id: "dance", text: say, kind: "info", ttlMs: ms }); // 춤 한마디(설정 창 문구 dance)
+      dance: (ms, say, bubble = true) => {
+        const d = this.bus.activity.play(ms, "dance"); // 「춤」이 든 말 → 춤 영상(일정 알림 영상 아님). 영상이 여러 개면 여기서 번호를 고른다
+        const line = d.say ?? say; // 그 영상의 전용 한마디 > 춤 한마디(설정 창 문구 dance)
+        if (line && bubble) this.bus.bubble({ id: "dance", text: line, kind: "info", ttlMs: ms });
+        return line;
       },
       threads: (ev) => this.bus.threads(ev),
       proposeActions: (raw, ctx) => this.actions.propose(raw, ctx),

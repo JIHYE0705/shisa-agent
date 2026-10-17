@@ -266,8 +266,10 @@ await bus.listen(cfg.port, {
       open: () => store.openTodos(),
       calendar: () => ({ enabled: calendar.enabled, meetings: calendar.enabled ? calendar.upcoming() : [] }),
     });
-    if (answer?.id === "cheer" || answer?.id === "dance") bus.activity.startDance(8000, answer.id);
-    return answer;
+    if (answer?.id !== "cheer" && answer?.id !== "dance") return answer;
+    // 영상 번호는 데몬이 고른다(state.danceVariant). 그 영상에 전용 한마디가 있으면 답 글도 그 말로
+    const d = bus.activity.play(8000, answer.id);
+    return { ...answer, ...(d.say ? { text: d.say } : {}), variant: d.variant };
   },
   guidelines: agent.guidelinesApi(),
   focus: focusApi(focus),

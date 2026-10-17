@@ -5,6 +5,7 @@
 // 집중하기(focus.js): 집중 중이면 공부 영상, 일시정지면 기본 그림(데몬이 다른 일로 공부 중이면 그대로 공부 영상).
 
 import { CHARACTER_LINES } from './character-lines.js';
+import { CHARACTER_CLIPS } from './character-clips.js';
 
 export const CHAR_DIR = 'cy-asset://app/character';
 // 정지 그림 대체 순서: 눈 뜬 그림 → 예전 개인 그림 → 번들 그림 → 번들 svg
@@ -15,17 +16,44 @@ export const VIDEOS = {
 };
 
 // ---- 고를 수 있는 캐릭터(데몬 characters.ts 와 같은 id). 시사는 예전 자리(character/), 나머지는 characters/<id>/ ----
-// study = 집중·공부 중(studying 자리), plan = 일정 알림·춤(dancing 자리). scene: 배경이 있는 장면이라 둥근 네모 카드로 보인다
-// clips: 춤 영상 종류(데몬 state.danceClip: plan 일정 알림 · dance 춤춰 줘 · cheer 응원해 줘) → 그 캐릭터의 파일 이름. 없는 종류는 같은 파일을 다시 쓴다
-// 사용자가 만든 캐릭터(u-xxxxxxxx)는 데몬 GET /characters 를 받아 character-registry.js 가 여기에 더한다: { name, custom: true, media, frame }
+// 칸마다 영상 목록은 assets/characters/clips.json(사본 character-clips.js): plan 일정 알림 · dance 춤 · cheer 응원 · study 집중 · lunch 점심시간.
+// 한 칸에 여러 개면 그때마다 하나를 랜덤으로 — 춤 자리(plan·dance·cheer·lunch)는 데몬이 번호를 골라 state.danceVariant 로 알린다(clipFor)
+// 사용자가 만든 캐릭터(u-xxxxxxxx)는 데몬 GET /characters 를 받아 character-registry.js 가 여기에 더한다: { name, custom: true, media, frames, clips }
 export const CHARACTERS = {
   shisa: { name: '시사' },
-  hachi: { name: '하치와레', blink: true, scenes: { cheer: true }, clips: { plan: 'plan', dance: 'plan', cheer: 'cheer' } },
-  rakko: { name: '랏코', blink: true, scenes: { study: true, plan: true, dance: true }, clips: { plan: 'plan', dance: 'dance', cheer: 'plan' } },
-  momonga: { name: '모몽가', blink: true, scenes: { study: true, plan: true, dance: true }, clips: { plan: 'plan', dance: 'dance', cheer: 'plan' } },
-  usagi: { name: '우사기', blink: false, scenes: {}, clips: { plan: 'plan', dance: 'dance', cheer: 'cheer' } },
+  hachi: { name: '하치와레', blink: true },
+  rakko: { name: '랏코', blink: true },
+  momonga: { name: '모몽가', blink: true },
+  usagi: { name: '우사기', blink: false },
 };
-export const DANCE_CLIPS = ['plan', 'dance', 'cheer'];
+export const DANCE_CLIPS = ['plan', 'dance', 'cheer', 'lunch'];
+export const CLIP_KINDS = ['plan', 'dance', 'cheer', 'study', 'lunch'];
+// 빈 칸 대신 쓰는 순서(데몬 clips.ts CLIP_FALLBACK 과 같다). 집중은 없으면 정지 그림
+export const CLIP_FALLBACK = { plan: ['dance', 'cheer'], dance: ['cheer'], cheer: ['dance'], study: [], lunch: ['plan', 'dance', 'cheer'] };
+export const NO_SAY = new Set(['plan']); // 일정 알림은 일정 말풍선이 뜬다
+// 칸 하나의 목록(데몬 clips.ts clipList 와 같다): 직접 넣은 것(한마디 그대로) > 다른 칸 이름 > 빈 칸 대신 쓰는 순서(한마디 없이)
+export function clipList(t, kind) {
+  const own = (k) => (Array.isArray(t?.[k]) && t[k].length ? t[k] : null);
+  const strip = (l) => l.map(({ say: _s, ...x }) => x);
+  const mine = own(kind);
+  if (mine) return NO_SAY.has(kind) ? strip(mine) : mine.map((x) => ({ ...x }));
+  const seen = new Set([kind]);
+  let alias = t?.[kind];
+  while (typeof alias === 'string' && CLIP_KINDS.includes(alias) && !seen.has(alias)) {
+    seen.add(alias);
+    if (own(alias)) return strip(own(alias));
+    alias = t?.[alias];
+  }
+  for (const k of CLIP_FALLBACK[kind] ?? []) if (own(k)) return strip(own(k));
+  return [];
+}
+// n 개 중 하나. 두 개 이상이면 last 와 다른 것(데몬 clips.ts pickVariant 와 같다)
+export function pickVariant(n, last, rand = Math.random) {
+  if (!(n > 1)) return 0;
+  if (!(Number.isInteger(last) && last >= 0 && last < n)) return Math.min(n - 1, Math.floor(rand() * n));
+  const i = Math.min(n - 2, Math.floor(rand() * (n - 1)));
+  return i >= last ? i + 1 : i;
+}
 export const CHARACTER_IDS = Object.freeze(Object.keys(CHARACTERS)); // 기본 다섯
 export const characterIds = () => Object.keys(CHARACTERS); // 지금 고를 수 있는 것(사용자 캐릭터 포함)
 export const DEFAULT_CHARACTER = 'shisa';
@@ -48,54 +76,80 @@ export const okCharacter = (id) => (typeof id === 'string' && Object.hasOwn(CHAR
 export const USER_CHAR_DIR = 'cy-asset://app/user-characters';
 export const MEDIA_SLOTS = ['eyes_open', 'eyes_closed', 'cheer', 'dance', 'study', 'plan'];
 export const REQUIRED_SLOTS = ['eyes_open', 'eyes_closed', 'cheer', 'dance'];
+// 파일을 여러 개 넣는 칸(그때마다 하나를 랜덤으로). 눈 뜬·감은 그림은 하나씩
+export const MULTI_SLOTS = ['cheer', 'dance', 'study', 'plan', 'lunch'];
 export const MEDIA_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'webm', 'mp4'];
 const VIDEO_EXT = /\.(webm|mp4)$/i;
 // 파일 이름 → 'video'(<video> 로 튼다) | 'img'(<img>: 정지 그림·움직이는 gif·webp 는 <video> 가 못 튼다)
 export const clipKind = (file) => (VIDEO_EXT.test(String(file ?? '')) ? 'video' : 'img');
 // 빈 칸 대신 쓰는 규칙(꼭 넣을 넷이 비어도 깨지지 않게):
-//   응원 → 춤 · 춤 → 응원 · 일정 알림 → 춤 → 응원 · 집중 → 없으면 정지 그림(눈 뜬 모습, 깜빡임 그대로)
+//   응원 → 춤 · 춤 → 응원 · 일정 알림 → 춤 → 응원 · 점심시간 → 일정 알림 → 춤 → 응원 · 집중 → 없으면 정지 그림(눈 뜬 모습, 깜빡임 그대로)
 //   눈 감은 모습이 없으면 깜빡이지 않는다 · 눈 뜬 모습이 없으면 시사 그림
-// frames: 칸마다 테두리(둥근 네모 카드). 없는 칸은 파일 종류로(투명 배경이 흔한 png·webm 은 끔, 그 밖은 켬 — 데몬 defaultFrame 과 같다).
-// 정사각형이 아니어도 비율대로 상자 안에 맞춘다(fit)
+// 테두리(둥근 네모 카드): 여러 개 넣는 칸은 파일마다(clips[칸][i].frame), 눈 그림은 칸마다(frames). 없으면 파일 종류로
+// (투명 배경이 흔한 png·webm 은 끔, 그 밖은 켬 — 데몬 defaultFrame 과 같다). 정사각형이 아니어도 비율대로 상자 안에 맞춘다(fit)
 export const defaultFrame = (file) => !/\.(png|webm)$/i.test(String(file ?? ''));
-export function customAssets(id, media = {}, frames = {}) {
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+// 칸 → [{ file, say?, frame? }]. clips(새 모양)가 있으면 그것, 없으면 media 의 파일 하나(예전 모양)
+export function userClipTable(media = {}, frames = {}, clips = {}) {
+  const t = {};
+  for (const slot of MULTI_SLOTS) {
+    const list = Array.isArray(clips?.[slot]) ? clips[slot].filter((x) => isObj(x) && typeof x.file === 'string' && x.file)
+      : typeof media?.[slot] === 'string' && media[slot] ? [{ file: media[slot], ...(typeof frames?.[slot] === 'boolean' ? { frame: frames[slot] } : {}) }] : [];
+    if (list.length) t[slot] = list.map((x) => ({ file: x.file, ...(typeof x.say === 'string' && x.say.trim() ? { say: x.say.trim() } : {}), ...(typeof x.frame === 'boolean' ? { frame: x.frame } : {}) }));
+  }
+  return t;
+}
+export function customAssets(id, media = {}, frames = {}, clips = {}) {
   const dir = `${USER_CHAR_DIR}/${id}`;
   const url = (slot) => (typeof media?.[slot] === 'string' && media[slot] ? `${dir}/${media[slot]}` : null);
   const framed = (slot) => (typeof frames?.[slot] === 'boolean' ? frames[slot] : defaultFrame(media?.[slot]));
-  const clip = (slot) => { const src = url(slot); return src ? { src, poster: '', scene: framed(slot), kind: clipKind(src), fit: true, slot } : null; };
-  const cheer = clip('cheer') ?? clip('dance');
-  const dance = clip('dance') ?? clip('cheer');
-  const plan = clip('plan') ?? dance;
+  const table = userClipTable(media, frames, clips);
+  const one = (x, slot) => { const src = `${dir}/${x.file}`; return { src, poster: '', scene: typeof x.frame === 'boolean' ? x.frame : defaultFrame(x.file), kind: clipKind(src), fit: true, slot, ...(x.say ? { say: x.say } : {}) }; };
+  const variants = Object.fromEntries(CLIP_KINDS.map((k) => [k, clipList(table, k).map((x) => one(x, k))]));
+  const first = (k) => variants[k][0] ?? null;
   const open = url('eyes_open');
   return {
     id, dir, retina: false, custom: true,
     open: open ?? STILL_SRCS[0], closed: open ? url('eyes_closed') : null,
     openFrame: !!open && framed('eyes_open'), closedFrame: !!open && !!url('eyes_closed') && framed('eyes_closed'),
     stills: open ? [open, ...STILL_SRCS] : STILL_SRCS,
-    videos: { studying: clip('study'), dancing: plan },
-    clips: { plan, dance, cheer },
+    videos: { studying: first('study'), dancing: first('plan') },
+    clips: Object.fromEntries(DANCE_CLIPS.map((k) => [k, first(k)])),
+    variants,
   };
 }
 
-// 캐릭터 하나의 그림·영상 주소. { dir, open, closed(없으면 null), stills(대체 순서), videos: { studying, dancing }, clips: { plan, dance, cheer } }
-// videos.dancing 은 일정 알림(plan) 영상 — 춤춰 줘·응원해 줘는 clips 에서 고른다(clipFor). 사용자 캐릭터는 빈 칸이 null 일 수 있다(정지 그림으로)
+// 캐릭터 하나의 그림·영상 주소. { dir, open, closed(없으면 null), stills(대체 순서), videos: { studying, dancing }, clips: { plan, dance, cheer, lunch }, variants }
+// clips 는 칸마다 첫 영상, variants 는 칸마다 전부(그중 하나를 고른다 — clipFor). videos.dancing 은 일정 알림(plan) 첫 영상.
+// 사용자 캐릭터는 빈 칸이 null·[] 일 수 있다(정지 그림으로)
 export function characterAssets(id) {
   const cid = okCharacter(id);
   const c = CHARACTERS[cid];
-  if (c.custom) return customAssets(cid, c.media, c.frames);
-  if (cid === 'shisa') return { id: cid, dir: CHAR_DIR, retina: true, open: `${CHAR_DIR}/eyes_open.png`, closed: `${CHAR_DIR}/eyes_closed.png`, stills: STILL_SRCS, videos: VIDEOS, clips: { plan: VIDEOS.dancing, dance: VIDEOS.dancing, cheer: VIDEOS.dancing } };
-  const dir = `cy-asset://app/characters/${cid}`;
-  const clip = (name) => ({ src: `${dir}/${name}.webm`, poster: `${dir}/${name}.png`, scene: !!c.scenes[name], kind: 'video' });
-  const clips = Object.fromEntries(DANCE_CLIPS.map((k) => [k, clip(c.clips[k])]));
+  if (c.custom) return customAssets(cid, c.media, c.frames, c.clips);
+  const shisa = cid === 'shisa';
+  const dir = shisa ? CHAR_DIR : `cy-asset://app/characters/${cid}`;
+  const one = (x) => ({ src: `${dir}/${x.file}.webm`, poster: `${dir}/${x.file}.png`, scene: !!x.scene, kind: 'video', ...(x.say ? { say: x.say } : {}) });
+  const variants = Object.fromEntries(CLIP_KINDS.map((k) => [k, clipList(CHARACTER_CLIPS[cid], k).map(one)]));
+  const first = (k) => variants[k][0] ?? null;
+  const clips = Object.fromEntries(DANCE_CLIPS.map((k) => [k, first(k)]));
+  if (shisa) return { id: cid, dir, retina: true, open: `${CHAR_DIR}/eyes_open.png`, closed: `${CHAR_DIR}/eyes_closed.png`, stills: STILL_SRCS, videos: VIDEOS, clips, variants };
   return {
     id: cid, dir, retina: false, open: `${dir}/eyes_open.png`, closed: c.blink ? `${dir}/eyes_closed.png` : null,
     stills: [`${dir}/eyes_open.png`, ...STILL_SRCS],
-    videos: { studying: clip('study'), dancing: clips.plan },
-    clips,
+    videos: { studying: first('study'), dancing: clips.plan },
+    clips, variants,
   };
 }
-// 춤 영상 하나: 종류(plan·dance·cheer, 모르면 plan) → { src, poster, scene, kind } | null(사용자 캐릭터에 그 칸이 없음 → 정지 그림)
-export const clipFor = (a, kind) => a.clips[DANCE_CLIPS.includes(kind) ? kind : 'plan'] ?? null;
+// 그 칸의 영상 목록(없으면 [])
+export const variantsOf = (a, kind) => a?.variants?.[kind] ?? (a?.clips?.[kind] ? [a.clips[kind]] : []);
+// 영상 하나: 종류(plan·dance·cheer·lunch·study, 모르면 plan) + 번호(데몬 state.danceVariant · 앱이 고른 번호) → { src, poster, scene, kind, say? } | null
+// 번호가 목록보다 크면(그 사이 캐릭터·목록이 바뀜) 나머지로
+export const clipFor = (a, kind, variant = 0) => {
+  const list = variantsOf(a, CLIP_KINDS.includes(kind) ? kind : 'plan');
+  if (!list.length) return null;
+  const v = Number.isInteger(variant) && variant >= 0 ? variant % list.length : 0;
+  return list[v] ?? null;
+};
 
 // 그림 비율 그대로 상자 안에 꽉 차게(contain) — 둥근 테두리·그림자가 그림 크기에 맞게. 모르는 크기면 상자 그대로
 export function fitBox(w, h, boxW, boxH) {
@@ -136,7 +190,7 @@ export function initialActivity() {
   return { studying: false, dancing: false, danceId: null, endedDance: null, connected: true };
 }
 
-// action: { type:'state', activity, runs, danceId } | { type:'danceEnd' } | { type:'connection', connected } | { type:'localDance', on }
+// action: { type:'state', activity, runs, danceId, danceClip, danceVariant } | { type:'danceEnd' } | { type:'connection', connected } | { type:'localDance', on, clip, variant }
 //       | { type:'focus', active, paused }
 export function activityReducer(s, a) {
   switch (a?.type) {
@@ -148,7 +202,8 @@ export function activityReducer(s, a) {
       // 로컬에서 이미 끝낸 춤은 같은 id 로 다시 와도(재연결 등) 다시 추지 않는다
       const dancing = !!danceId && danceId !== s.endedDance;
       const danceClip = DANCE_CLIPS.includes(a.danceClip) ? a.danceClip : 'plan';
-      return { ...s, studying, dancing, danceId, danceClip, connected: true };
+      const danceVariant = Number.isInteger(a.danceVariant) && a.danceVariant >= 0 ? a.danceVariant : 0; // 데몬이 고른 영상 번호
+      return { ...s, studying, dancing, danceId, danceClip, danceVariant, connected: true };
     }
     case 'danceEnd': {
       let n = s;
@@ -158,7 +213,7 @@ export function activityReducer(s, a) {
     }
     // 앱이 스스로 추는 짧은 춤(뇌 연결 전 더블클릭 등) — 데몬과 끊겨 있어도 춘다
     case 'localDance':
-      return { ...s, localDance: !!a.on, ...(a.on ? { localClip: DANCE_CLIPS.includes(a.clip) ? a.clip : 'dance' } : {}) };
+      return { ...s, localDance: !!a.on, ...(a.on ? { localClip: DANCE_CLIPS.includes(a.clip) ? a.clip : 'dance', localVariant: Number.isInteger(a.variant) && a.variant >= 0 ? a.variant : 0 } : {}) };
     case 'focus':
       return { ...s, focus: a.active ? (a.paused ? 'paused' : 'on') : null };
     case 'connection':
@@ -171,6 +226,10 @@ export function activityReducer(s, a) {
 // 지금 틀 춤 영상 종류(viewOf 가 dancing 일 때)
 export function danceClipOf(s) {
   return s.localDance ? (s.localClip ?? 'dance') : (s.danceClip ?? 'plan');
+}
+// 그 종류 안의 영상 번호: 데몬 춤은 데몬이 고른 것(state.danceVariant), 앱이 스스로 추는 춤은 앱이 고른 것
+export function danceVariantOf(s) {
+  return s.localDance ? (s.localVariant ?? 0) : (s.danceVariant ?? 0);
 }
 
 export function viewOf(s) {

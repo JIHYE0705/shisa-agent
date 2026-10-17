@@ -351,7 +351,9 @@ export type ChatPorts = {
   summary?(): Promise<string>;
   dashboard?(): Promise<Dashboard>; // 맥락 도구 dashboard_summary·projects_recent 가 읽는 대시보드
   mood?(busy: boolean): void;
-  dance?(ms: number, say?: string): void; // 캐릭터 춤 영상(activity.ts startDance) + 한마디 말풍선(say 가 있으면)
+  // 캐릭터 춤 영상(activity.ts play) + 한마디 말풍선(bubble 이 false 가 아니면). say = 기본 한마디(문구 dance).
+  // 고른 영상에 전용 한마디가 있으면 그걸 띄우고 돌려준다(답 글도 같은 말로)
+  dance?(ms: number, say?: string, bubble?: boolean): string | void;
   threads?(ev: { thread?: Thread; deleted?: string }): void; // 스레드 목록이 바뀜(SSE threads)
   // 확인이 필요한 쓰기 동작(회의 응답) 제안 → 검증해서 대기 카드로. 잘못된 건 이유(답에 덧붙임)
   proposeActions?(raw: unknown[], ctx: { via: ActionVia; threadId: string }): Promise<{ created: PendingAction[]; errors: string[] }>;
@@ -445,8 +447,11 @@ export class Chat {
     this.ports.threads?.({ thread: thread! });
     // 춤: 보내자마자. 한마디(문구 dance)는 캐릭터 말풍선으로 — 캐릭터 대화에서 춤뿐인 말이면 답 말풍선이 그 한마디라 따로 안 띄운다
     const only = !briefs.length && danceOnly(text); // 첨부가 있으면 춤뿐인 말이 아니다(모델이 첨부를 본다)
-    const danceLine = DANCE_ASK.test(text) ? phrase("dance") : undefined;
-    if (danceLine) this.ports.dance?.(DANCE_MS, only && thread!.kind === "hover" ? undefined : danceLine);
+    let danceLine = DANCE_ASK.test(text) ? phrase("dance") : undefined;
+    if (danceLine) {
+      const said = this.ports.dance?.(DANCE_MS, danceLine, !(only && thread!.kind === "hover"));
+      if (typeof said === "string" && said.trim()) danceLine = said; // 고른 영상의 전용 한마디(영상과 같은 번호)
+    }
     const chatId = randomUUID();
     const abort = new AbortController();
     const clientId = o.clientId && CLIENT_ID.test(o.clientId) ? o.clientId : undefined;

@@ -556,7 +556,7 @@ test("「춤」「댄스」가 들어간 말: 보내자마자 캐릭터 춤(모�
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
   const converse: Converse = async () => { await gate; return { reply_md: "💃", bubble: "💃", show: null, proposals: [] } as ChatReply; };
-  const chat = new Chat(loadConfig({}, {}), new Store(":memory:"), { emit: () => {}, openPanel: () => {}, changed: () => {}, propose: async () => {}, dance: (ms) => danced.push(ms) }, converse);
+  const chat = new Chat(loadConfig({}, {}), new Store(":memory:"), { emit: () => {}, openPanel: () => {}, changed: () => {}, propose: async () => {}, dance: (ms) => { danced.push(ms); } }, converse);
   chat.send("춤춰조", { kind: "hover" });
   assert.deepEqual(danced, [DANCE_MS], "답이 오기 전에 이미 춘다");
   chat.send("오늘 일정 알려줘");
@@ -574,10 +574,10 @@ test("춤뿐인 말: 모델을 부르지 않고 고정 문구(설정 창 dance)�
   assert.match(CHAT_SYSTEM, /춤 얘기는 하지 말고/);
   setPhrases({ dance: ["춤춰요"] });
   try {
-    const asked: string[] = [], danced: [number, string | undefined][] = [], events: ChatEvent[] = [];
+    const asked: string[] = [], danced: [number, string | undefined, boolean | undefined][] = [], events: ChatEvent[] = [];
     const store = new Store(":memory:");
     const chat = new Chat(loadConfig({}, {}), store, {
-      emit: (e) => events.push(e), openPanel: () => {}, changed: () => {}, propose: async () => {}, dance: (ms, say) => danced.push([ms, say]),
+      emit: (e) => events.push(e), openPanel: () => {}, changed: () => {}, propose: async () => {}, dance: (ms, say, bubble) => { danced.push([ms, say, bubble]); },
       retitle: async () => { asked.push("retitle"); return "제목"; },
     }, async (_c, _s, _h, text) => { asked.push(text); return reply({ reply_md: "일정은 3개예요" }); });
     const hover = chat.send("춤춰조", { kind: "hover" });
@@ -587,7 +587,7 @@ test("춤뿐인 말: 모델을 부르지 않고 고정 문구(설정 창 dance)�
     await new Promise((r) => setTimeout(r, 0)); // 제목 짓기는 줄 밖에서
     assert.deepEqual(asked, ["춤추고 오늘 일정 알려줘", "retitle"], "춤뿐인 말은 모델(답·제목 짓기)을 안 부른다");
     // 캐릭터 대화에서 춤뿐이면 답 말풍선이 그 한마디라 따로 안 띄운다 · 패널·섞인 말은 춤 한마디 말풍선
-    assert.deepEqual(danced, [[DANCE_MS, undefined], [DANCE_MS, "춤춰요"], [DANCE_MS, "춤춰요"]]);
+    assert.deepEqual(danced, [[DANCE_MS, "춤춰요", false], [DANCE_MS, "춤춰요", true], [DANCE_MS, "춤춰요", true]]);
     for (const s of [hover, panel]) {
       if ("error" in s) throw new Error("send");
       assert.deepEqual(events.filter((e) => e.chatId === s.chatId).map((e) => e.status), ["thinking", "done"]);
