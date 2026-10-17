@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { createDaemonHost, WATCH_MS, FAST_MS, FAST_FOR_MS, STOPPING_MS, KILL_AFTER_MS } from '../src/daemon-host.js';
+import { createDaemonHost, portFree, WATCH_MS, FAST_MS, FAST_FOR_MS, STOPPING_MS, KILL_AFTER_MS } from '../src/daemon-host.js';
 import { EXIT_PORT_TAKEN } from '../src/bundle.js';
 
 // 가짜 시계·프로세스
@@ -139,6 +139,50 @@ test('포트를 못 잡아 끝남(EXIT_PORT_TAKEN): 충돌로 세지 않고 그 
   assert.equal([...h.timers.values()][0].ms, 1000);
 });
 
+test('시사 데몬이 아닌 프로그램이 포트를 쥐고 있으면(portFree false) 띄우지 않고 2초→1분마다 지켜보다, 비면 띄운다', async () => {
+  const h = harness({ alive: [false] });
+  let free = false, asked = 0;
+  h.deps.portFree = async () => { asked++; return free; };
+  const host = createDaemonHost(h.deps);
+  await host.start();
+  assert.equal(host.mode, 'port-taken');
+  assert.equal(h.children.length, 0);
+  assert.equal([...h.timers.values()][0].ms, FAST_MS);
+  await h.advance(FAST_FOR_MS);
+  assert.equal(h.children.length, 0); // 1분 동안 하나도 안 띄움(전엔 5초마다 띄웠다가 75 로 끝)
+  assert.equal(asked, 1 + FAST_FOR_MS / FAST_MS);
+  assert.equal([...h.timers.values()][0].ms, WATCH_MS);
+  await h.advance(WATCH_MS * 3);
+  assert.equal(h.children.length, 0);
+  assert.equal(host.failures, 0);
+  assert.equal(h.logs.filter((m) => m.includes('다른 프로그램')).length, 1);
+  // 비었다 → 다음 확인 때 띄운다
+  free = true;
+  await h.advance(WATCH_MS);
+  assert.equal(host.mode, 'child');
+  assert.equal(h.children.length, 1);
+});
+
+test('지켜보던 데몬이 사라졌는데 포트가 아직 안 비었으면(portFree false) 띄우지 않는다 · portFree 가 던지면 비었다고 본다', async () => {
+  const h = harness({ alive: [true, false] });
+  const answers = [false, true];
+  h.deps.portFree = async () => answers.shift();
+  const host = createDaemonHost(h.deps);
+  await host.start();
+  assert.equal(host.mode, 'external');
+  await h.advance(FAST_MS);
+  assert.equal(host.mode, 'port-taken');
+  assert.equal(h.children.length, 0);
+  await h.advance(FAST_MS);
+  assert.equal(host.mode, 'child');
+
+  const h2 = harness({ alive: [false] });
+  h2.deps.portFree = async () => { throw new Error('x'); };
+  const host2 = createDaemonHost(h2.deps);
+  await host2.start();
+  assert.equal(host2.mode, 'child');
+});
+
 test('다시 띄우기 전에 누가 그 포트를 차지했으면 그쪽을 쓴다', async () => {
   const h = harness({ alive: [false, true] });
   const host = createDaemonHost(h.deps);
@@ -225,4 +269,23 @@ test('stop 은 아무것도 안 띄웠어도 바로 끝난다', async () => {
   assert.equal(host.mode, 'stopped');
   await h.advance(WATCH_MS * 3);
   assert.equal(h.children.length, 0);
+});
+
+test('portFree: 누가 listen 중이면 false, 닫힌 포트면 true', async () => {
+  const net = await import('node:net');
+  const srv = net.createServer((c) => c.end());
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const { port } = srv.address();
+  try {
+    assert.equal(await portFree(port), false);
+  } finally { await new Promise((r) => srv.close(r)); }
+  assert.equal(await portFree(port), true);
+});
+
+test('main.js 배선: portFree 를 데몬 호스트에 넘긴다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const main = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  assert.match(main, /^import \{ createDaemonHost, portFree \} from '\.\/src\/daemon-host\.js';$/m);
+  const host = main.slice(main.indexOf('daemonHost = createDaemonHost({'));
+  assert.match(host.slice(0, 400), /probe: daemonAlive,\s*portFree: \(\) => portFree\(PORT\),/);
 });
