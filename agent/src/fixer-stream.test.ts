@@ -85,7 +85,8 @@ const said = (msg: any) => String(msg.message.content).replace(`${INJECT_PREFIX}
 const text = (t: string, uuids?: string[]) => ({ type: "assistant", parent_tool_use_id: null, ...(uuids ? { user_message_uuids: uuids } : {}), message: { content: [{ type: "text", text: t }] } });
 const ok = (structured?: any) => ({ type: "result", subtype: "success", result: "done", total_cost_usd: 0.01, structured_output: structured });
 const REPORT = (summary: string) => ({ summary, commit_message: "feat: add hello", tests_ran: "", tests_passed: true });
-const until = async (cond: () => boolean, ms = 3000) => { const t = Date.now(); while (!cond()) { if (Date.now() - t > ms) throw new Error("timeout"); await new Promise((r) => setTimeout(r, 5)); } };
+// 부하 중(테스트 파일 여럿이 동시에 git 워크트리를 만든다)엔 run 이 뜨기까지 3초를 넘기도 했다 — 조건이 되면 바로 끝나니 넉넉히 기다린다
+const until = async (cond: () => boolean, ms = 30000) => { const t = Date.now(); while (!cond()) { if (Date.now() - t > ms) throw new Error("timeout"); await new Promise((r) => setTimeout(r, 5)); } };
 
 test("InputQueue: push 순서대로, close 하면 끝", async () => {
   const q = new InputQueue();
