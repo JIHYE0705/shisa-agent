@@ -2010,10 +2010,12 @@ if (SQUIRREL) {
   app.quit();
 } else {
   // 맞춤법 검사는 안 쓴다(창마다 spellcheck:false). 그래도 세션의 검사기는 첫 실행에 사전(ko-3-0.bdic, 11MB)을
-  // redirector.gvt1.com 에서 받는다 → 세션 단위로 끈다. 나중에 생기는 세션(fromPartition 등)도 같게
-  app.on('session-created', (s) => s.setSpellCheckerEnabled(false));
+  // redirector.gvt1.com 에서 받는다. setSpellCheckerEnabled(false) 만으로는 윈도우(Hunspell)에서 그대로 받는다 —
+  // 받을 언어(기본: 앱 로캘 ko)를 비워야 멈춘다(Electron 44 실측). 나중에 생기는 세션(fromPartition 등)도 같게
+  const noSpellcheck = (s) => { s.setSpellCheckerLanguages([]); s.setSpellCheckerEnabled(false); };
+  app.on('session-created', noSpellcheck);
   app.whenReady().then(() => {
-    session.defaultSession.setSpellCheckerEnabled(false); // 창보다 먼저
+    noSpellcheck(session.defaultSession); // 창보다 먼저
     const firstRun = !fs.existsSync(statePath()); // 이 앱 저장소를 처음 쓴다 → 마법사를 바로 연다
     loadState();
     registerAssetProtocol();
