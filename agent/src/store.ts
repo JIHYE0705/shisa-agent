@@ -23,6 +23,7 @@ export type Todo = {
   progress?: string; progressAt?: string; // 어디까지 됐는지(주기 진행 확인 todo-progress.ts 가 씀 — 사용자 필드 아님)
   doing?: boolean; // 사용자가 직접 정한 (진행중): true 켬 · false 끔 · 없음 = 자동(progress 가 있으면 진행중)
   today?: string; // 오늘 할 일로 고른 날(KST YYYY-MM-DD). 그날 '오늘 할 일' 탭에 같은 줄로 보인다(daily-plan.ts)
+  projectId?: string; // 묶인 직접 만든 프로젝트(manual-projects.ts). 없으면 어느 프로젝트에도 안 묶임
 };
 export type TodoSourceKind = "slack" | "commit" | "mail" | "session" | "calendar" | "jira" | "user" | "other";
 export type TodoSource = {
@@ -44,7 +45,8 @@ export const kstDay = (iso: string | number | Date) => {
 export type AutoEvidence = { ids: string[]; permalink?: string };
 export type TodoField = "title" | "priority" | "link" | "note" | "status" | "description";
 // today: true = 오늘(KST)로 고름, 날짜 글 = 그날로, false·null = 오늘 할 일에서 뺌(할 일은 그대로)
-export type TodoPatch = { title?: string; priority?: number; link?: string | null; note?: string | null; status?: "open" | "done"; description?: string | null; doing?: boolean | null; today?: boolean | string | null };
+// projectId: 직접 만든 프로젝트에 묶기(id)·빼기(null). 사용자 필드(userEdited)로 치지 않는다
+export type TodoPatch = { title?: string; priority?: number; link?: string | null; note?: string | null; status?: "open" | "done"; description?: string | null; doing?: boolean | null; today?: boolean | string | null; projectId?: string | null };
 // 휴지통에 든 할 일(패널 '휴지통' 그룹). priority·status는 옮기기 전 것
 export type TrashedTodo = Todo & { trashedAt: string; prevStatus: string };
 export const TRASH_KEEP_DAYS = 30; // 휴지통에 이보다 오래 있으면 영구 삭제
@@ -125,6 +127,7 @@ function todoRow(r: any): Todo {
     ...(r.progress ? { progress: r.progress, ...(r.progress_at ? { progressAt: r.progress_at } : {}) } : {}),
     ...(r.doing === 1 || r.doing === 0 ? { doing: r.doing === 1 } : {}),
     ...(r.plan_day ? { today: r.plan_day } : {}),
+    ...(r.project_id ? { projectId: r.project_id } : {}),
   };
 }
 
@@ -160,6 +163,7 @@ export class Store {
       ["progress", "TEXT"], ["progress_at", "TEXT"], // 어디까지 됐는지(todo-progress.ts)
       ["doing", "INTEGER"], // 사용자가 누른 (진행중) 토글: 1 켬 · 0 끔 · NULL 자동
       ["plan_day", "TEXT"], // 오늘 할 일로 고른 날(KST), daily-plan.ts
+      ["project_id", "TEXT"], // 묶인 직접 만든 프로젝트(manual-projects.ts)
     ];
     for (const [name, type] of add) if (!cols.has(name)) this.db.exec(`ALTER TABLE todos ADD COLUMN ${name} ${type}`);
     // 할 일 일지: 처음 만들 때 지금 있는 할 일·휴지통·묘비로 한 번 채운다(예전 DB 도 "사용자가 지운 일"을 바로 기억)
@@ -351,13 +355,13 @@ export class Store {
   }
 
   // 사용자가 직접 추가한 할 일
-  addTodo(t: { title: string; priority?: number; link?: string | null; note?: string | null; source?: string; description?: string | null; sourceRef?: string | null; origin?: TodoSource; today?: boolean | string | null }, by: TodoActor = "user"): Todo {
+  addTodo(t: { title: string; priority?: number; link?: string | null; note?: string | null; source?: string; description?: string | null; sourceRef?: string | null; origin?: TodoSource; today?: boolean | string | null; projectId?: string | null }, by: TodoActor = "user"): Todo {
     const id = `user:${randomUUID()}`;
     const at = now();
     this.db
-      .prepare("INSERT INTO todos (id, title, source, link, priority, status, created, note, updated, description, source_ref, origin, plan_day) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)")
+      .prepare("INSERT INTO todos (id, title, source, link, priority, status, created, note, updated, description, source_ref, origin, plan_day, project_id) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)")
       .run(id, t.title, t.source ?? "user", t.link ?? null, t.priority ?? 2, at, t.note ?? null, at,
-        t.description ?? null, t.sourceRef ?? null, t.origin ? JSON.stringify(t.origin) : null, planDay(t.today));
+        t.description ?? null, t.sourceRef ?? null, t.origin ? JSON.stringify(t.origin) : null, planDay(t.today), t.projectId ?? null);
     this.log(id, t.title, "added", by, undefined, at);
     return this.getTodo(id)!;
   }
@@ -422,6 +426,8 @@ export class Store {
     if (patch.doing !== undefined) { sets.push("doing = ?"); vals.push(patch.doing === null ? null : patch.doing ? 1 : 0); }
     // 오늘 할 일 고르기·빼기: 사용자 필드 아님(브리핑이 덮지 않는 제목 등과 무관)
     if (patch.today !== undefined) { sets.push("plan_day = ?"); vals.push(planDay(patch.today)); }
+    // 프로젝트에 묶기·빼기: 사용자 필드 아님
+    if (patch.projectId !== undefined) { sets.push("project_id = ?"); vals.push(patch.projectId || null); }
     if (!sets.length) return cur;
     if (patch.status !== undefined && patch.status !== cur.status) { sets.push("done_by = ?"); vals.push(patch.status === "done" ? "user" : null); }
     sets.push("user_edited = ?", "updated = ?");
@@ -431,6 +437,7 @@ export class Store {
     const fields = (Object.keys(col) as TodoField[]).filter((k) => k !== "status" && k in patch && patch[k] !== undefined);
     if (patch.status !== undefined && patch.status !== cur.status) this.log(id, title, patch.status === "done" ? "done" : "reopened", "user");
     if (fields.length) this.log(id, title, "edited", "user", fields.join(","));
+    if (patch.projectId !== undefined && (patch.projectId || undefined) !== cur.projectId) this.log(id, title, "edited", "user", patch.projectId ? `프로젝트 ${patch.projectId}` : "프로젝트 뺌");
     return this.getTodo(id);
   }
 

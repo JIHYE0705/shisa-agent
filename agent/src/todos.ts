@@ -5,8 +5,9 @@ export type TodoOp = {
   op: "add" | "edit" | "done" | "reopen" | "delete";
   id?: string; title?: string; priority?: number; link?: string | null; note?: string | null;
   description?: string; source_ref?: string; // add 전용: 설명·원본 참조(원문은 데몬이 찾는다)
+  project?: string | null; // add·edit: 묶을 직접 만든 프로젝트(id 나 이름 — 데몬이 찾는다). null 은 프로젝트에서 빼기
 };
-export type NewTodo = { title: string; priority?: number; link?: string | null; note?: string | null; today?: boolean | string };
+export type NewTodo = { title: string; priority?: number; link?: string | null; note?: string | null; today?: boolean | string; projectId?: string };
 
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -43,7 +44,7 @@ function cleanPriority(v: unknown): Result<number> {
 // POST /todos/:id 본문. 모르는 키는 400
 export function parsePatch(body: Record<string, unknown>): Result<TodoPatch> {
   const out: TodoPatch = {};
-  for (const k of Object.keys(body)) if (!["title", "priority", "link", "note", "status", "description", "doing", "today"].includes(k)) return fail(`unknown field: ${k}`);
+  for (const k of Object.keys(body)) if (!["title", "priority", "link", "note", "status", "description", "doing", "today", "projectId"].includes(k)) return fail(`unknown field: ${k}`);
   if (body.title !== undefined) { const r = cleanTitle(body.title); if (!r.ok) return r; out.title = r.value; }
   if (body.priority !== undefined) { const r = cleanPriority(body.priority); if (!r.ok) return r; out.priority = r.value; }
   if (body.link !== undefined) { const r = cleanLink(body.link); if (!r.ok) return r; out.link = r.value; }
@@ -67,15 +68,20 @@ export function parsePatch(body: Record<string, unknown>): Result<TodoPatch> {
     if (body.status !== "open" && body.status !== "done") return fail("status must be open or done");
     out.status = body.status;
   }
+  if (body.projectId !== undefined) {
+    // 직접 만든 프로젝트에 묶기(id)·빼기(null·""). 있는 프로젝트인지는 데몬이 본다
+    if (body.projectId !== null && typeof body.projectId !== "string") return fail("projectId must be string or null");
+    out.projectId = typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : null;
+  }
   return { ok: true, value: out };
 }
 
 // POST /todos 본문
 export function parseNew(body: Record<string, unknown>): Result<NewTodo> {
-  for (const k of Object.keys(body)) if (!["title", "priority", "link", "note", "today"].includes(k)) return fail(`unknown field: ${k}`);
+  for (const k of Object.keys(body)) if (!["title", "priority", "link", "note", "today", "projectId"].includes(k)) return fail(`unknown field: ${k}`);
   const p = parsePatch({ ...body, title: body.title ?? "" });
   if (!p.ok) return p;
-  return { ok: true, value: { title: p.value.title!, priority: p.value.priority ?? 2, link: p.value.link ?? null, note: p.value.note ?? null, ...(p.value.today ? { today: true } : {}) } };
+  return { ok: true, value: { title: p.value.title!, priority: p.value.priority ?? 2, link: p.value.link ?? null, note: p.value.note ?? null, ...(p.value.today ? { today: true } : {}), ...(p.value.projectId ? { projectId: p.value.projectId } : {}) } };
 }
 
 // 모델이 낸 op 한 개 → 패치. 모델은 안 쓰는 필드를 ""로 채우기도 하니 ""는 '안 바꿈', null만 '지우기'
@@ -108,6 +114,7 @@ export const TODO_OPS_SCHEMA = {
       note: { anyOf: [{ type: "string" }, { type: "null" }], description: "메모. null이면 지우기" },
       description: { type: "string", description: "add일 때만: 무슨 일인지 한두 문장" },
       source_ref: { type: "string", description: "add일 때만: 원본 참조(slack:<channel>:<ts>, commit:<repo>@<sha>, mail:<id>, session:<id>)" },
+      project: { anyOf: [{ type: "string" }, { type: "null" }], description: "add·edit: 이 할 일을 묶을 '내가 만든 프로젝트'의 id 나 이름(같은 답의 project_ops 로 만든 이름도 된다). null이면 프로젝트에서 빼기. 말이 없으면 넣지 않는다" },
     },
   },
 } as const;
@@ -121,7 +128,7 @@ type Focus = { id: string; title: string; priority: number; note?: string; link?
 
 const OPS_MAX = 20;
 const ADDS_MAX = 5;
-const OP_KEYS = ["op", "id", "title", "priority", "link", "note", "description", "source_ref"];
+const OP_KEYS = ["op", "id", "title", "priority", "link", "note", "description", "source_ref", "project"];
 const OP_KINDS = ["add", "edit", "done", "reopen", "delete"];
 
 export function todoSnap(t: Focus): TodoSnap {
@@ -151,6 +158,7 @@ export function parseOps(v: unknown, { allowEmpty = false } = {}): Result<TodoOp
     if (o.priority !== undefined && !Number.isInteger(o.priority)) return fail("op priority must be integer");
     for (const k of ["link", "note"]) if (o[k] !== undefined && o[k] !== null && typeof o[k] !== "string") return fail(`op ${k} must be string or null`);
     for (const k of ["description", "source_ref"]) if (o[k] !== undefined && typeof o[k] !== "string") return fail(`op ${k} must be string`);
+    if (o.project !== undefined && o.project !== null && typeof o.project !== "string") return fail("op project must be string or null");
     out.push({ ...o });
   }
   return { ok: true, value: out };

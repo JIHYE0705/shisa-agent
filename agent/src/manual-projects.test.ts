@@ -1,0 +1,282 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  ManualProjects, applyProjectOps, calendarPick, calendarPickWindow, draftFromEvent, manualProjectsContext, parseNewProject, parseProjectPatch, pickEvents,
+} from "./manual-projects.ts";
+import { CalendarSync, icsSource, type CalEvent } from "./calendar-sync.ts";
+import { calendarName } from "./ics.ts";
+import { Store } from "./store.ts";
+import { Bus } from "./bus.ts";
+import { Agent, type SlackPort } from "./core.ts";
+import { loadConfig } from "./config.ts";
+import { buildDashboard, dashboardSummary } from "./dashboard.ts";
+import { CHAT_SCHEMA } from "./chat.ts";
+import { parseOps, parsePatch, parseNew, TODO_OPS_SCHEMA } from "./todos.ts";
+
+const cfgOf = () => ({ ...loadConfig(), repoRoots: [], claudeProjectsDir: "/none", codexSessionsDir: "/none" });
+
+function setup(extra: Record<string, unknown> = {}) {
+  const cfg = cfgOf();
+  const store = new Store(":memory:");
+  const bus = new Bus();
+  bus.bubble = (b) => b.id ?? "x";
+  bus.dashboardChanged = () => {};
+  bus.setMood = () => {};
+  const slack: SlackPort = { post: async () => ({ channel: "D1", ts: "1" }), update: async () => {} };
+  const agent = new Agent(cfg, store, bus, slack, { think: async () => ({ bubble: "", reply_md: "", todos: [], done_todo_ids: [], proposals: [] }), git: async () => [], useBroker: false, ...extra });
+  return { cfg, agent, store };
+}
+
+test("저장: 만들기·목록(진행 중 먼저, 기한 가까운 것)·고치기·끝내기·지우기", () => {
+  const store = new Store(":memory:");
+  let t = Date.parse("2026-10-17T01:00:00Z");
+  const pj = new ManualProjects(store, () => new Date(t += 1000));
+  const a = pj.add({ name: "가을 행사 준비", note: "장소 섭외", due: "2026-10-30" });
+  const b = pj.add({ name: "분기 보고서", due: "2026-10-20" });
+  const c = pj.add({ name: "책장 정리" });
+  assert.match(a.id, /^proj:/);
+  assert.deepEqual([a.name, a.note, a.due, a.status], ["가을 행사 준비", "장소 섭외", "2026-10-30", "open"]);
+  assert.deepEqual(pj.list().map((p) => p.name), ["분기 보고서", "가을 행사 준비", "책장 정리"]);
+
+  const e = pj.edit(a.id, { name: "가을 행사", note: null, start: "2026-10-18" })!;
+  assert.deepEqual([e.name, e.note, e.start, e.due], ["가을 행사", undefined, "2026-10-18", "2026-10-30"]);
+  assert.ok(e.updated > a.updated);
+  const done = pj.edit(b.id, { status: "done" })!;
+  assert.equal(done.status, "done");
+  assert.ok(done.doneAt);
+  assert.deepEqual(pj.list().map((p) => p.name), ["가을 행사", "책장 정리", "분기 보고서"]); // 끝난 건 뒤로
+  assert.equal(pj.edit(b.id, { status: "open" })!.doneAt, undefined);
+  assert.equal(pj.edit("proj:none", { name: "x" }), undefined);
+
+  assert.equal(pj.delete(c.id)!.project.name, "책장 정리");
+  assert.equal(pj.get(c.id), undefined);
+  assert.equal(pj.delete(c.id), undefined);
+  // 다시 열어도 그대로(같은 DB)
+  assert.equal(new ManualProjects(store).list().length, 2);
+});
+
+test("할 일 묶기: projectId 로 묶고 수·남은 수, 끝낸 할 일·휴지통, 프로젝트를 지우면 할 일은 남고 묶음만 풀림", () => {
+  const store = new Store(":memory:");
+  const pj = new ManualProjects(store);
+  const p = pj.add({ name: "이사" });
+  const t1 = store.addTodo({ title: "견적 받기", projectId: p.id });
+  const t2 = store.addTodo({ title: "짐 싸기" });
+  const t3 = store.addTodo({ title: "주소 바꾸기" });
+  assert.equal(t1.projectId, p.id);
+  store.editTodo(t2.id, { projectId: p.id });
+  store.editTodo(t3.id, { projectId: p.id });
+  assert.deepEqual(store.getTodo(t2.id)!.userEdited, [], "프로젝트 묶기는 사용자 필드로 치지 않는다");
+  store.editTodo(t1.id, { status: "done" });
+  assert.deepEqual(pj.view(p.id)!.todos, 3);
+  assert.deepEqual(pj.view(p.id)!.openTodos, 2);
+  assert.deepEqual(pj.todos(p.id).map((t) => t.title), ["짐 싸기", "주소 바꾸기", "견적 받기"]);
+  store.trashTodo(t3.id);
+  assert.deepEqual([pj.view(p.id)!.todos, pj.view(p.id)!.openTodos], [2, 1]);
+  store.editTodo(t2.id, { projectId: null });
+  assert.equal(store.getTodo(t2.id)!.projectId, undefined);
+  assert.ok(store.ledger({ todoId: t2.id }).some((x) => x.detail === "프로젝트 뺌"));
+  store.editTodo(t2.id, { projectId: p.id });
+  const gone = pj.delete(p.id)!;
+  assert.equal(gone.unlinked, 3); // 끝낸 것·휴지통 것도 묶음이 풀린다
+  assert.equal(store.getTodo(t2.id)!.title, "짐 싸기");
+  assert.equal(store.getTodo(t2.id)!.projectId, undefined);
+});
+
+test("검증: 이름 필수·날짜 모양·모르는 키, 패치는 빈 값이면 지우기", () => {
+  assert.equal(parseNewProject({ name: "  " }).ok, false);
+  assert.equal(parseNewProject({ name: "a", due: "10/30" }).ok, false);
+  assert.equal(parseNewProject({ name: "a", owner: "x" }).ok, false);
+  assert.equal(parseNewProject({ name: "a", source: { kind: "mail", eventId: "x" } }).ok, false);
+  assert.deepEqual(parseNewProject({ name: " 가을  행사 ", note: "  ", due: "" }), { ok: true, value: { name: "가을 행사" } });
+  const s = parseNewProject({ name: "x", source: { kind: "calendar", eventId: "e1", calendar: "회사", start: "2026-10-20T01:00:00Z" } });
+  assert.ok(s.ok && s.value.source?.eventId === "e1" && s.value.source.calendar === "회사");
+  assert.deepEqual(parseProjectPatch({ note: "", due: null }), { ok: true, value: { note: null, due: null } });
+  assert.equal(parseProjectPatch({}).ok, false);
+  assert.equal(parseProjectPatch({ status: "archived" }).ok, false);
+  // 할 일 쪽: projectId
+  assert.deepEqual(parsePatch({ projectId: "proj:1" }), { ok: true, value: { projectId: "proj:1" } });
+  assert.deepEqual(parsePatch({ projectId: "" }), { ok: true, value: { projectId: null } });
+  assert.equal(parsePatch({ projectId: 3 }).ok, false);
+  assert.deepEqual(parseNew({ title: "할 일", projectId: "proj:1" }), { ok: true, value: { title: "할 일", priority: 2, link: null, note: null, projectId: "proj:1" } });
+  assert.ok(parseOps([{ op: "edit", id: "a", project: "이사" }]).ok);
+  assert.equal(parseOps([{ op: "edit", id: "a", project: 1 }]).ok, false);
+  assert.ok("project" in TODO_OPS_SCHEMA.items.properties);
+  assert.ok((CHAT_SCHEMA.required as readonly string[]).includes("project_ops"));
+});
+
+const ev = (over: Partial<CalEvent>): CalEvent => ({
+  id: "e1", subject: "제품 출시 회의", start: "2026-10-20T01:00:00.000Z", end: "2026-10-20T02:00:00.000Z",
+  allDay: false, cancelled: false, showAs: "busy", response: "accepted", online: false, ...over,
+});
+
+test("일정에서 채우기: 제목→이름, 설명·장소·참석자→메모, 날짜→시작·기한, 원본 id·캘린더 기록", () => {
+  const d = draftFromEvent(ev({ description: "출시 일정 확정\n자료 준비", location: "3층 회의실", attendeeNames: ["김하나", "lee@example.com"], calendar: "회사", joinUrl: "https://meet.example.com/x" }));
+  assert.equal(d.name, "제품 출시 회의");
+  assert.equal(d.note, "출시 일정 확정\n자료 준비\n장소: 3층 회의실\n회의 링크: https://meet.example.com/x\n참석자: 김하나, lee@example.com");
+  assert.deepEqual([d.start, d.due], ["2026-10-20", "2026-10-20"]);
+  assert.deepEqual(d.source, { kind: "calendar", eventId: "e1", calendar: "회사", title: "제품 출시 회의", start: "2026-10-20T01:00:00.000Z", end: "2026-10-20T02:00:00.000Z" });
+  // 종일 여러 날: 끝(다음 날 0시)은 하루 빼서 기한
+  const all = draftFromEvent(ev({ allDay: true, start: "2026-10-22T15:00:00.000Z", end: "2026-10-25T15:00:00.000Z" }));
+  assert.deepEqual([all.start, all.due, all.note], ["2026-10-23", "2026-10-25", undefined]);
+  // 고를 목록: 취소·거절은 빼고, 같은 id 하나로, 다가오는 것(시작 순) → 지난 것(최근 먼저)
+  const now = new Date("2026-10-19T00:00:00Z");
+  const xs = pickEvents([
+    ev({ id: "b", subject: "B", start: "2026-10-25T01:00:00Z", end: "2026-10-25T02:00:00Z" }),
+    ev({ id: "a", subject: "A" }),
+    ev({ id: "a", subject: "A again" }),
+    ev({ id: "x", subject: "취소됨: X" }),
+    ev({ id: "y", subject: "Y", response: "declined" }),
+    ev({ id: "z", subject: "Z", cancelled: true }),
+    ev({ id: "old1", subject: "지난 1", start: "2026-10-16T01:00:00Z", end: "2026-10-16T02:00:00Z" }),
+    ev({ id: "old2", subject: "지난 2", start: "2026-10-17T01:00:00Z", end: "2026-10-17T02:00:00Z" }),
+  ], now);
+  assert.deepEqual(xs.map((x) => [x.id, x.past]), [["a", false], ["b", false], ["old2", true], ["old1", true]]);
+  assert.equal(xs[0].draft.name, "A");
+  // 창: 지난 3일 ~ 앞으로 14일(이 맥의 시간대 0시)
+  const w = calendarPickWindow(new Date("2026-10-17T03:00:00Z"));
+  assert.equal(w.from, new Date("2026-10-14T00:00:00").toISOString());
+  assert.equal(w.to, new Date("2026-11-01T00:00:00").toISOString());
+});
+
+const ICS = (name: string, uid: string, summary: string, start: string) => `BEGIN:VCALENDAR\r
+VERSION:2.0\r
+X-WR-CALNAME:${name}\r
+BEGIN:VEVENT\r
+UID:${uid}\r
+SUMMARY:${summary}\r
+DTSTART:${start}\r
+DTEND:${start.replace(/T(\d\d)/, (_m, h) => `T${String(Number(h) + 1).padStart(2, "0")}`)}\r
+DESCRIPTION:안건 정리\\n자료 공유\r
+LOCATION:본사 2층\r
+ORGANIZER;CN=박팀장:mailto:boss@example.com\r
+ATTENDEE;CN="김하나";PARTSTAT=ACCEPTED:mailto:hana@example.com\r
+ATTENDEE;PARTSTAT=ACCEPTED:mailto:me@example.com\r
+END:VEVENT\r
+END:VCALENDAR\r
+`;
+
+test("가짜 캘린더(ICS 둘): 캘린더 이름·설명·참석자 이름이 채워지고 calendarPick 이 고를 일정과 칸을 준다", async () => {
+  const feeds: Record<string, string> = {
+    "https://cal.example/work.ics": ICS("회사", "w1@x", "킥오프", "20261020T010000Z"),
+    "https://cal.example/home.ics": ICS("", "h1@x", "이사 상담", "20261021T010000Z").replace("X-WR-CALNAME:\r\n", ""),
+  };
+  assert.equal(calendarName(feeds["https://cal.example/work.ics"]), "회사");
+  assert.equal(calendarName(feeds["https://cal.example/home.ics"]), "");
+  const store = new Store(":memory:");
+  const now = new Date("2026-10-17T03:00:00Z");
+  const sync = new CalendarSync(cfgOf(), store, { now: () => now, source: icsSource(Object.keys(feeds), { timeZone: "Asia/Seoul", email: "me@example.com" }, async (u) => feeds[u]) });
+  const r = await calendarPick(sync, now);
+  assert.equal(r.connected, true);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.events.map((e) => [e.title, e.calendar]), [["킥오프", "회사"], ["이사 상담", "캘린더 2"]]);
+  const k = r.events[0];
+  assert.deepEqual(k.attendees, ["김하나"], "참석자 이름(나 빼고)");
+  assert.equal(k.draft.note, "안건 정리\n자료 공유\n장소: 본사 2층\n참석자: 김하나");
+  assert.deepEqual([k.draft.start, k.draft.due, k.draft.source?.calendar], ["2026-10-20", "2026-10-20", "회사"]);
+  // 캘린더 안 붙음
+  const off = await calendarPick(new CalendarSync(cfgOf(), store, { source: null }), now);
+  assert.deepEqual([off.connected, off.events.length], [false, 0]);
+});
+
+test("API: GET/POST /projects/manual, GET/PATCH/DELETE /projects/manual/:id, 헤더 없으면 403, 할 일 projectId 확인", async () => {
+  const s = setup();
+  const bus = new Bus();
+  await bus.listen(0, {
+    approve: async () => "", hold: async () => "", briefing: async () => "",
+    dashboard: () => s.agent.dashboard(), todoDone: () => true, chat: () => "c", chatHistory: () => [],
+    todoAdd: (t) => s.agent.addTodo(t), todoEdit: (id, p) => s.agent.editTodo(id, p),
+    manualProjects: s.agent.manualProjectsApi(), projectExists: (id) => s.agent.projectExists(id),
+    calendarPick: async () => ({ connected: false, ok: false, events: [] }),
+  });
+  const base = `http://127.0.0.1:${(bus.server!.address() as any).port}`;
+  const H = { "x-cy-agent": "1", "content-type": "application/json" };
+  const call = (method: string, path: string, body?: unknown, headers: Record<string, string> = H) =>
+    fetch(base + path, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  try {
+    assert.deepEqual(await (await call("GET", "/projects/manual")).json(), { projects: [] });
+    assert.equal((await call("POST", "/projects/manual", { name: "x" }, { "content-type": "application/json" })).status, 403);
+    assert.equal((await call("POST", "/projects/manual", { name: "" })).status, 400);
+    const made = await call("POST", "/projects/manual", { name: "가을 행사", due: "2026-10-30", source: { kind: "calendar", eventId: "e1", calendar: "회사" } });
+    assert.equal(made.status, 201);
+    const p = (await made.json()).project;
+    assert.deepEqual([p.name, p.due, p.status, p.todos, p.openTodos, p.source.calendar], ["가을 행사", "2026-10-30", "open", 0, 0, "회사"]);
+    const enc = encodeURIComponent(p.id);
+    // 할 일 묶기: POST /todos 와 POST /todos/:id 의 projectId
+    const t = await (await call("POST", "/todos", { title: "장소 섭외", projectId: p.id })).json();
+    assert.equal((await call("POST", "/todos", { title: "x", projectId: "proj:none" })).status, 400);
+    const t2 = await (await call("POST", "/todos", { title: "현수막" })).json();
+    assert.equal((await call("POST", `/todos/${encodeURIComponent(t2.id)}`, { projectId: p.id })).status, 200);
+    assert.equal((await call("POST", `/todos/${encodeURIComponent(t2.id)}`, { projectId: "proj:none" })).status, 400);
+    const one = await (await call("GET", `/projects/manual/${enc}`)).json();
+    assert.deepEqual([one.project.todos, one.todos.map((x: any) => x.title).sort()], [2, ["장소 섭외", "현수막"]]);
+    const dash = await s.agent.dashboard();
+    assert.equal(dash.manualProjects[0].openTodos, 2);
+    assert.equal(dash.todos.find((x) => x.id === t.id)!.projectId, p.id);
+    // 고치기·끝내기
+    assert.equal((await call("PATCH", `/projects/manual/${enc}`, { name: "가을 행사 2" }, { "content-type": "application/json" })).status, 403);
+    assert.equal((await call("PATCH", `/projects/manual/${enc}`, { color: "red" })).status, 400);
+    const ed = await (await call("PATCH", `/projects/manual/${enc}`, { name: "가을 행사 2", status: "done" })).json();
+    assert.deepEqual([ed.project.name, ed.project.status], ["가을 행사 2", "done"]);
+    assert.equal((await call("PATCH", "/projects/manual/proj%3Anone", { name: "a" })).status, 404);
+    // 지우기
+    assert.equal((await call("DELETE", `/projects/manual/${enc}`, undefined, {})).status, 403);
+    const del = await (await call("DELETE", `/projects/manual/${enc}`)).json();
+    assert.deepEqual(del, { ok: true, unlinked: 2 });
+    assert.equal((await call("DELETE", `/projects/manual/${enc}`)).status, 404);
+    assert.equal(s.store.getTodo(t.id)!.projectId, undefined);
+    assert.deepEqual(await (await call("GET", "/projects/calendar-events")).json(), { connected: false, ok: false, events: [] });
+  } finally { bus.close(); }
+});
+
+test("채팅: project_ops 로 만들고 같은 답의 todo_ops 가 이름으로 묶는다, 있는 할 일 넣기·끝내기, 못 찾으면 경고", async () => {
+  const replies: unknown[] = [];
+  const s = setup({ converse: async () => replies.shift() });
+  const base = { bubble: "", show: null, proposals: [], plan_ops: [], memory_ops: [], rule: null, guideline: null, merges: [] };
+  replies.push({ ...base, reply_md: "만들었어요", project_ops: [{ op: "add", name: "김장 준비", due: "2026-11-20", note: "", start: "" }], todo_ops: [{ op: "add", title: "배추 주문", project: "김장 준비" }] });
+  const sent = s.agent.chat("김장 준비 프로젝트 만들고 배추 주문 넣어 줘") as { threadId: string };
+  await s.agent.chatIdle();
+  const p = s.agent.projects.list()[0];
+  assert.deepEqual([p.name, p.due, p.note], ["김장 준비", "2026-11-20", undefined]);
+  const t = s.store.openTodos().find((x) => x.title === "배추 주문")!;
+  assert.equal(t.projectId, p.id);
+  const sys = s.store.threadMessages(sent.threadId).filter((m) => m.role === "system").map((m) => m.text);
+  assert.deepEqual(sys, ["✓ 프로젝트 만들기: 김장 준비", "✓ 추가: 배추 주문 (프로젝트 김장 준비)"]);
+
+  const other = s.store.addTodo({ title: "고무장갑 사기" });
+  replies.push({ ...base, reply_md: "넣었어요", project_ops: [], todo_ops: [{ op: "edit", id: other.id, project: "김장" }] });
+  s.agent.chat("고무장갑 사기 김장 프로젝트에 넣어 줘", { threadId: sent.threadId });
+  await s.agent.chatIdle();
+  assert.equal(s.store.getTodo(other.id)!.projectId, p.id);
+
+  replies.push({ ...base, reply_md: "끝냈어요", project_ops: [{ op: "done", name: "김장 준비" }, { op: "edit", name: "없는 것", note: "x" }], todo_ops: [{ op: "edit", id: other.id, project: "모르는 프로젝트" }] });
+  s.agent.chat("김장 끝났어", { threadId: sent.threadId });
+  await s.agent.chatIdle();
+  assert.equal(s.agent.projects.get(p.id)!.status, "done");
+  const last = s.store.chatHistory(20).filter((x) => x.role === "assistant").at(-1)!.text;
+  assert.match(last, /⚠️ 「없는 것」 프로젝트를 못 찾아서 건너뛰었어요/);
+  assert.match(last, /⚠️ 「모르는 프로젝트」 프로젝트를 못 찾아서 할 일을 묶지 못했어요/);
+  assert.equal(s.store.getTodo(other.id)!.projectId, p.id, "못 찾으면 그대로");
+
+  // 빼기(null)
+  replies.push({ ...base, reply_md: "뺐어요", project_ops: [], todo_ops: [{ op: "edit", id: other.id, project: null }] });
+  s.agent.chat("고무장갑은 프로젝트에서 빼", { threadId: sent.threadId });
+  await s.agent.chatIdle();
+  assert.equal(s.store.getTodo(other.id)!.projectId, undefined);
+});
+
+test("AI 맥락: 대시보드 요약에 진행 중인 직접 만든 프로젝트(id·기한·남은 할 일·일정 표시), 끝난 건 빠짐", async () => {
+  const store = new Store(":memory:");
+  const pj = new ManualProjects(store);
+  const a = pj.add({ name: "가을 행사", due: "2026-10-30", source: { kind: "calendar", eventId: "e1", calendar: "회사" } });
+  const b = pj.add({ name: "끝난 일" });
+  pj.edit(b.id, { status: "done" });
+  store.addTodo({ title: "섭외", projectId: a.id });
+  const d = await buildDashboard(cfgOf(), store, { git: async () => [] });
+  const s = dashboardSummary(d);
+  assert.match(s, /### 내가 만든 프로젝트/);
+  assert.ok(s.includes(`- id=${a.id} 가을 행사 — 기한 2026-10-30 · 할 일 1/1 남음 · 📅 일정에서(회사)`));
+  assert.ok(!s.includes("끝난 일"));
+  assert.deepEqual(manualProjectsContext([]), []);
+  // applyProjectOps 단독: 이름 없는 add 는 오류
+  assert.deepEqual(applyProjectOps(pj, [{ op: "add", name: "" }]).errors.length, 1);
+});

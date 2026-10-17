@@ -27,6 +27,7 @@ import { WAIT_SETUP, markFreshInstall, modelWorkAllowed, sessionsAllowed } from 
 import { execFile } from "node:child_process";
 import { openSpec } from "./plat.ts";
 import { CalendarSync, alertDetail, alertVars } from "./calendar-sync.ts";
+import { calendarPick } from "./manual-projects.ts";
 import { withRun, asRoutine } from "./runs.ts";
 import { KgBackfill } from "./kg/backfill.ts";
 import { refineIncremental } from "./kg/refine.ts";
@@ -208,6 +209,9 @@ await bus.listen(cfg.port, {
   todoReorder: (id, priority, beforeId) => agent.reorderTodo(id, priority, beforeId),
   projectHide: (id) => agent.hideProject(id),
   projectUnhide: (id) => agent.unhideProject(id),
+  manualProjects: agent.manualProjectsApi(),
+  projectExists: (id) => agent.projectExists(id),
+  calendarPick: () => calendarPick(calendar),
   todoAsk: (id, text) => agent.askTodo(id, text),
   todoApply: (id, ops, rev, rule) => agent.applyAsk(id, ops, rev, rule),
   todoReject: (id, text, ops, rule) => agent.rejectAsk(id, text, ops, rule),

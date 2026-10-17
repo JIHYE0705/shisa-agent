@@ -3,7 +3,7 @@
 데몬(`agent/src/bus.ts`)은 `127.0.0.1`에서만 연다. 포트는 `CY_AGENT_PORT`로 바꿀 수 있다.
 
 **공통 규칙**
-- 쓰기(POST·PUT·DELETE)는 `X-CY-Agent: 1` 헤더가 필수다. `Origin`이 있으면 거부한다(`file://` 제외) → 403. 첨부 파일 읽기(GET)도 같은 규칙이다.
+- 쓰기(POST·PUT·PATCH·DELETE)는 `X-CY-Agent: 1` 헤더가 필수다. `Origin`이 있으면 거부한다(`file://` 제외) → 403. 첨부 파일 읽기(GET)도 같은 규칙이다.
 - 본문은 JSON 객체(`content-type: application/json`)이고, 본문이 없어도 되는 곳은 `{}`로 본다.
 - 처리기가 없으면(모듈이 꺼짐) 503, 모양이 틀리면 400, 없는 id면 404다.
 - `Host` 헤더가 `127.0.0.1:<포트>`나 `localhost:<포트>`가 아니면 모든 경로(`/events` 포함)를 403으로 막는다. 다른 이름이 127.0.0.1을 가리키게 하는 DNS 리바인딩을 막기 위해서다.
@@ -166,11 +166,29 @@ type Bubble = {
 - `GET /dashboard` → 200. 패널 전체 데이터다.
   - `generatedAt`, `briefing{at,bubble,replyMd}|null`, `commitsToday`
   - `projects[]`: `name`, `path`, `lastActive`, `sessions24h`, `lastTitle`, `lastPrompt`, `branch`, `commitsToday`, `recentCommits`, `hidden`
+  - `manualProjects[]`: 직접 만든 프로젝트(아래 「직접 만든 프로젝트」, 진행 중 먼저)
   - `todos[]`(아래), `recentDone[]`, `proposals[]`, `today{date,asked,items}`
   - `connectors[]{cap,label,mode,ready,detail,doc}`, `meetings[]{id,subject,start,end,link?}`, `todoRules[]`
 - `POST /briefing` → 202. 지금 브리핑(오래 걸리니 기다리지 않는다).
 - `POST /refresh` → 202. Slack 다시 훑기 → 새 할 일 → 브리핑.
 - `POST /projects/hide|unhide { id: 경로 }` → 200 / 404. 숨긴 프로젝트는 집계·프롬프트에서 빠진다.
+
+### 직접 만든 프로젝트(`manual-projects.ts`)
+
+코드 작업에서 저절로 모은 `projects[]`와 따로, 사람이 패널 ＋나 채팅으로 만든 프로젝트다. `cy.db`의 `manual_projects` 테이블에 두고, 할 일은 `todos.project_id`로 묶는다.
+
+항목(`ManualProjectView`): `id`(`proj:<uuid>`), `name`, `note?`, `start?`·`due?`(YYYY-MM-DD), `status: open|done`, `created`, `updated`, `doneAt?`, `source?{ kind: "calendar", eventId, calendar?, title?, start?, end? }`(일정에서 가져왔을 때), `todos`(묶인 할 일 수, 휴지통 제외), `openTodos`(남은 수)
+
+| | |
+|---|---|
+| `GET /projects/manual` | 200 `{ projects }` |
+| `POST /projects/manual { name, note?, start?, due?, source? }` | 201 `{ project }`. `name` 필수 |
+| `GET /projects/manual/:id` | 200 `{ project, todos }`(묶인 할 일, 열린 것 먼저) |
+| `PATCH /projects/manual/:id { name?, note?, start?, due?, status? }` | 200 `{ project }`. `null`·빈 글은 지우기, `status: done`이면 `doneAt` |
+| `DELETE /projects/manual/:id` | 200 `{ ok, unlinked }`. 프로젝트만 지우고 묶인 할 일은 남긴다(묶음만 푼다) |
+| `GET /projects/calendar-events` | 200 `{ connected, ok, from, to, events[] }`. 연결된 캘린더(ICS 여러 개·MCP)에서 지난 3일 ~ 앞으로 14일 일정. 항목: `id`, `title`, `start`, `end`, `allDay`, `past`, `calendar?`, `location?`, `description?`, `attendees?`, `joinUrl?`, `draft`(그 일정으로 채운 `POST /projects/manual` 본문: 제목 → 이름, 설명·장소·참석자 → 메모, 날짜 → 시작·기한, `source`). 취소·거절한 일정은 뺀다. 캘린더가 안 붙었으면 `connected: false` |
+
+할 일에 묶기: `POST /todos`·`POST /todos/:id`의 `projectId`(id, 빼기는 `null`). 없는 프로젝트면 400.
 
 ## 할 일
 
@@ -178,13 +196,14 @@ type Bubble = {
 - `id`, `title`, `source`, `link?`, `priority: 1–4`(4 = 언젠가·백로그), `note?`, `description?`, `userEdited`
 - `doing?`(사용자가 ▶로 정한 진행중), `progress?`·`progressAt?`(작업 세션에서 본 진척)
 - `appliedRule?`, `doneBy?: user|auto|briefing`, `autoReason?`, `autoEvidence?`
+- `projectId?`: 묶인 직접 만든 프로젝트
 
 화면에 「(진행중)」은 `doing`이 있으면 그 값으로, 없으면 `progress`가 있을 때 붙는다.
 
 | | |
 |---|---|
-| `POST /todos { title, priority?, link?, note? }` | 201 `{ id }`(`user:<uuid>`) |
-| `POST /todos/:id { title?, priority?, link?, note?, description?, status?: open\|done, doing?: boolean\|null }` | 200 `{ ok, todo }`. 사용자가 고친 필드는 브리핑이 덮지 않는다(`doing`은 예외) |
+| `POST /todos { title, priority?, link?, note?, today?, projectId? }` | 201 `{ id }`(`user:<uuid>`) |
+| `POST /todos/:id { title?, priority?, link?, note?, description?, status?: open\|done, doing?: boolean\|null, today?, projectId?: string\|null }` | 200 `{ ok, todo }`. 사용자가 고친 필드는 브리핑이 덮지 않는다(`doing`은 예외) |
 | `POST /todos/:id/done` | 완료 |
 | `POST /todos/:id/delete` → `/restore` → `/purge`, `POST /todos/trash/empty` | 휴지통(30일 뒤 자동 비움) |
 | `POST /todos/:id/revert` | 자동 완료 되돌리기. 409 = 자동 완료가 아님 |
@@ -255,6 +274,8 @@ type FocusView = {
 - `{ status: "error", text }`
 
 같은 대화 안에서는 차례로, 다른 대화끼리는 동시에 돈다.
+
+채팅 답의 `project_ops`(만들기 `add`·고치기 `edit`·끝내기 `done`·다시 열기 `reopen`, 지우기는 패널에서만)는 `todo_ops`보다 먼저 적용된다. `todo_ops`의 `project`(id 나 이름, `null`은 빼기)로 할 일을 묶으니, 한 답에서 프로젝트를 만들고 할 일을 넣을 수 있다.
 
 | | |
 |---|---|
