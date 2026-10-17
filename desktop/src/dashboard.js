@@ -155,9 +155,32 @@ export function shapeConnectors(list) {
       detail: str(c.detail).trim(),
       doc: str(c.doc).trim(), // 안내용 글자(예: docs/connect/slack.md). 링크로 열지 않는다
       ...(c.mode === 'mcp' && /^[\w.@-]{1,64}$/.test(str(c.server)) ? { server: c.server } : {}), // [연결 해제] 뒤 claude mcp remove 안내
+      ...(ready && shapeSync(c.sync) ? { sync: shapeSync(c.sync) } : {}),
     });
   }
   return out;
+}
+
+// 캘린더 줄의 실제 동기화 결과(데몬 calendar-state.ts): 가져오는 중 · 가져옴(일정 수) · 못 가져옴(이유). 모르는 모양이면 없음
+function shapeSync(s) {
+  if (!s || typeof s !== 'object' || !['pending', 'ok', 'failed'].includes(s.phase)) return null;
+  return {
+    phase: s.phase,
+    ...(Number.isInteger(s.meetings) && s.meetings >= 0 ? { meetings: s.meetings } : {}),
+    ...(s.phase === 'failed' && str(s.reason).trim() ? { reason: str(s.reason).trim().slice(0, 300) } : {}),
+  };
+}
+
+// 연결 카드 칩·안내 줄: 설정만 보고 「연결됨」이라 하지 않는다(캘린더는 실제로 가져왔는지까지)
+// → { tone: 'ok'|'warn'|'', text, hint? }
+export function connectorChipView(c) {
+  if (!c || c.mode === 'off') return { tone: '', text: '연결 안 됨' };
+  if (!c.ready) return { tone: 'warn', text: `준비 안 됨 · ${c.modeLabel}` };
+  const s = c.sync;
+  if (s?.phase === 'pending') return { tone: 'ok', text: `연결됨 · 일정 가져오는 중`, hint: '일정을 가져오고 있어요. 잠시만 기다려 주세요.' };
+  if (s?.phase === 'failed') return { tone: 'warn', text: '연결됨 · 일정을 못 가져옴', hint: s.reason || '일정을 가져오지 못했어요.' };
+  if (s?.phase === 'ok' && Number.isInteger(s.meetings)) return { tone: 'ok', text: `연결됨 · ${c.modeLabel}`, hint: `오늘·내일 일정 ${s.meetings}개를 가져왔어요.` };
+  return { tone: 'ok', text: `연결됨 · ${c.modeLabel}` };
 }
 
 export function visibleSections(_vm) {

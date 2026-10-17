@@ -1317,12 +1317,13 @@ function setupIPC() {
     const done = { ...prev.done, [id]: true };
     writeSisa({ ...prev, done });
     if (wrote === 'dup') return { ok: false, duplicate: true, error: CALENDAR_DUP, done };
-    // 데몬은 커넥터를 시작 때 한 번 읽는다 — 다시 읽게 알린다(launchd 아래면 데몬이 스스로 다시 켜진다)
+    // 데몬에 다시 읽게 알린다: 캘린더만 바뀌었으면 데몬이 바로 반영해 곧장 가져오고(applied), 다른 연결이면 스스로 다시 켜진다
     let reload = null;
     if (wrote && connected) {
       const r = await post('/connectors/reload');
       reload = r.ok ? r.data : null;
-      if (reload?.changed && !reload.restarting) console.warn('[connectors] 설정이 바뀌었어요 — 데몬을 다시 켜야 반영돼요');
+      if (reload?.changed && !reload.restarting && !reload.applied) console.warn('[connectors] 설정이 바뀌었어요 — 데몬을 다시 켜야 반영돼요');
+      sendPanel('dashboard', {}); // 연결 카드(가져오는 중 → 결과)를 바로
     }
     return { ok: true, done, configured: wrote, reload };
   });

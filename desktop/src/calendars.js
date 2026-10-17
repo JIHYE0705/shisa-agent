@@ -117,6 +117,7 @@ export function calendarRemoveCopy(row, last) {
 // 데몬 응답(POST /connectors/reload) → 한 줄 안내. 꺼져 있으면 다음에 켤 때, 바뀌었는데 다시 켜지지 않으면 다시 켜야 한다고
 export function calendarReloadNote(reload, offline) {
   if (offline) return '시사가 꺼져 있어서 다음에 켤 때 적용돼요.';
+  if (reload?.applied && !reload.restarting) return '바로 적용했어요. 일정을 가져오는 중이에요.'; // 캘린더만 바뀜: 데몬이 다시 켜지지 않고 바로 가져온다
   if (reload?.restarting) return '시사가 잠깐 다시 켜지며 적용돼요.';
   if (reload?.changed) return '시사를 다시 켜면 적용돼요.';
   return '';

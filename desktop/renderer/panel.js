@@ -2,7 +2,7 @@
 import DOMPurify from './vendor/purify.js';
 import { Marked } from './vendor/marked.js';
 import { createMarkdown } from '../src/markdown.js';
-import { shapeDashboard, overlayHidden, priorityLabel, SECTIONS, SECTION_LABELS, normalizeSection, relativeTime, clockTime, visibleSections } from '../src/dashboard.js';
+import { shapeDashboard, overlayHidden, priorityLabel, SECTIONS, SECTION_LABELS, normalizeSection, relativeTime, clockTime, visibleSections, connectorChipView } from '../src/dashboard.js';
 import { needsSetup, stepForCap } from '../src/setup.js';
 import { isFeature, isAgent, buildWalk, agentSteps } from '../src/setup-flow.js';
 import { renderSetup, clearApiDraft, readSlot, clearSlot } from './setup-view.js';
@@ -439,8 +439,8 @@ let confirmingCap = '';
 let connNote = ''; // 방금 끊은 결과(다시 그려도 잠깐 남긴다)
 let connNoteTimer = null;
 function connectorChip(c) {
-  if (c.mode === 'off') return h('span.chip', { text: '연결 안 됨' });
-  return h(`span.chip.${c.ready ? 'ok' : 'warn'}`, { text: `${c.ready ? '연결됨' : '준비 안 됨'} · ${c.modeLabel}` });
+  const v = connectorChipView(c);
+  return h(`span.chip${v.tone ? `.${v.tone}` : ''}`, { text: v.text });
 }
 function connectorActions(c) {
   if (connectorAction(c) === 'connect') {
@@ -477,6 +477,7 @@ function renderConnectors(list) {
         c.ready && c.detail ? h('span.muted.small.conn-detail', { text: c.detail }) : null,
         h('span.spacer'),
         ...connectorActions(c)),
+      c.ready && connectorChipView(c).hint ? h(`div.conn-hint.small${c.sync?.phase === 'failed' ? '.conn-sync-fail' : '.muted'}`, { role: c.sync?.phase === 'failed' ? 'status' : null }, h('span', { text: connectorChipView(c).hint })) : null,
       c.ready || c.mode === 'off' ? null : h('div.conn-hint.muted.small', null,
         h('span', { text: !c.detail || c.detail === '연결 안 됨' ? '연결 안 됨' : `연결 안 됨. ${c.detail}` }))))),
     connNote ? h('p.small.conn-note', { role: 'status', text: connNote }) : null,

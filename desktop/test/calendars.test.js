@@ -121,6 +121,8 @@ test('[빼기] 문구·반영 안내', () => {
   assert.equal(calendarReloadNote({ changed: true, restarting: false }, false), '시사를 다시 켜면 적용돼요.');
   assert.equal(calendarReloadNote(null, true), '시사가 꺼져 있어서 다음에 켤 때 적용돼요.');
   assert.equal(calendarReloadNote({ changed: false, restarting: false }, false), '');
+  // 캘린더만 바뀌면 데몬이 다시 켜지지 않고 바로 가져온다
+  assert.equal(calendarReloadNote({ changed: true, restarting: false, applied: true }, false), '바로 적용했어요. 일정을 가져오는 중이에요.');
 });
 
 test('설정 창 IPC: 캘린더 목록·하나 빼기는 이 창에서만, id 모양이 맞을 때만 main 으로', async () => {
