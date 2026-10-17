@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSSEParser, backoffDelay } from '../src/sse.js';
+import { readFileSync } from 'node:fs';
+import { createSSEParser, backoffDelay, isEventStream, createSSEGate } from '../src/sse.js';
 
 const collect = () => {
   const out = [];
@@ -85,4 +86,52 @@ test('backoff: 지수 증가, 상한 30s', () => {
   assert.equal(backoffDelay(20, { jitter: j }), 30000);
   assert.ok(backoffDelay(0, { jitter: () => 0 }) >= 800);
   assert.ok(backoffDelay(0, { jitter: () => 1 }) <= 1200);
+});
+
+test('isEventStream: 2xx · 본문 · text/event-stream 이어야 SSE(그 포트의 다른 프로그램은 아님)', () => {
+  assert.equal(isEventStream(true, 'text/event-stream'), true);
+  assert.equal(isEventStream(true, 'Text/Event-Stream; charset=utf-8'), true);
+  assert.equal(isEventStream(true, 'text/html; charset=utf-8'), false);
+  assert.equal(isEventStream(true, 'application/json'), false);
+  assert.equal(isEventStream(true, 'text/event-streamx'), false);
+  assert.equal(isEventStream(true, null), false);
+  assert.equal(isEventStream(false, 'text/event-stream'), false);
+  assert.equal(isEventStream(true, 'text/event-stream', false), false);
+});
+
+test('createSSEGate: 첫 이벤트가 state 일 때 한 번만 연결됨, 아니면 끊기', () => {
+  let n = 0;
+  const g = createSSEGate(() => n++);
+  assert.equal(g.live, false);
+  assert.equal(g.check({ event: 'state', data: '{}' }), 'live');
+  assert.equal(g.check({ event: 'bubble', data: '{}' }), 'live');
+  assert.equal(n, 1);
+  assert.equal(g.live, true);
+  const other = createSSEGate(() => n++);
+  assert.equal(other.check({ event: 'message', data: 'hi' }), 'reject');
+  assert.equal(other.live, false);
+  assert.equal(n, 1);
+  // 시사 데몬이 실제로 보내는 첫 부분(retry 뒤 state) → 파서·게이트를 거치면 연결됨
+  const seen = [];
+  const g2 = createSSEGate(() => seen.push('live'));
+  const p = createSSEParser((e) => { if (g2.check(e) === 'live') seen.push(e.event); });
+  p.push('retry: 3000\n\nevent: state\ndata: {"mood":"idle"}\n\nevent: bubble\ndata: {}\n\n');
+  assert.deepEqual(seen, ['live', 'state', 'bubble']);
+});
+
+test('main.js 배선: /events 가 SSE 이고 첫 state 가 와야 연결됨 — 그 전엔 setConnected(true)·refreshStatus 없음', () => {
+  const main = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  const loop = main.slice(main.indexOf('async function connectLoop()'), main.indexOf('function onSSE('));
+  assert.ok(loop.length > 100);
+  assert.match(loop, /isEventStream\(res\.ok, type, !!res\.body\)/);
+  // 200 만으로 연결됨·attempt=0 하지 않는다: 둘 다 게이트의 onLive 안에서만
+  assert.match(loop, /createSSEGate\(\(\) => \{ setConnected\(true\); attempt = 0; \}\)/);
+  assert.equal(loop.match(/setConnected\(true\)/g).length, 1);
+  assert.equal(loop.match(/attempt = 0/g).length, 1);
+  assert.match(loop, /gate\.check\(ev\) === 'live'\) onSSE\(ev\); else ac\.abort\(\)/);
+  assert.match(loop, /if \(!gate\?\.live\) retryOverride = null;/); // 남의 retry: 로 재연결을 앞당기지 않는다
+  // refreshStatus·loadCharacters 는 setConnected(true) 에서만(연결됨이 바뀔 때)
+  const sc = main.slice(main.indexOf('function setConnected(v)'), main.indexOf('async function connectLoop()'));
+  assert.match(sc, /if \(v\) refreshStatus\(\);/);
+  assert.match(sc, /if \(v\) loadCharacters\(\);/);
 });

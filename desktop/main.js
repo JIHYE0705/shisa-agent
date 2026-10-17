@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ASSET_SCHEME, resolveAsset, parseRange, assetCandidates, userCharacterFile } from './src/assets.js';
 import { cleanMergeQuestion, normalizeOpen } from './src/bubbles.js';
-import { createSSEParser, backoffDelay } from './src/sse.js';
+import { createSSEParser, backoffDelay, isEventStream, createSSEGate } from './src/sse.js';
 import { isSafeLink } from './src/bubbles.js';
 import { defaultPosition, restorePosition } from './src/geometry.js';
 import { normalizeSection } from './src/dashboard.js';
@@ -742,15 +742,20 @@ async function connectLoop() {
   while (!quitting) {
     const ac = new AbortController();
     currentAbort = ac;
+    let gate = null;
     try {
       const res = await fetch(`${BASE}/events`, {
         headers: { Accept: 'text/event-stream' },
         signal: ac.signal,
       });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-      setConnected(true);
-      attempt = 0;
-      const parser = createSSEParser(onSSE, { onRetry: (ms) => { retryOverride = ms; } });
+      const type = res.headers.get('content-type');
+      if (!isEventStream(res.ok, type, !!res.body)) {
+        res.body?.cancel().catch(() => {});
+        throw new Error(`HTTP ${res.status} ${type ?? ''}`); // 그 포트의 다른 프로그램: 연결로 치지 않고 물러난다
+      }
+      // 연결됨은 첫 이벤트(state)가 온 뒤 — 남의 서버에 붙어 /status·/characters 등을 퍼붓지 않게
+      gate = createSSEGate(() => { setConnected(true); attempt = 0; });
+      const parser = createSSEParser((ev) => { if (gate.check(ev) === 'live') onSSE(ev); else ac.abort(); }, { onRetry: (ms) => { retryOverride = ms; } });
       const dec = new TextDecoder();
       for await (const chunk of res.body) parser.push(dec.decode(chunk, { stream: true }));
       parser.end();
@@ -760,6 +765,7 @@ async function connectLoop() {
     }
     setConnected(false);
     if (quitting) break;
+    if (!gate?.live) retryOverride = null; // 시사 데몬이 아니면 그쪽 retry: 를 따르지 않는다
     const delay = retryOverride ?? backoffDelay(attempt++);
     retryOverride = null;
     await new Promise((r) => { wakeSleep = r; setTimeout(r, delay); });
