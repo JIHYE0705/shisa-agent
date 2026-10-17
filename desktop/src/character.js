@@ -140,6 +140,10 @@ export function characterAssets(id) {
     clips, variants,
   };
 }
+// 오버레이가 캐릭터를 다시 그릴까: 다른 캐릭터면 늘. force(캐릭터 목록을 새로 받음)면 주소가 바뀌었거나,
+// 같아도 그림을 못 읽어 시사 그림으로 물러나 있으면(fellBack) — 켤 때 메인은 데몬 목록을 받기 전엔 사용자 캐릭터 그림을 주지 않는다(404)
+export const redrawCharacter = ({ cur, next, force = false, fellBack = false }) =>
+  cur?.id !== next.id || (force && (fellBack || JSON.stringify(next) !== JSON.stringify(cur)));
 // 그 칸의 영상 목록(없으면 [])
 export const variantsOf = (a, kind) => a?.variants?.[kind] ?? (a?.clips?.[kind] ? [a.clips[kind]] : []);
 // 영상 하나: 종류(plan·dance·cheer·lunch·study, 모르면 plan) + 번호(데몬 state.danceVariant · 앱이 고른 번호) → { src, poster, scene, kind, say? } | null

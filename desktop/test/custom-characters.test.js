@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
-import { CHARACTERS, characterAssets, customAssets, clipFor, clipKind, fitBox, okCharacter, okCharacterId, characterName, appName, localSay, characterIds, CHARACTER_IDS } from '../src/character.js';
+import { CHARACTERS, characterAssets, customAssets, redrawCharacter, clipFor, clipKind, fitBox, okCharacter, okCharacterId, characterName, appName, localSay, characterIds, CHARACTER_IDS } from '../src/character.js';
 import { applyCharacters, effectiveLines, defaultsOf, shisaDesktopLines, mergeLines } from '../src/character-registry.js';
 import { editorSections, fieldText, fieldValue, fieldProblem, linesFromTexts, diffLines, flattenLines, unflattenLines, slotRows, okMediaName, missingRequired, changedCount, SECTIONS } from '../src/character-edit.js';
 import { resolveAsset, userCharacterFile } from '../src/assets.js';
@@ -283,6 +283,23 @@ test('설정 저장·IPC: 사용자 캐릭터 id 를 고를 수 있고, 만들�
   assert.match(main, /if \(event === 'characters'\) loadCharacters\(\)/);
   assert.match(main, /a\.user \? userCharacterFile\(/);
   for (const p of ['../preload.cjs', '../preload-panel.cjs', '../preload-session.cjs']) assert.match(readFileSync(new URL(p, import.meta.url), 'utf8'), /getCharacters: \(\) => ipcRenderer\.invoke\('characters-get'\)/, p);
+});
+
+test('켤 때 사용자 캐릭터 그림을 목록 전에 못 읽어 시사 그림으로 물러났으면, 목록이 오면 같은 주소라도 다시 그린다', () => {
+  // 켤 때: 지난번 목록(localStorage)으로 그림 주소는 알지만 메인은 데몬 목록을 받기 전이라 404 → 시사 그림(stillIdx > 0)
+  applyCharacters(data());
+  const a = characterAssets(U);
+  const b = characterAssets(U); // 목록이 와도 주소는 같다
+  assert.equal(redrawCharacter({ cur: a, next: b, force: true, fellBack: true }), true, '물러난 그림은 목록이 오면 다시');
+  assert.equal(redrawCharacter({ cur: a, next: b, force: true, fellBack: false }), false, '잘 그려져 있으면 그대로');
+  assert.equal(redrawCharacter({ cur: a, next: b, force: false, fellBack: true }), false, 'state 마다 다시 그리지는 않는다');
+  assert.equal(redrawCharacter({ cur: characterAssets('shisa'), next: a }), true, '다른 캐릭터면 바꾼다');
+  const d = data();
+  d.characters = d.characters.map((x) => (x.id === U ? { ...x, media: { ...x.media, eyes_open: 'eyes_open-9z8y7x6w.png' } } : x));
+  applyCharacters(d);
+  assert.equal(redrawCharacter({ cur: a, next: characterAssets(U), force: true }), true, '그림을 바꿨으면 다시');
+  const js = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  assert.match(js, /if \(!redrawCharacter\(\{ cur: charA, next, force, fellBack: stillIdx > 0 \}\)\) return;/);
 });
 
 test('오버레이: gif 클립 자리(<img id="clip-img">)가 있고 영상 말고 그림이면 img 로 튼다, 빈 칸이면 정지 그림', () => {
