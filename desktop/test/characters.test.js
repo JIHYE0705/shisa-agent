@@ -167,6 +167,8 @@ test('설치 화면·둘러보기·오버레이 짧은 말: 캐릭터마다 모�
   assert.equal(sayFor('nope'), SISA_SAY);
   const shisaTour = tourSteps({ ready: true, connected: ['calendar'] }).map((s) => s.text);
   assert.deepEqual(tourSteps({ ready: true, connected: ['calendar'] }, 'shisa').map((s) => s.text), shisaTour);
+  // 마지막 장면: 설정에서 캐릭터도 바꾼다고 모든 캐릭터가 같이 말한다(시사만 빠져 있었다)
+  for (const id of ['shisa', ...OTHERS]) assert.match(tourSteps({ ready: true, connected: [] }, id).at(-1).text, /캐릭터/, id);
   const honorific = /(어|에|해|세|게|죠|예)요[.!?\s]|(어|에|해|세|게|죠|예)요$|습니다|시사|스이시/m;
   for (const id of OTHERS) {
     const say = sayFor(id);
