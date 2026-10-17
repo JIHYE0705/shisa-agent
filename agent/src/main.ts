@@ -2,7 +2,8 @@
 import { installFileLog, stallLag } from "./log.ts";
 import { loadConfig } from "./config.ts";
 import { DEFAULT_TODAY_REMINDER } from "./daily-plan.ts";
-import { localAsk } from "./local-mode.ts";
+import { localAsk, localLine } from "./local-mode.ts";
+import { LunchAlert, lunchAlertOf } from "./lunch.ts";
 import { Store } from "./store.ts";
 import { Bus, EXIT_PORT_TAKEN } from "./bus.ts";
 import { runs } from "./runs.ts";
@@ -128,8 +129,20 @@ function remindToday(opened = false) {
   bus.dashboardChanged();
   if (r.kind === "ask") bus.openPanel("today");
 }
-bus.onOverlay = () => remindToday(true);
-setInterval(() => { try { remindToday(false); } catch (e: any) { console.warn("[today] 알림:", e?.message ?? e); } }, 60e3).unref?.();
+// 점심시간(12시대) 하루 한 번: 점심 영상(칸 lunch — 기본은 그 캐릭터의 일정 알림 영상) + 점심 인사. 설정 lunchAlert(기본 켬)
+// CY_LUNCH_HOUR: 화면 확인용으로 점심으로 볼 시(0~23)
+const lunch = new LunchAlert(join(HOME_DIR, "lunch.json"), { hour: process.env.CY_LUNCH_HOUR ? Number(process.env.CY_LUNCH_HOUR) : undefined });
+function lunchTick() {
+  const day = lunch.due(lunchAlertOf(cfg.lunchAlert));
+  if (!day) return;
+  const d = bus.activity.play(8000, "lunch"); // 영상 번호는 여기서(그 영상에 한마디가 있으면 그 말)
+  bus.bubble({ id: `lunch:${day}`, text: d.say ?? localLine("lunch"), kind: "info", ttlMs: 60e3 });
+}
+bus.onOverlay = () => { remindToday(true); try { lunchTick(); } catch (e: any) { console.warn("[lunch] 알림:", e?.message ?? e); } };
+setInterval(() => {
+  try { remindToday(false); } catch (e: any) { console.warn("[today] 알림:", e?.message ?? e); }
+  try { lunchTick(); } catch (e: any) { console.warn("[lunch] 알림:", e?.message ?? e); }
+}, 60e3).unref?.();
 
 // 설정 창: 모델·브리핑 출처(바로 반영 + config.json) · 연결 상태(읽기만). KG 상태는 아래에서 kgBackfill 이 생긴 뒤에 붙는다
 // 뇌·이름·레포 폴더를 바꾸면 바로 반영되고(재시작 불필요) 데스크톱에 SSE status 로 알린다

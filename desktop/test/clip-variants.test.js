@@ -108,3 +108,21 @@ test('사용자 캐릭터: 칸에 여러 개면 목록, 예전 모양(칸에 파
   assert.deepEqual(many.variants.plan.length, 2, '일정 알림이 비면 춤');
   assert.deepEqual(userClipTable({ cheer: 'cheer-0a1b2c3d.gif' }, { cheer: false }), { cheer: [{ file: 'cheer-0a1b2c3d.gif', frame: false }] });
 });
+
+test('점심시간: 설정 창에서 끄고 켜기(기본 켬), 사용자 캐릭터 점심 칸(비우면 일정 알림), 저장 이름 모양', async () => {
+  const { sanitizeSettingsPatch } = await import('../src/settings.js');
+  const { slotRows } = await import('../src/character-edit.js');
+  assert.deepEqual(sanitizeSettingsPatch({ lunchAlert: false }), { lunchAlert: false });
+  assert.equal(sanitizeSettingsPatch({ lunchAlert: 'no' }), null);
+  const html = fs.readFileSync(new URL('../renderer/settings.html', import.meta.url), 'utf8');
+  assert.match(html, /id="lunch-on"/);
+  const js = fs.readFileSync(new URL('../renderer/settings.js', import.meta.url), 'utf8');
+  assert.match(js, /settings\.lunchAlert !== false/);
+  const lunch = slotRows().find((r) => r.slot === 'lunch');
+  assert.deepEqual([lunch.multi, lunch.say, lunch.required], [true, true, false]);
+  assert.match(lunch.hint, /없으면 일정 알림/);
+  const U = 'u-abcd1234';
+  assert.ok(resolveAsset(`cy-asset://app/user-characters/${U}/lunch-0a1b2c3d.gif`));
+  const a = customAssets(U, {}, {}, { plan: [{ file: 'plan-0a1b2c3d.gif' }] });
+  assert.equal(clipFor(a, 'lunch').src.split('/').pop(), 'plan-0a1b2c3d.gif');
+});

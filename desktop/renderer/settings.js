@@ -807,6 +807,19 @@ function renderCalAlert() {
   }
   $('cal-summary').textContent = calendarAlertSummary(calAlert());
 }
+// 점심시간 알림(기본 켬)
+function renderLunch() {
+  if (!settings) return;
+  $('lunch-on').checked = settings.lunchAlert !== false;
+}
+$('lunch-on').addEventListener('change', async (e) => {
+  const cb = e.target;
+  cb.disabled = true;
+  const ok = await save({ lunchAlert: cb.checked });
+  cb.disabled = false;
+  if (!ok) cb.checked = !cb.checked;
+  else flash(cb.checked ? '점심시간 알림을 켰어요' : '점심시간 알림을 껐어요');
+});
 $('cal-off').addEventListener('change', (e) => saveCalAlert(e.target.checked ? [] : (lastAlertOn ?? ALERT_DEFAULT.minutesBefore)));
 async function addCustomAlert() {
   const p = parseAlertMinutes($('cal-custom').value);
@@ -1056,7 +1069,7 @@ async function load() {
   if (k && typeof k === 'object' && typeof k.claude === 'boolean') caps = { claude: k.claude, codex: k.codex === true };
   if (!s?.ok || !c?.ok) banner(`${who()}에 연결되지 않았어요. ${who()}가 켜져 있는지 확인해 주세요.`);
   else banner(null);
-  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderAutoMerge(); renderPhrases(); renderCharacter(); loadCharacters(); }
+  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderLunch(); renderAutoMerge(); renderPhrases(); renderCharacter(); loadCharacters(); }
   if (c?.ok) {
     await loadCalendars();
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];

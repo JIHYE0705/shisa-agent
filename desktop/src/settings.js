@@ -31,7 +31,7 @@ export function autoMergeNext(list, slug, add) {
 export function sanitizeSettingsPatch(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
   const out = {};
-  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert' && k !== 'character') return null;
+  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert' && k !== 'lunchAlert' && k !== 'character') return null;
   // 캐릭터(src/character.js 의 id)
   if (p.character !== undefined) {
     if (!okCharacterId(p.character)) return null; // 기본 다섯 또는 사용자 캐릭터 모양(있는지는 데몬이)
@@ -78,6 +78,11 @@ export function sanitizeSettingsPatch(p) {
     const r = cleanReminder(p.todayReminder);
     if (!r) return null;
     out.todayReminder = r;
+  }
+  // 점심시간 알림: 켬/끔
+  if (p.lunchAlert !== undefined) {
+    if (typeof p.lunchAlert !== 'boolean') return null;
+    out.lunchAlert = p.lunchAlert;
   }
   // 일정 알림: { minutesBefore: [분…] } ([] = 끔)
   if (p.calendarAlert !== undefined) {

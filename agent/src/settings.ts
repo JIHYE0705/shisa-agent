@@ -57,6 +57,7 @@ export type SettingsView = {
   autoMerge: string[]; // ✓ 없이 머지까지 하는 레포(owner/name)
   todayReminder: TodayReminder; // 오늘 할 일 알림(auto: 아침 + N시간마다·지정 시각 / off)
   calendarAlert: CalendarAlertConfig; // 일정 알림: 몇 분 전에 알릴지([] = 끔)
+  lunchAlert: boolean; // 점심시간 알림(12시대 하루 한 번, 기본 켬)
   // 뇌: 키는 절대 내보내지 않는다 — 있나 없나만
   brain: { provider: BrainProvider; model: string; keys: Record<BrainKey, boolean> };
   // 캐릭터(characters.ts): 그림·영상·말투·고정 문구 기본값이 바뀐다
@@ -82,6 +83,7 @@ export type SettingsPatch = {
   brain?: BrainPatch; user?: { name: string | null }; repoRoots?: string[]; todayReminder?: TodayReminder;
   onboarded?: boolean; readSessions?: boolean;
   calendarAlert?: CalendarAlertConfig;
+  lunchAlert?: boolean;
   character?: CharacterId;
 };
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,100}$/;
@@ -95,7 +97,7 @@ export class ConfigFileError extends Error {}
 export function validatePatch(body: unknown, cfg: Pick<Config, "models">): SettingsPatch {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new SettingsError("json object required");
   const b = body as Record<string, unknown>;
-  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions", "calendarAlert", "character"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
+  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions", "calendarAlert", "lunchAlert", "character"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
   const out: SettingsPatch = {};
   if (b.models !== undefined) {
     if (!b.models || typeof b.models !== "object" || Array.isArray(b.models)) throw new SettingsError("models must be an object");
@@ -137,7 +139,7 @@ export function validatePatch(body: unknown, cfg: Pick<Config, "models">): Setti
     const name = typeof u.name === "string" ? u.name.replace(/\s+/g, " ").trim() : "";
     out.user = { name: name || null };
   }
-  for (const k of ["onboarded", "readSessions"] as const) {
+  for (const k of ["onboarded", "readSessions", "lunchAlert"] as const) {
     if (b[k] === undefined) continue;
     if (typeof b[k] !== "boolean") throw new SettingsError(`${k} must be true or false`);
     out[k] = b[k] as boolean;
@@ -271,6 +273,7 @@ export function mergeConfigFile(path: string, patch: SettingsPatch): void {
   if (patch.onboarded !== undefined) next.onboarded = patch.onboarded;
   if (patch.readSessions !== undefined) next.readSessions = patch.readSessions;
   if (patch.calendarAlert) next.calendarAlert = patch.calendarAlert; // [] 도 그대로 쓴다(끔)
+  if (patch.lunchAlert !== undefined) next.lunchAlert = patch.lunchAlert;
   if (patch.character) next.character = patch.character;
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -333,6 +336,7 @@ export class Settings {
       autoMerge: [...(c.autoMerge ?? [])],
       todayReminder: todayReminderOf(c.todayReminder),
       calendarAlert: calendarAlertOf(c.calendarAlert),
+      lunchAlert: c.lunchAlert !== false,
       brain: {
         provider: c.brain?.provider ?? "claude-code", model: c.models.general,
         // genspark: 설정에 키가 있거나, Genspark 를 고른 채 gsk login 파일에 키가 있으면 true(키 값은 내보내지 않는다).
@@ -381,6 +385,7 @@ export class Settings {
     if (patch.onboarded !== undefined) this.cfg.onboarded = patch.onboarded; // main 이 onChange 로 첫 정리를 건다
     if (patch.readSessions !== undefined) this.cfg.readSessions = patch.readSessions;
     if (patch.todayReminder) this.cfg.todayReminder = { ...patch.todayReminder, times: [...patch.todayReminder.times] }; // main 이 1분마다 cfg 를 읽으니 바로
+    if (patch.lunchAlert !== undefined) this.cfg.lunchAlert = patch.lunchAlert; // main 이 1분마다 cfg 를 읽으니 바로
     if (patch.calendarAlert) this.cfg.calendarAlert = { minutesBefore: [...patch.calendarAlert.minutesBefore] }; // CalendarSync 가 확인할 때마다 cfg 를 읽으니 바로
     if (patch.character) { this.cfg.character = patch.character; setCharacter(patch.character); } // 다음 말풍선·답부터(앱은 SSE state 로 그림을 바꾼다)
     this.onChange?.(Object.keys(patch));

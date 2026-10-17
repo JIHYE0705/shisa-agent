@@ -21,7 +21,7 @@ import { LINES, QUICK_LINES, SHISA_EXTRA } from "./local-mode.ts";
 import { NO_SAY, type ClipTable } from "./clips.ts";
 
 // ---- 그림·영상 칸 ----
-// 꼭 넣을 넷: 눈 뜬 것·눈 감은 것(깜빡임)·응원·춤. 고를 수 있는 것: 집중(공부 중)·일정 알림. 빈 칸은 데스크톱이 대신 쓸 것을 고른다(character.js customAssets)
+// 꼭 넣을 넷: 눈 뜬 것·눈 감은 것(깜빡임)·응원·춤. 고를 수 있는 것: 집중(공부 중)·일정 알림·점심시간(없으면 일정 알림 영상). 빈 칸은 데스크톱이 대신 쓸 것을 고른다(character.js customAssets)
 // multi: 파일을 여러 개 넣는 칸(그때마다 하나가 랜덤으로). 개수 상한은 없다
 export const MEDIA_SLOTS = [
   { slot: "eyes_open", label: "눈 뜬 모습", required: true, multi: false },
@@ -30,6 +30,7 @@ export const MEDIA_SLOTS = [
   { slot: "dance", label: "춤", required: true, multi: true },
   { slot: "study", label: "집중", required: false, multi: true },
   { slot: "plan", label: "일정 알림", required: false, multi: true },
+  { slot: "lunch", label: "점심시간", required: false, multi: true },
 ] as const;
 export type MediaSlot = (typeof MEDIA_SLOTS)[number]["slot"];
 const SLOT_IDS: readonly string[] = MEDIA_SLOTS.map((s) => s.slot);
@@ -87,7 +88,7 @@ function cleanFrames(v: unknown): Partial<Record<MediaSlot, boolean>> | { error:
   return out;
 }
 // 저장 파일 이름: <칸>-<무작위 8자>.<확장자>. cy-asset 도 이 모양만 준다
-export const STORED_FILE = /^(eyes_open|eyes_closed|cheer|dance|study|plan)-[a-z0-9]{8}\.(png|jpg|webp|gif|webm|mp4)$/;
+export const STORED_FILE = /^(eyes_open|eyes_closed|cheer|dance|study|plan|lunch)-[a-z0-9]{8}\.(png|jpg|webp|gif|webm|mp4)$/;
 // 영상 한마디 다듬기: 제어 문자·줄바꿈 없이 한 줄로. 비면 undefined(그 칸 기본 대사). 길이 제한은 없다
 export function cleanSay(v: unknown): string | undefined | { error: string } {
   if (v === null || v === undefined) return undefined;

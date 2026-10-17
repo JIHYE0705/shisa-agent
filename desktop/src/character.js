@@ -74,7 +74,7 @@ export const okCharacter = (id) => (typeof id === 'string' && Object.hasOwn(CHAR
 // ---- 사용자 캐릭터 그림·영상 ----
 // 올린 파일은 ~/.cy-agent/characters/<id>/<칸>-<무작위>.<확장자>(데몬이 이름을 짓는다) → cy-asset://app/user-characters/<id>/<그 이름>
 export const USER_CHAR_DIR = 'cy-asset://app/user-characters';
-export const MEDIA_SLOTS = ['eyes_open', 'eyes_closed', 'cheer', 'dance', 'study', 'plan'];
+export const MEDIA_SLOTS = ['eyes_open', 'eyes_closed', 'cheer', 'dance', 'study', 'plan', 'lunch'];
 export const REQUIRED_SLOTS = ['eyes_open', 'eyes_closed', 'cheer', 'dance'];
 // 파일을 여러 개 넣는 칸(그때마다 하나를 랜덤으로). 눈 뜬·감은 그림은 하나씩
 export const MULTI_SLOTS = ['cheer', 'dance', 'study', 'plan', 'lunch'];

@@ -321,7 +321,7 @@ test("HTTP: GET/POST/PUT/DELETE /characters, 그림 올리기(바이트), 쓰기
     const g = await (await fetch(`${base}/characters`)).json();
     assert.deepEqual(g.characters.map((c: any) => c.id), ["shisa", "hachi", "rakko", "momonga", "usagi"]);
     assert.equal(g.current, "shisa");
-    assert.ok(g.schema.length > 100 && g.help.prompt && g.slots.length === 6 && g.types.includes("gif"));
+    assert.ok(g.schema.length > 100 && g.help.prompt && g.slots.length === 7 && g.types.includes("gif"));
     assert.equal((await fetch(`${base}/characters`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "x" }) })).status, 403);
     assert.equal((await fetch(`${base}/characters`, { method: "POST", headers: { ...H, origin: "https://evil.example" }, body: JSON.stringify({ name: "x" }) })).status, 403);
     const cr = await fetch(`${base}/characters`, { method: "POST", headers: H, body: JSON.stringify({ name: "까망", from: "momonga" }) });

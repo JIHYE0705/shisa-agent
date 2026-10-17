@@ -181,7 +181,7 @@ test('편집 칸: 묶음·설명, 줄 칸은 한 줄에 하나(줄 안의 줄바
 
 test('그림 칸: 꼭 넣을 넷·고를 둘, 받는 파일 이름, 빠진 것', () => {
   const rows = slotRows({ eyes_open: 'eyes_open-1.png' });
-  assert.deepEqual(rows.map((r) => [r.slot, r.required]), [['eyes_open', true], ['eyes_closed', true], ['cheer', true], ['dance', true], ['study', false], ['plan', false]]);
+  assert.deepEqual(rows.map((r) => [r.slot, r.required]), [['eyes_open', true], ['eyes_closed', true], ['cheer', true], ['dance', true], ['study', false], ['plan', false], ['lunch', false]]);
   assert.equal(rows[0].file, 'eyes_open-1.png');
   for (const ok of ['a.png', 'B.GIF', 'c.webm', 'd.mp4', 'e.jpeg', 'f.webp']) assert.ok(okMediaName(ok), ok);
   for (const bad of ['a.svg', 'b.html', 'png', 'c.mov', 'd.exe', '']) assert.ok(!okMediaName(bad), bad);
