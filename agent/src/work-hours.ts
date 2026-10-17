@@ -95,10 +95,12 @@ export class WorkAlerts {
     return day;
   }
   // 지금 띄울 때인가: 켜져 있고, 근무일이고, 그 시간 안이고, 오늘 아직 안 띄웠으면 남기고 날짜를. 아니면 null
-  due(kind: WorkAlert, wh: WorkHours): string | null {
+  // busy: 일정 알림 춤이 도는 중. 영상이 있는 점심·퇴근은 그 영상·말풍선을 덮지 않게 이번엔 건너뛴다(남기지 않으니 다음 확인 때 뜬다)
+  due(kind: WorkAlert, wh: WorkHours, busy = false): string | null {
     const on = kind === "start" ? wh.startAlert : kind === "lunch" ? wh.lunchAlert : wh.leaveAlert;
     const now = this.now();
     if (!on || !isWorkDay(wh, now) || !inWindow(kind, wh, now)) return null;
+    if (busy && kind !== "start") return null;
     return this.claim(kind);
   }
 }

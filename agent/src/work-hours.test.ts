@@ -90,6 +90,20 @@ test("하루 한 번: 근무일·시간 안·켜져 있을 때만, 다시 켜도
   assert.equal(a.done("start"), true);
 });
 
+test("일정 알림 춤 중이면 점심·퇴근은 건너뛰고(남기지 않는다) 다음 확인 때 뜬다, 출근 인사(영상 없음)는 그대로", () => {
+  let now = at("2026-10-19T12:00:00+09:00");
+  const a = new WorkAlerts(join(tmp(), "lunch.json"), { now: () => now });
+  const w = wh();
+  assert.equal(a.due("lunch", w, true), null, "일정 알림 춤 중");
+  assert.equal(a.due("start", w, true), "2026-10-19", "출근 인사는 영상이 없어 겹쳐도 된다");
+  now = at("2026-10-19T12:01:00+09:00");
+  assert.equal(a.due("lunch", w), "2026-10-19", "춤이 끝난 다음 확인");
+  now = at("2026-10-19T17:50:00+09:00");
+  assert.equal(a.due("leave", w, true), null);
+  now = at("2026-10-19T17:51:00+09:00");
+  assert.equal(a.due("leave", w), "2026-10-19");
+});
+
 test("설정: 근무 시간 저장·바로 반영, 잘못된 HH:MM·요일·출근≥퇴근은 400", () => {
   const path = join(tmp(), "config.json");
   const cfg = loadConfig({}, {});

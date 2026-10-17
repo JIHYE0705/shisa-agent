@@ -141,12 +141,13 @@ function workTick() {
   const wh = workHoursOf(cfg as unknown as Record<string, unknown>);
   const start = workAlerts.due("start", wh);
   if (start) { startGreetAt = Date.now(); bus.bubble({ id: LOCAL_GREET_ID, text: localLine("morning"), kind: "info", ttlMs: 60e3 }); }
-  const lunchDay = workAlerts.due("lunch", wh);
+  const busy = () => bus.activity.snapshot().danceClip === "plan"; // 일정 알림 춤 중이면 점심·퇴근은 다음 확인(1분 뒤)에
+  const lunchDay = workAlerts.due("lunch", wh, busy());
   if (lunchDay) {
     const d = bus.activity.play(8000, "lunch"); // 영상 번호는 여기서(그 영상에 한마디가 있으면 그 말)
     bus.bubble({ id: `lunch:${lunchDay}`, text: d.say ?? localLine("lunch"), kind: "info", ttlMs: 60e3 });
   }
-  const leaveDay = workAlerts.due("leave", wh);
+  const leaveDay = workAlerts.due("leave", wh, busy());
   if (leaveDay) {
     bus.activity.play(8000, "plan");
     const mins = minsToLeave(wh, new Date()) ?? LEAVE_BEFORE_MIN;
