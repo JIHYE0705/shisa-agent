@@ -135,7 +135,9 @@ export function brainReady(provider: string, cfg: Pick<Config, "brain">, d: Chat
     return ok ? { ready: true } : { ready: false, why: "Claude Code 에 로그인되어 있지 않아요" };
   }
   if (provider === "codex") return has("codex") ? { ready: true } : { ready: false, why: "Codex CLI 가 없어요" };
-  const key = provider === "gemini" ? geminiKey(cfg, env) : provider === "openai" ? openaiKey(cfg, env) : provider === "anthropic" ? anthropicKey(cfg, env) : provider === "genspark" ? gensparkKey(cfg, env) : undefined;
+  // Genspark: gsk login 파일만 있고 고른 적이 없으면 연결된 것으로 보지 않는다(설정 창 연결 상태와 같은 규칙) — 그 키로 목록도 받지 않는다
+  const gsk = provider === "genspark" && cfg.brain?.provider !== "genspark" ? (env.CY_AGENT_GENSPARK_API_KEY?.trim() || cfg.brain?.gensparkApiKey?.trim()) : undefined;
+  const key = provider === "gemini" ? geminiKey(cfg, env) : provider === "openai" ? openaiKey(cfg, env) : provider === "anthropic" ? anthropicKey(cfg, env) : provider === "genspark" ? (cfg.brain?.provider === "genspark" ? gensparkKey(cfg, env) : gsk) : undefined;
   if (!key) return { ready: false, why: "키가 없어요(패널 [모델] 탭에서 연결해요)" };
   const t = keyTrouble(provider, cfg, env);
   if (t === "auth") return { ready: false, why: authFailText(provider as "gemini") };

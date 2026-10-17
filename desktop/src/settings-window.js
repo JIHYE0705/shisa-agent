@@ -52,6 +52,7 @@ export function setupSettings(deps) {
     const p = isMine(e) ? sanitizeSettingsPatch(patch) : null;
     return p ? deps.request('PUT', '/settings', p) : denied();
   });
+  ipcMain.handle('settings-chat-models', (e) => (isMine(e) ? deps.request('GET', '/chat/models', undefined, 20000) : denied()));
   ipcMain.handle('connections-get', (e) => (isMine(e) ? deps.request('GET', '/connections', undefined, 20000) : denied()));
   // claude·services 는 SDK 를 띄우거나 경량 모델을 한 번 부른다 — 넉넉히
   ipcMain.handle('connections-check', (e, id) => {

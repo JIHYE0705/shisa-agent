@@ -284,12 +284,28 @@ type FocusView = {
 - `todoId?`: 대화 대상 할 일
 - `kind?: chat|hover`: 새 대화 종류. `hover`는 더블클릭 대화(threadId 없이 보내면 가장 최근의 보관 안 한 hover 대화에 이어 말하고, 없으면 새로 만든다)
 - `parentRunId?`, `model?`, `clientId?`
+- `provider?`: 이 말을 보낼 뇌(`claude-code|codex|anthropic|gemini|openai|genspark`, 로컬은 안 된다). 있으면 `model?`은 그 뇌의 모델 이름(`[A-Za-z0-9._:/-]` 1~100자)이고, 둘 다 그 대화에 기억된다. 그 뇌에 맞지 않는 이름(예: Codex에 `claude-…`)은 400
+- `useDefault?: true`: 기본 뇌·모델로 보내고 그 대화의 기억도 지운다(`provider`와 함께 쓸 수 없다)
+- `provider`가 없으면 그 대화에 기억한 뇌·모델을 쓰고, 기억이 없으면 기본(설정의 뇌·모델)이다. 기본 뇌 설정 자체는 바뀌지 않는다
 - `attachments?`: `POST /chat/attachments`로 올린 id
 
 응답은 202 `{ chatId, threadId, queued?, position? }`. 진행은 SSE `chat`으로 온다.
 - `{ status: "step", step }`
-- `{ status: "done", text, show? }`
-- `{ status: "error", text }`
+- `{ status: "done", text, show?, by? }`: `by = { provider, model?, label, picked? }`는 답한 뇌·모델이다(대화 기록의 답에도 같은 `by`가 붙는다)
+- `{ status: "error", text, retry? }`: 고른 뇌·모델이 답하지 못하면 글이 「○○ 모델이 답하지 못했어요: 이유」이고 `retry = { n, text, label }`가 온다. `POST /chat/threads/:id/messages/:n/edit { text, useDefault: true }`로 그 말을 기본으로 다시 보낸다
+
+업무 도구(MCP·코드 읽기·쓰기 승인)는 Claude Code 뇌일 때만 붙는다. 다른 뇌를 고르면 그 대화의 답은 도구 없이 맥락만으로 한다.
+
+### `GET /chat/models`
+
+채팅에서 고를 수 있는 뇌·모델 `{ active, brains: [{ provider, label, active, ready, why?, tools, defaults: { general?, quick?, light? }, defaultLabel, models: [{ id, label }], listError?, custom, note? }] }`. 지금 뇌가 맨 앞이다. `ready`가 false면 `why`(키가 없음·로그인 안 됨 등)만 있고 목록은 받지 않는다. `?fresh=1`이면 목록을 다시 받는다(평소에는 10분 기억한다).
+
+모델 목록을 얻는 곳:
+- Claude Code: 목록 API가 없어 알려 둔 Claude 모델과 설정에 적힌 모델
+- Codex: Codex CLI가 남긴 `~/.codex/models_cache.json`(`CODEX_HOME`이 있으면 그 아래)을 읽기만 한다. codex를 실행하지 않는다
+- Claude API·Gemini·OpenAI·Genspark: 그 키로 공식 모델 목록(GET)을 받는다. 못 받으면 기본 모델 하나와 `listError`
+
+`defaults`는 설정 창 「세부 모델」의 그 뇌 값이다(Claude 뇌는 `models`, 그 밖의 뇌는 `brainModels[뇌]`).
 
 같은 대화 안에서는 차례로, 다른 대화끼리는 동시에 돈다.
 
@@ -298,12 +314,12 @@ type FocusView = {
 | | |
 |---|---|
 | `GET /chat/threads?limit&before&archived=0\|1` · `POST /chat/threads { title?, kind?, todoId? }` | 대화 목록·새 대화 |
-| `POST /chat/threads/:id { title?, archived? }` · `POST /chat/threads/:id/delete` | 이름·보관·삭제 |
+| `POST /chat/threads/:id { title?, archived?, pick? }` · `POST /chat/threads/:id/delete` | 이름·보관·고른 뇌·모델(`pick = { provider, model? }`, `null`은 기본으로)·삭제. 대화 목록의 대화에도 `pick?`이 붙는다 |
 | `GET /chat/threads/:id/messages?limit&before` | 대화 내용 |
 | `GET /chat/threads/:id/agents` | `{ agents, sessions?, worktrees? }`: 대화 속 백그라운드 에이전트·작업 세션·워크트리 카드 |
 | `POST /chat/agents/:toolUseId/stop` | 백그라운드 에이전트 멈추기 |
 | `POST /chat/:chatId/stop` · `/now` · `/edit { text }` | 답하는 중 멈추기 · 줄 선 말 지금 보내기 · 줄 선 말 고치기 |
-| `POST /chat/threads/:id/messages/:n/edit { text, stopAgents?, model? }` | 마지막 사용자 말 고쳐 그 턴을 다시 |
+| `POST /chat/threads/:id/messages/:n/edit { text, stopAgents?, model?, provider?, useDefault? }` | 마지막 사용자 말 고쳐 그 턴을 다시(`provider`·`useDefault`는 `POST /chat`과 같다) |
 | `POST /chat/threads/:id/sync` | 터미널 Claude Code에서 이어 간 대화 불러오기 |
 | `GET /chat/queue` | 대기·답하는 중인 말(패널을 다시 열어도 되살림) |
 | `GET /chat/history` | 예전 모양 기록(최근 50개) |

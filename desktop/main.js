@@ -31,6 +31,7 @@ import { ATTACH_SCHEME, resolveAttachUrl, cleanAttachIds, cleanUpload, okStoredN
 import { agentLogin } from './src/agent-login.js';
 import { createCapsProbe, hasCoder, sameCaps, coderHint } from './src/caps.js';
 import { checkLlm, listModels, gskLoginKey, KEY_REQ } from './src/llm-check.js';
+import { okPickModel, okPickProvider, chatPickBody } from './src/chat-pick.js';
 import { KEY_PROVIDERS, normalizeSisa, publicView, withKey, withCli, withGsk, withSkip, withoutProvider, activeProvider, withModels, withVoice, connectedProviders, daemonBrainPatch, withDaemonBrain, settingsBrainBody } from './src/sisa-store.js';
 import { personaFor } from './src/persona.js';
 import { okCharacter, characterName, appName } from './src/character.js';
@@ -1462,6 +1463,7 @@ function setupIPC() {
   // model: 고른 모델(모양만 여기서, 목록 안인지는 에이전트가 400)
   const withModel = (body, model) => (okModelId(model) ? { ...body, model } : body);
   ipcMain.handle('session-models', (e) => (fromOurs(e) ? request('GET', '/models') : denied()));
+  ipcMain.handle('chat-models', (e, fresh) => (fromOurs(e) ? request('GET', `/chat/models${fresh === true ? '?fresh=1' : ''}`, undefined, 20000) : denied()));
   // 채팅 슬래시 명령 목록(패널·세션 창 자동완성). 데몬이 처음 한 번 SDK 에서 읽느라 느릴 수 있어 넉넉히 기다린다
   ipcMain.handle('slash-commands', (e) => (fromOurs(e) ? request('GET', '/commands', undefined, 30000) : denied()));
   // clientId: 세션 창이 미리 그린 풍선과 데몬 기록을 짝짓는다(모양만 거름) → { msgId, pending } 이면 전달 대기
@@ -1663,9 +1665,11 @@ function setupIPC() {
     const threadId = okThreadId(o.threadId) ? o.threadId : null;
     const todoId = typeof o.todoId === 'string' && o.todoId && o.todoId.length <= 500 ? o.todoId : null;
     const hover = e.sender === win?.webContents;
-    const model = okModelId(o.model) ? o.model : null; // 패널에서 고른 모델(목록 안인지는 에이전트가 400)
     const clientId = typeof o.clientId === 'string' && /^[\w-]{1,64}$/.test(o.clientId) ? o.clientId : null; // 패널이 붙인 말 id
-    const r = await post('/chat', { text: text.trim(), ...(hover ? { kind: 'hover' } : { ...(threadId ? { threadId } : {}), ...(todoId ? { todoId } : {}) }), ...(model ? { model } : {}), ...(clientId ? { clientId } : {}), ...(atts.length ? { attachments: atts } : {}) });
+    // 고른 뇌·모델(provider 가 있으면 model 은 그 뇌의 이름 — 맞는지는 데몬이 400) · 없으면 예전 세션 창 모델
+    const pick = hover ? {} : chatPickBody(o);
+    const model = !pick.provider && okModelId(o.model) ? o.model : null;
+    const r = await post('/chat', { text: text.trim(), ...(hover ? { kind: 'hover' } : { ...(threadId ? { threadId } : {}), ...(todoId ? { todoId } : {}) }), ...(model ? { model } : {}), ...pick, ...(clientId ? { clientId } : {}), ...(atts.length ? { attachments: atts } : {}) });
     return {
       ok: r.ok, status: r.status, error: r.error, ...(r.status === 400 && typeof r.data?.error === 'string' ? { data: { error: r.data.error } } : {}),
       chatId: typeof r.data?.chatId === 'string' ? r.data.chatId : null,
@@ -1693,8 +1697,9 @@ function setupIPC() {
     if (!fromOurs(e) || !okThreadId(threadId) || !Number.isInteger(n) || n < 1 || typeof text !== 'string' || !text.trim()) return denied();
     const o = opts && typeof opts === 'object' ? opts : {};
     const clientId = typeof o.clientId === 'string' && /^[\w-]{1,64}$/.test(o.clientId) ? o.clientId : null;
-    const model = okModelId(o.model) ? o.model : null;
-    return post(`/chat/threads/${threadId}/messages/${n}/edit`, { text: text.trim(), ...(o.stopAgents === true ? { stopAgents: true } : {}), ...(clientId ? { clientId } : {}), ...(model ? { model } : {}) });
+    const pick = chatPickBody(o);
+    const model = !pick.provider && okModelId(o.model) ? o.model : null;
+    return post(`/chat/threads/${threadId}/messages/${n}/edit`, { text: text.trim(), ...(o.stopAgents === true ? { stopAgents: true } : {}), ...(clientId ? { clientId } : {}), ...(model ? { model } : {}), ...pick });
   });
   // 줄 서 있는 말 고치기(글만)
   ipcMain.handle('chat-edit-queued', (e, chatId, text) => (fromOurs(e) && CHAT_ID.test(String(chatId)) && typeof text === 'string' && text.trim() ? post(`/chat/${chatId}/edit`, { text: text.trim() }) : denied()));
@@ -1714,6 +1719,11 @@ function setupIPC() {
     const p = {};
     if (typeof patch.title === 'string' && patch.title.trim()) p.title = patch.title.trim();
     if (typeof patch.archived === 'boolean') p.archived = patch.archived;
+    if ('pick' in patch) {
+      if (patch.pick === null) p.pick = null;
+      else if (okPickProvider(patch.pick?.provider)) p.pick = { provider: patch.pick.provider, ...(okPickModel(patch.pick.model) ? { model: patch.pick.model } : {}) };
+      else return denied();
+    }
     return Object.keys(p).length ? post(`/chat/threads/${id}`, p) : denied();
   });
   ipcMain.handle('chat-thread-delete', (e, id) => (fromOurs(e) && okThreadId(id) ? post(`/chat/threads/${id}/delete`) : denied()));

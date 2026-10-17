@@ -20,12 +20,12 @@ test('daemonBrainPatch: Claude API 키도 데몬 뇌(anthropic)로 — 모든 �
   assert.equal(daemonBrainPatch({}), null);
 });
 
-test('withDaemonBrain: 다른 칸·다른 키는 그대로, 기본 모델이면 models.general 을 비운다', () => {
+test('withDaemonBrain: 다른 칸·다른 키는 그대로, Claude 가 아닌 뇌 모델은 brainModels[뇌] 에(models.general 은 그대로), 기본이면 비운다', () => {
   const cfg = { repoRoots: ['/x'], brain: { provider: 'claude-code', openaiApiKey: 'old' }, models: { general: 'claude-x', code: 'c' } };
   assert.deepEqual(withDaemonBrain(cfg, { brain: { provider: 'gemini', geminiApiKey: KEY }, general: 'gemini-2.5-flash' }),
-    { repoRoots: ['/x'], brain: { provider: 'gemini', openaiApiKey: 'old', geminiApiKey: KEY }, models: { general: 'gemini-2.5-flash', code: 'c' } });
+    { repoRoots: ['/x'], brain: { provider: 'gemini', openaiApiKey: 'old', geminiApiKey: KEY }, models: { general: 'claude-x', code: 'c' }, brainModels: { gemini: { general: 'gemini-2.5-flash' } } });
   assert.deepEqual(withDaemonBrain(cfg, { brain: { provider: 'claude-code' }, general: null }).models, { code: 'c' });
-  assert.deepEqual(withDaemonBrain({ models: { general: 'x' } }, { brain: { provider: 'openai' }, general: null }), { brain: { provider: 'openai' } });
+  assert.deepEqual(withDaemonBrain({ models: { general: 'x' }, brainModels: { openai: { general: 'gpt-4o' } } }, { brain: { provider: 'openai' }, general: null }), { brain: { provider: 'openai' }, models: { general: 'x' } });
   assert.deepEqual(withDaemonBrain(cfg, { brain: { provider: 'local' }, general: undefined }).models, cfg.models, 'undefined 면 모델은 손대지 않는다');
   assert.deepEqual(cfg.models, { general: 'claude-x', code: 'c' }, '원본은 그대로');
 });

@@ -29,7 +29,7 @@ const el = (tag, cls, text) => {
 
 const ROLE_DESC = {
   quick: '캐릭터를 눌러 그 자리에서 묻는 대화. 패널의 모델 선택과 따로예요.',
-  general: '패널 채팅의 기본 모델(채팅 창에서 이번만 다른 모델을 고를 수 있어요) · 브리핑',
+  general: '패널 채팅의 기본 모델(채팅 입력줄 옆에서 대화마다 다른 AI·모델을 고를 수 있어요) · 브리핑',
   code: '승인한 코드 수정 작업을 실행할 때',
   light: 'Slack·캘린더 수집, 대화 제목 짓기 같은 가벼운 일',
 };
@@ -69,38 +69,61 @@ async function save(patch) {
 }
 
 // ---- 모델 ----
+// 지금 뇌(brain.provider)에 맞는 세부 모델 칸(데몬 settings.modelSlots). Claude 뇌는 Claude 모델 목록에서(models 로 저장),
+// 그 밖의 뇌(Codex·Gemini·OpenAI·Genspark)는 그 뇌 목록(GET /chat/models — 채팅 드롭다운과 같은 출처)에서 고르고 brainModels 로 저장.
+// 그 뇌에서 안 쓰는 칸(코드 작업은 Claude Code 일 때만)은 막고 이유를 보인다
+let brainLists = null; // GET /chat/models 의 brains(뇌 → 모델 목록)
+async function loadBrainLists() {
+  const r = await cy.chatModels?.().catch(() => null);
+  brainLists = r?.ok && Array.isArray(r.data?.brains) ? r.data.brains : [];
+  renderModels();
+}
 function renderModels() {
   const box = $('models');
   box.replaceChildren();
   if (!settings) return;
-  // Claude 세부 모델은 Claude Code 가 있을 때만(목록도 Claude 모델이다)
-  const show = caps.claude !== false && (settings.modelOptions ?? []).length > 0;
+  const slots = settings.modelSlots;
+  const claudeSlots = slots ? slots.claude : true;
+  // Claude 칸은 Claude Code 가 있을 때만(예전처럼). 다른 뇌는 그 뇌 칸
+  const show = slots ? slots.provider !== 'local' && (!claudeSlots || (caps.claude !== false && (settings.modelOptions ?? []).length > 0)) : caps.claude !== false && (settings.modelOptions ?? []).length > 0;
   $('models-note').hidden = !show;
   $('models-hint').hidden = show;
-  $('models-hint').textContent = show ? '' : 'Claude Code 를 쓰면 일마다 다른 Claude 모델을 고를 수 있어요. 지금은 패널의 [모델] 탭에서 고른 AI 하나로 다 해요.';
+  $('models-hint').textContent = show ? '' : slots?.provider === 'local' ? 'AI 를 연결하면 일마다 쓸 모델을 고를 수 있어요.' : 'Claude Code 를 쓰면 일마다 다른 Claude 모델을 고를 수 있어요. 지금은 패널의 [모델] 탭에서 고른 AI 하나로 다 해요.';
   if (!show) return;
-  $('config-path').textContent = settings.configPath ? `(${settings.configPath} 에 저장)` : '';
-  for (const { role, label } of settings.modelRoles ?? []) {
+  $('models-title').textContent = slots?.title ?? 'Claude Code 세부 모델';
+  $('config-path').textContent = settings.configPathLabel || settings.configPath ? `(${settings.configPathLabel || settings.configPath} 에 저장)` : '';
+  const roles = slots?.roles ?? (settings.modelRoles ?? []).map((r) => ({ ...r, value: settings.models?.[r.role], enabled: true }));
+  const list = claudeSlots ? null : (brainLists ?? []).find((b) => b.provider === slots.provider);
+  if (!claudeSlots && brainLists === null) loadBrainLists();
+  for (const { role, label, value, enabled, why } of roles) {
     const row = el('div', 'model-row');
     const id = `model-${role}`;
     const lab = el('label', null, label);
     lab.htmlFor = id;
     const sel = el('select');
     sel.id = id;
-    for (const o of settings.modelOptions ?? []) {
-      const opt = el('option', null, o.label);
-      opt.value = o.id;
-      opt.selected = o.id === settings.models?.[role];
-      sel.append(opt);
+    const add = (v, text) => { const o = el('option', null, text); o.value = v; o.selected = v === (value ?? ''); sel.append(o); };
+    if (!enabled) {
+      add('', '쓰지 않아요');
+    } else if (claudeSlots) {
+      for (const o of settings.modelOptions ?? []) add(o.id, o.label);
+    } else {
+      add('', role === 'general' ? `기본(${list?.defaultLabel ?? '그 AI 기본'})` : '기본(패널 채팅 기본과 같게)');
+      for (const m of list?.models ?? []) if (m.id !== '') add(m.id, m.label && m.label !== m.id ? `${m.label} (${m.id})` : m.id);
+      if (value && !(list?.models ?? []).some((m) => m.id === value)) add(value, value);
     }
+    sel.disabled = !enabled;
     sel.addEventListener('change', async () => {
       sel.disabled = true;
-      const ok = await save({ models: { [role]: sel.value } });
+      const patch = claudeSlots ? { models: { [role]: sel.value } } : { brainModels: { provider: slots.provider, models: { [role]: sel.value || null } } };
+      const ok = await save(patch);
       sel.disabled = false;
-      if (!ok) sel.value = settings.models?.[role] ?? sel.value;
+      if (!ok) sel.value = value ?? '';
+      renderModels();
     });
-    const desc = el('div', 'desc', ROLE_DESC[role] ?? '');
-    if (settings.envLocked?.includes(role)) desc.append(el('span', 'lock', ' · 환경변수로 정해져 있어서 데몬을 다시 켜면 그 값으로 돌아가요'));
+    const desc = el('div', 'desc', enabled ? (!claudeSlots && role === 'light' ? '대화 제목 짓기 같은 가벼운 일' : ROLE_DESC[role] ?? '') : (why ?? ''));
+    if (enabled && settings.envLocked?.includes(role) && claudeSlots) desc.append(el('span', 'lock', ' · 환경변수로 정해져 있어서 데몬을 다시 켜면 그 값으로 돌아가요'));
+    if (enabled && !claudeSlots && list?.listError && role === 'general') desc.append(el('span', 'lock', ` · 목록: ${list.listError}`));
     row.append(lab, sel, desc);
     box.append(row);
   }
@@ -1113,7 +1136,7 @@ async function load() {
   if (k && typeof k === 'object' && typeof k.claude === 'boolean') caps = { claude: k.claude, codex: k.codex === true };
   if (!s?.ok || !c?.ok) banner(`${who()}에 연결되지 않았어요. ${who()}가 켜져 있는지 확인해 주세요.`);
   else banner(null);
-  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderWork(); renderAutoMerge(); renderPhrases(); renderCharacter(); loadCharacters(); }
+  if (s?.ok) { settings = s.data; brainLists = null; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderWork(); renderAutoMerge(); renderPhrases(); renderCharacter(); loadCharacters(); }
   if (c?.ok) {
     await loadCalendars();
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];

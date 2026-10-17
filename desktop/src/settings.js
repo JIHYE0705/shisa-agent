@@ -31,7 +31,7 @@ export function autoMergeNext(list, slug, add) {
 export function sanitizeSettingsPatch(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
   const out = {};
-  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert' && k !== 'lunchAlert' && !WORK_KEYS.includes(k) && k !== 'character') return null;
+  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'brainModels' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert' && k !== 'lunchAlert' && !WORK_KEYS.includes(k) && k !== 'character') return null;
   // 캐릭터(src/character.js 의 id)
   if (p.character !== undefined) {
     if (!okCharacterId(p.character)) return null; // 기본 여덟 또는 사용자 캐릭터 모양(있는지는 데몬이)
@@ -51,6 +51,19 @@ export function sanitizeSettingsPatch(p) {
     }
     if (!Object.keys(m).length) return null;
     out.models = m;
+  }
+  // Claude 가 아닌 뇌의 세부 모델: { provider, models: { quick|general|light: 이름 | null(기본) } } — 그 뇌에 맞는지는 데몬이
+  if (p.brainModels !== undefined) {
+    const b = p.brainModels;
+    if (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'provider' && k !== 'models')) return null;
+    if (!['codex', 'gemini', 'openai', 'genspark'].includes(b.provider) || !b.models || typeof b.models !== 'object' || Array.isArray(b.models)) return null;
+    const m = {};
+    for (const [k, v] of Object.entries(b.models)) {
+      if (!['quick', 'general', 'light'].includes(k) || !(v === null || okModel(v))) return null;
+      m[k] = v;
+    }
+    if (!Object.keys(m).length) return null;
+    out.brainModels = { provider: b.provider, models: m };
   }
   if (p.briefing !== undefined) {
     const ex = p.briefing?.exclude;

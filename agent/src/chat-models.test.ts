@@ -1,7 +1,7 @@
 // 채팅에서 뇌·모델 고르기: 요청 검증 · 스레드별 기억 · 다른 뇌로 보내기(가짜 fetch·가짜 codex) · 목록 · 뇌별 세부 모델 저장
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, type Config } from "./config.ts";
@@ -207,6 +207,14 @@ test("chatModels: 준비된 뇌만 목록을 받고(키 뇌는 가짜 fetch), �
     assert.deepEqual(by.openai!.models, []);
     assert.equal(by["claude-code"]!.ready, false, "claude 명령도 ~/.claude 도 없으면");
     assert.equal(urls.length, 1, "준비 안 된 뇌는 목록을 받지 않는다");
+    // gsk login 파일만 있는 Genspark(고른 적 없음)는 연결된 것으로 보지 않는다
+    const gskHome = mkdtempSync(join(tmpdir(), "gsk-"));
+    try {
+      mkdirSync(join(gskHome, ".genspark-tool-cli"));
+      writeFileSync(join(gskHome, ".genspark-tool-cli", "config.json"), JSON.stringify({ api_key: "gsk-fake-login-key-0000000000" }));
+      const gs = (await chatModels(cfg, { fetch, env: { HOME: gskHome }, home, exists: () => false, commandExists: () => false })).brains.find((b) => b.provider === "genspark")!;
+      assert.equal(gs.ready, false);
+    } finally { rmSync(gskHome, { recursive: true, force: true }); }
     // 10분 기억(다시 받지 않음) · fresh 면 다시
     await chatModels(cfg, { fetch, env: {}, home, exists: (p) => p in files, readFile: (p) => files[p]!, commandExists: () => true });
     assert.equal(urls.length, 1);

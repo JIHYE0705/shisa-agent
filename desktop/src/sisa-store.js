@@ -189,6 +189,19 @@ export function withDaemonBrain(cfg, patch) {
   const brain = { ...obj(c.brain), ...patch.brain };
   for (const [k, v] of Object.entries(brain)) if (v === null || v === undefined) delete brain[k]; // null = 그 키를 지운다
   const next = { ...c, brain };
+  // Claude 가 아닌 뇌의 모델은 그 뇌 칸(brainModels[뇌].general)에 — models.general(Claude Code 가 쓰는 값)은 건드리지 않는다(데몬 settings.ts 와 같게)
+  const p = brain.provider;
+  if (patch.general !== undefined && p && p !== 'claude-code' && p !== 'anthropic' && p !== 'local') {
+    const all = { ...obj(c.brainModels) };
+    const mine = { ...obj(all[p]) };
+    if (patch.general) mine.general = patch.general;
+    else delete mine.general;
+    if (Object.keys(mine).length) all[p] = mine;
+    else delete all[p];
+    if (Object.keys(all).length) next.brainModels = all;
+    else delete next.brainModels;
+    return next;
+  }
   if (patch.general !== undefined) {
     const models = { ...obj(c.models) };
     if (patch.general) models.general = patch.general;

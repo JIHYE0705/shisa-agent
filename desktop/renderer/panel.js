@@ -25,7 +25,7 @@ import { BACKLOG, rulesChip, overlayRules, hitsLabel, readBacklogOpen, writeBack
 import { attachSlashMenu } from './slash-menu.js';
 import { createAttachTray } from './attach-tray.js';
 import { attachUrl, chipView, attachSummary } from '../src/attachments.js';
-import { cleanModels } from '../src/session.js';
+import { cleanChatModels, pickGroups, encodePick, decodePick, pickSendOpts, okPickModel } from '../src/chat-pick.js';
 import { normalizeActions, upsertAction, placeActions, cardView, decideResult, aroundAnswer, foldedPermission, foldApprovals } from '../src/actions.js';
 import { normalizePermissionRules, ruleUsage, withoutPending } from '../src/permissions.js';
 import { normAgents, agentStrip, agentCard, canStopAgent, placeAgents, agentsSig, normSessions, sessionCard, placeSessions, sessionsSig, sessionsPlaceSig } from '../src/agents.js';
@@ -2102,6 +2102,7 @@ function selectThread(id, opts = {}) {
 function newChat() {
   if (section !== 'chat') goto('chat');
   if (showArchived) toggleArchived(false);
+  newChatPick = ''; // 새 대화는 기본에서
   selectThread(null);
   drafts.set(null, '');
   chatInput.value = '';
@@ -2267,6 +2268,7 @@ async function deleteThread(id) {
 // 머리말: 종류 아이콘 · 제목(눌러서 이름 바꾸기) · 할 일 대화면 그 할 일 칩
 function renderThreadHead() {
   const t = currentThread();
+  renderPickSelect(); // 그 대화에 기억한 뇌·모델
   $('th-kind').textContent = t ? KIND_ICONS[t.kind] ?? '' : '💬';
   if (thTitleInput.hidden) {
     thTitle.textContent = t ? t.title : '새 대화';
@@ -2350,6 +2352,7 @@ function metaEl(m, status) {
   return h('div.msg-meta', null,
     m.via === 'cli' ? h('span.via-cli', { text: 'Claude Code', title: '터미널의 Claude Code(claude --resume)에서 이어 간 말을 불러온 거예요' }) : null,
     m.edited ? h('span.edited', { text: '수정됨', title: `${stamp(m.edited)?.title ?? ''} 고쳐서 다시 보낸 말이에요`.trim() }) : null,
+    m.by ? h('span.by', { text: m.by, title: '이 답을 한 AI·모델' }) : null,
     st?.status ? h(`span.st${st.tone ? `.s-${st.tone}` : ''}`, { 'data-s': st.status, ...(st.title ? { title: st.title } : {}) }) : null, timeEl(m.at));
 }
 
@@ -2467,8 +2470,7 @@ async function saveEdit() {
     }
   } else {
     const clientId = newClientId();
-    const model = $('chat-model').hidden ? null : $('chat-model').value || null;
-    const opts = { clientId, ...(model ? { model } : {}) };
+    const opts = { clientId }; // 고른 뇌·모델은 그 대화에 기억돼 있다(데몬이 쓴다)
     try { r = await cy.chatEdit(tid, e.n, text, opts); } catch { r = { ok: false }; }
     // 그 턴이 띄운 백그라운드 에이전트가 아직 돈다 — 멈춰도 되는지 묻는다(안 멈추면 옛 물음의 결과가 새 답 뒤에 끼어든다)
     if (r?.status === 409 && r.data?.error === 'agents_running') {
@@ -2709,7 +2711,8 @@ function renderChat(opts = {}) {
     items.push(h('div.msg-row.assistant', null,
       h(`div.msg.assistant${m.error ? '.error' : ''}`, null,
         md(h('div'), m.text),
-        m.show ? h('button.go', { type: 'button', text: `${SECTION_LABELS[m.show]} 보기`, onclick: () => goto(m.show) }) : null),
+        m.show ? h('button.go', { type: 'button', text: `${SECTION_LABELS[m.show]} 보기`, onclick: () => goto(m.show) }) : null,
+        m.retry ? h('button.go.retry', { type: 'button', text: '기본 모델로 다시 보내기', onclick: () => retryDefault(m.retry) }) : null),
       metaEl(m)));
     for (const a of cards.after) items.push(actionCard(a));
     sessionsAfter(mi);
@@ -2789,7 +2792,7 @@ function applyBrain(v) {
   if (section === 'setup') renderSetupView(false);
 }
 cy.brain?.().then(applyBrain).catch(() => {});
-cy.onBrain?.(applyBrain);
+cy.onBrain?.((b) => { applyBrain(b); loadChatModels(); }); // 뇌가 바뀌면 드롭다운의 「기본」·목록도
 
 // AI 없이 고른 말: 내 말은 바로 「보냄」, 시사는 1~2초 입력 중(점 세 개)을 보이고 답한다
 let cannedTyping = null; // 답을 기다리는 타이머(입력 중 표시)
@@ -2899,8 +2902,9 @@ async function sendChat() {
   renderChat();
   scrollChat(true);
   let r;
-  const model = $('chat-model').hidden ? null : $('chat-model').value || null;
-  try { r = await cy.chatSend(text, { threadId: tid, clientId, ...(model ? { model } : {}), ...(atts.length ? { attachments: atts.map((a) => a.id) } : {}) }); } catch { r = { ok: false }; }
+  // 고른 뇌·모델: 이미 있는 대화는 데몬이 기억한 것을 쓰고, 새 대화면 첫 말과 함께 보내 그 대화에 기억시킨다
+  const pick = tid === null ? pickSendOpts(newChatPick) : {};
+  try { r = await cy.chatSend(text, { threadId: tid, clientId, ...pick, ...(atts.length ? { attachments: atts.map((a) => a.id) } : {}) }); } catch { r = { ok: false }; }
   if (r?.ok && r.chatId) {
     messages = tagLocal(messages, { text, at, clientId }, r.chatId); // 대기 중·지금 보내기·취소가 이 말을 찾게
     messages = dropFailed(messages); // 앞서 못 보낸 말·실패 줄은 이제 걷는다
@@ -2911,6 +2915,8 @@ async function sendChat() {
       selectedId = r.threadId;
       store.set('thread', selectedId);
       drafts.delete(null);
+      if (pick.provider) threads = upsertThread(threads, { ...(currentThread() ?? { id: r.threadId, updated: new Date().toISOString() }), pick: { provider: pick.provider, ...(pick.pickModel ? { model: pick.pickModel } : {}) } });
+      newChatPick = '';
       loadThreadsSoon();
       renderThreadList();
       renderThreadHead();
@@ -2936,19 +2942,79 @@ function autosize() {
   chatInput.style.overflowY = chatInput.scrollHeight + 2 > 260 ? 'auto' : 'hidden';
 }
 chatInput.addEventListener('input', () => { autosize(); drafts.set(selectedId, chatInput.value); renderSendButton(); });
-// 모델 고르기(작업 세션 창과 같은 목록). 고른 건 이 컴퓨터에 기억, 목록에 없어졌으면 대화 기본값
-async function loadChatModels() {
-  const sel = $('chat-model');
-  const res = await cy.listModels?.().catch(() => null);
-  const models = res?.ok ? cleanModels(res.data) : null;
-  sel.hidden = !models;
-  if (!models) return;
-  let saved = null;
-  try { saved = localStorage.getItem('chatModel'); } catch { /* 무시 */ }
-  sel.replaceChildren(...models.choices.map((c) => h('option', { value: c.id, text: c.label })));
-  sel.value = models.choices.some((c) => c.id === saved) ? saved : models.defaults.chat;
+// 모델 고르기(입력줄 옆 작은 드롭다운): 지금 뇌·연결된 다른 뇌의 모델(데몬 GET /chat/models). 고른 건 그 대화에 기억(데몬 chat_threads.pick),
+// 새 대화는 기본에서 시작하고 첫 말과 함께 보낸다. 준비 안 된 뇌는 비활성 + 이유
+// var: renderThreadHead 가 이 줄보다 먼저 불려도 되게(let 이면 초기화 전 접근 오류)
+var chatModelList = null; // cleanChatModels 결과
+var newChatPick = ''; // 아직 스레드가 없는 새 대화에서 고른 값(encodePick 모양)
+const pickSel = $('chat-model'), pickCustom = $('chat-model-custom');
+const pickValueNow = () => (selectedId ? encodePick(currentThread()?.pick) : newChatPick);
+function renderPickSelect() {
+  const pickSel = $('chat-model');
+  if (!chatModelList) { pickSel.hidden = true; return; }
+  const cur = pickValueNow();
+  const { head, groups } = pickGroups(chatModelList, cur);
+  const opt = (r) => h('option', { value: r.value, text: r.text, ...(r.disabled ? { disabled: true } : {}) });
+  pickSel.replaceChildren(opt(head), ...groups.map((g) => h('optgroup', { label: g.label, ...(g.note ? { title: g.note } : {}) }, g.rows.map(opt))));
+  pickSel.value = cur;
+  if (pickSel.value !== cur) pickSel.value = '';
+  const sel = pickSel.selectedOptions[0];
+  pickSel.title = sel && sel.value ? `이 대화는 ${sel.textContent} 로 보내요` : '이 대화에 쓸 AI·모델(기본은 설정의 모델)';
+  pickSel.classList.toggle('picked', !!cur);
+  pickSel.hidden = false;
 }
-$('chat-model').addEventListener('change', () => { try { localStorage.setItem('chatModel', $('chat-model').value); } catch { /* 무시 */ } });
+async function loadChatModels(fresh = false) {
+  const res = await cy.chatModels?.(fresh).catch(() => null);
+  chatModelList = res?.ok ? cleanChatModels(res.data) : null;
+  renderPickSelect();
+}
+// 그 대화에 기억(없는 대화면 새 대화 값으로). 실패하면 원래대로
+async function applyPick(value) {
+  const p = decodePick(value);
+  if (!selectedId) { newChatPick = value; renderPickSelect(); return; }
+  const id = selectedId;
+  let r;
+  try { r = await cy.chatThreadEdit(id, { pick: p ? { provider: p.provider, ...(p.model ? { model: p.model } : {}) } : null }); } catch { r = { ok: false }; }
+  if (r?.ok && r.data?.thread) threads = upsertThread(threads, r.data.thread);
+  else if (!r?.ok) showAttError(r?.data?.error ? `모델을 못 바꿨어요: ${r.data.error}` : '모델을 못 바꿨어요');
+  renderPickSelect();
+}
+pickSel.addEventListener('change', () => {
+  const p = decodePick(pickSel.value);
+  if (p?.custom) {
+    pickCustom.dataset.provider = p.provider;
+    pickCustom.value = '';
+    pickCustom.placeholder = '모델 이름';
+    pickCustom.hidden = false;
+    pickCustom.focus();
+    return;
+  }
+  pickCustom.hidden = true;
+  applyPick(pickSel.value);
+});
+pickSel.addEventListener('focus', () => { if (!chatModelList) loadChatModels(); });
+pickCustom.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { pickCustom.hidden = true; renderPickSelect(); return; }
+  if (e.key !== 'Enter' || e.isComposing) return;
+  e.preventDefault();
+  const m = pickCustom.value.trim();
+  if (!okPickModel(m)) { showAttError('모델 이름은 영문·숫자·.-_:/ 로 100자까지예요'); return; }
+  pickCustom.hidden = true;
+  applyPick(`${pickCustom.dataset.provider}|${m}`);
+});
+// 고른 모델이 답하지 못함 → 그 말을 기본으로 다시(그 턴을 고쳐 보내는 길 — 기억도 기본으로)
+async function retryDefault(retry) {
+  const tid = selectedId;
+  if (!tid || !retry) return;
+  let r;
+  try { r = await cy.chatEdit(tid, retry.n, retry.text, { clientId: newClientId(), useDefault: true }); } catch { r = { ok: false }; }
+  if (!r?.ok) { showAttError('다시 보내지 못했어요'); return; }
+  const t = currentThread();
+  if (t?.pick) { const { pick: _p, ...rest } = t; threads = upsertThread(threads, rest); }
+  messages = messages.filter((m) => !(m.local && m.retry));
+  renderPickSelect();
+  loadMessages();
+}
 loadChatModels();
 // `/` 로 시작하면 슬래시 명령 자동완성(열려 있는 동안 Enter 는 넣기 — 아래 보내기보다 먼저 가로챈다)
 if (cy.listCommands) attachSlashMenu(chatInput, { listCommands: () => cy.listCommands() });
@@ -2998,7 +3064,7 @@ function onChatEvent(ev) {
   const tid = typeof ev?.threadId === 'string' ? ev.threadId : null;
   if (!tid || !['done', 'error', 'stopped'].includes(ev.status)) return; // stopped: "답을 멈췄어요" 시스템 줄을 다시 불러온다
   if (tid === selectedId) {
-    if (ev.status === 'error') { messages = appendLocal(messages, { role: 'assistant', text: ev.text || '답을 못 만들었어요.', at: new Date().toISOString(), error: true }); renderChat(); }
+    if (ev.status === 'error') { messages = appendLocal(messages, { role: 'assistant', text: ev.text || '답을 못 만들었어요.', at: new Date().toISOString(), error: true, ...(ev.retry ? { retry: ev.retry } : {}) }); renderChat(); }
     // 새 답은 맨 아래 — 승인 카드를 보느라 위에 있어도 답으로 내려간다
     Promise.resolve(loadMessages()).finally(() => scrollChat(true));
     loadAgentsSoon();

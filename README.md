@@ -31,6 +31,7 @@ v0.3.0에서 바뀐 것:
 - 일정 알림: 일정 10분 전(설정에서 5·15·30분 전이나 여러 번으로 바꾸거나 끌 수 있습니다)에 캐릭터가 영상과 함께 알립니다. 캘린더는 구글·Outlook ICS 주소를 여러 개 연결할 수 있습니다.
 - 근무 시간: 출근 인사, 점심시간 알림, 퇴근 10분 전 인사를 합니다. 아래 [근무 시간](#근무-시간)에 적었습니다.
 - 채팅: 캐릭터를 두 번 눌러 말을 걸면 답이 머리 위 말풍선으로 뜹니다. 패널 채팅에서는 길게 대화하고 파일도 붙일 수 있습니다. 입력창으로 한 말은 늘 같은 대화방(「캐릭터 대화」)에 이어지고, 지난 대화는 목록에 남습니다.
+- 패널 채팅 입력줄 옆 드롭다운에서 그 대화에 쓸 AI와 모델을 고를 수 있습니다. 키나 로그인이 된 다른 AI(Codex, Gemini 등)로도 그 대화만 보낼 수 있고, 고른 것은 대화마다 기억합니다. 답 아래에 어떤 모델이 답했는지 작게 나옵니다. 기본 AI 설정은 그대로입니다.
 - 코드 작업: Claude Code가 있으면 레포 코드를 고쳐 달라고 시킬 수 있습니다. 별도 워크트리에서 고치고 테스트를 돌린 다음, 통과하면 PR을 올리고 "머지할까요?" 하고 묻습니다.
 
 | 패널: 할 일 | 패널: 개요·브리핑 | 패널: 채팅 |
@@ -407,6 +408,7 @@ cd ~/shisa-agent && ./ops/uninstall.sh
 | `connectors.<기능>` | `CY_AGENT_SLACK_USER_TOKEN`, `CY_AGENT_CALENDAR_ICS_URL` | 전부 off | 위 [연결](#연결) 참고 |
 | `slackBotToken` / `slackAppToken` / `slackUserId` | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_USER_ID` |  | (선택) Slack 봇 DM·할 일 캔버스. [slack.md](docs/connect/slack.md) |
 | `models.quick` / `.general` / `.code` / `.light` | `CY_AGENT_MODEL_QUICK` / `_GENERAL` / `_CODE` / `_LIGHT` | Sonnet / Sonnet / Opus / Haiku | 더블클릭 대화 / 브리핑·채팅 / 코드 고치기 / 가벼운 일 (Claude Code일 때) |
+| `brainModels.<뇌>.quick` / `.general` / `.light` |  | 그 AI 기본 | Codex·Gemini·OpenAI·Genspark일 때 쓸 모델. 설정 창 「세부 모델」에서 지금 AI 칸만 바뀌고 다른 AI 값은 그대로입니다 |
 | `autoMerge` |  | `[]` | 묻지 않고 머지까지 할 레포(`owner/name`). 설정 창이나 채팅으로 바꿀 수 있습니다 |
 | `briefing.exclude` |  | `[]` | 브리핑에서 뺄 출처(`mail`·`calendar`·`slack`·`issues`·`sessions`) |
 | `calendarAlert.minutesBefore` |  | `[10]` | 일정 몇 분 전에 알릴지(양의 정수 분, 몇 개든, 예: `[15, 5]`, 하루 전은 `[1440]`). `[]`이면 알림을 끕니다. 설정 창 「일정 알림」에서 고칩니다 |

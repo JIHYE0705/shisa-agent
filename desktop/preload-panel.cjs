@@ -56,6 +56,10 @@ contextBridge.exposeInMainWorld('cy', {
     threadId: opts?.threadId == null ? null : String(opts.threadId),
     todoId: opts?.todoId == null ? null : String(opts.todoId),
     model: opts?.model == null ? null : String(opts.model),
+    // 채팅 입력줄에서 고른 뇌·모델(이 대화에 기억) · useDefault = 기본으로(기억도 지움)
+    provider: opts?.provider == null ? null : String(opts.provider),
+    pickModel: opts?.pickModel == null ? null : String(opts.pickModel),
+    useDefault: opts?.useDefault === true,
     clientId: opts?.clientId == null ? null : String(opts.clientId), // 이 말의 id(낙관적 사본 ↔ 데몬 큐·기록 짝 맞추기)
     attachments: Array.isArray(opts?.attachments) ? opts.attachments.map(String) : null, // 먼저 올려 둔 첨부 id(chatAttach)
   }),
@@ -65,12 +69,14 @@ contextBridge.exposeInMainWorld('cy', {
   openAttachment: (threadId, file) => ipcRenderer.invoke('attachment-open', String(threadId), String(file)),
   chatQueue: () => ipcRenderer.invoke('chat-queue'), // 줄 선 말·지금 답하는 말(GET /chat/queue) → { queue, running }
   listModels: () => ipcRenderer.invoke('session-models'), // 고를 수 있는 모델(GET /models)
+  chatModels: (fresh) => ipcRenderer.invoke('chat-models', fresh === true), // 채팅에서 고를 수 있는 뇌·모델(GET /chat/models)
   listCommands: () => ipcRenderer.invoke('slash-commands'), // 슬래시 명령 자동완성 목록(GET /commands)
   // 대화 스레드: 목록(archived=true 면 보관함) · 만들기({title?, kind?, todoId?}) · 이름/보관({title?, archived?}) · 삭제 · 말(before = 순번)
   onThreads: on('threads'),
   chatThreads: (archived) => ipcRenderer.invoke('chat-threads', archived === true),
   chatThreadCreate: (body) => ipcRenderer.invoke('chat-thread-create', body && typeof body === 'object' ? { title: body.title, kind: body.kind, todoId: body.todoId } : {}),
-  chatThreadEdit: (id, patch) => ipcRenderer.invoke('chat-thread-edit', String(id), patch && typeof patch === 'object' ? { title: patch.title, archived: patch.archived } : {}),
+  // pick: 이 대화에서 고른 뇌·모델 { provider, model? } · null = 기본으로
+  chatThreadEdit: (id, patch) => ipcRenderer.invoke('chat-thread-edit', String(id), patch && typeof patch === 'object' ? { title: patch.title, archived: patch.archived, ...('pick' in patch ? { pick: patch.pick && typeof patch.pick === 'object' ? { provider: patch.pick.provider, model: patch.pick.model } : null } : {}) } : {}),
   chatThreadDelete: (id) => ipcRenderer.invoke('chat-thread-delete', String(id)),
   chatThreadMessages: (id, before) => ipcRenderer.invoke('chat-thread-messages', String(id), Number.isInteger(before) ? before : null),
   // ↻ 이 대화가 터미널 Claude Code 에서 이어 간 말 불러오기 → { ok, data: { imported } }

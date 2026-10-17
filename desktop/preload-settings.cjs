@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('cy', {
   // patch = { models?: { quick|general|code|light: id }, briefing?: { exclude: [...] } } → { ok, status, data }
   saveSettings: (patch) => ipcRenderer.invoke('settings-put', patch && typeof patch === 'object' ? JSON.parse(JSON.stringify(patch)) : null),
   getConnections: () => ipcRenderer.invoke('connections-get'),
+  chatModels: () => ipcRenderer.invoke('settings-chat-models'), // 뇌마다 모델 목록(GET /chat/models) — 세부 모델 칸의 고를 거리
   checkConnection: (id) => ipcRenderer.invoke('connections-check', id == null ? null : String(id)), // id: net|claude|services|gh|local, 없으면 전부
   // 행동 지침: 목록 · 추가 { text, scope? } · 고치기(id, { text?, scope?, active? }) · 지우기(id) → { ok, status, data }
   getGuidelines: () => ipcRenderer.invoke('guidelines-get'),
