@@ -31,7 +31,7 @@ export const pickGensparkModel = (ids) => GENSPARK_PREFERRED.find((m) => ids.inc
 // gsk login(공식 CLI)이 남긴 키(~/.genspark-tool-cli/config.json 의 api_key). 읽기만 한다. 없으면 ''
 export function gskLoginKey(home = os.homedir(), read = fs.readFileSync) {
   try {
-    const v = JSON.parse(read(path.join(home, '.genspark-tool-cli', 'config.json'), 'utf8'))?.api_key;
+    const v = JSON.parse(String(read(path.join(home, '.genspark-tool-cli', 'config.json'), 'utf8')).replace(/^\uFEFF/, ''))?.api_key; // 메모장 등이 붙인 BOM
     return typeof v === 'string' && /^gsk-\S+$/.test(v.trim()) ? v.trim() : '';
   } catch {
     return '';
