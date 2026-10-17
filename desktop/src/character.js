@@ -211,7 +211,9 @@ export function activityReducer(s, a) {
       const dancing = !!danceId && danceId !== s.endedDance;
       const danceClip = DANCE_CLIPS.includes(a.danceClip) ? a.danceClip : 'plan';
       const danceVariant = Number.isInteger(a.danceVariant) && a.danceVariant >= 0 ? a.danceVariant : 0; // 데몬이 고른 영상 번호
-      return { ...s, studying, dancing, danceId, danceClip, danceVariant, connected: true };
+      // 데몬이 새 춤을 고르면(다시 붙은 뒤 칩·채팅 「춤」·일정 알림) 앱이 혼자 추던 춤은 내린다 — 데몬이 고른 영상·한마디가 보이게
+      const fresh = dancing && danceId !== s.danceId;
+      return { ...s, studying, dancing, danceId, danceClip, danceVariant, connected: true, ...(fresh && s.localDance ? { localDance: false } : {}) };
     }
     case 'danceEnd': {
       let n = s;

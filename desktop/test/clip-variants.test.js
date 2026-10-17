@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { characterAssets, clipFor, clipList, pickVariant, variantsOf, activityReducer, initialActivity, danceVariantOf, danceClipOf, CHARACTER_IDS, customAssets, userClipTable } from '../src/character.js';
+import { characterAssets, clipFor, clipList, pickVariant, variantsOf, activityReducer, initialActivity, danceVariantOf, danceClipOf, viewOf, CHARACTER_IDS, customAssets, userClipTable } from '../src/character.js';
 import { CHARACTER_CLIPS } from '../src/character-clips.js';
 import { resolveAsset } from '../src/assets.js';
 
@@ -85,6 +85,17 @@ test('데몬 state.danceVariant → 그 번호 영상, 로컬 춤은 앱이 고�
   s = activityReducer(initialActivity(), { type: 'localDance', on: true, clip: 'dance', variant: 1 });
   assert.equal(danceVariantOf(s), 1);
   assert.equal(danceClipOf(s), 'dance');
+  // 앱이 혼자 추는 중에 데몬이 다시 붙어 새 춤을 고르면 데몬 것(영상·한마디 번호)으로 바꾼다. 같은 춤이 다시 와도(재연결) 그대로
+  s = activityReducer(activityReducer(initialActivity(), { type: 'connection', connected: false }), { type: 'localDance', on: true, clip: 'dance', variant: 0 });
+  s = activityReducer(s, { type: 'state', activity: 'idle', runs: [] });
+  assert.equal(danceVariantOf(s), 0, '데몬이 춤추지 않으면 로컬 춤 그대로');
+  assert.equal(viewOf(s), 'dancing');
+  s = activityReducer(s, { type: 'state', activity: 'dancing', runs: [], danceId: 'd9', danceClip: 'dance', danceVariant: 1 });
+  assert.equal(s.localDance, false);
+  assert.equal(danceVariantOf(s), 1);
+  s = activityReducer(s, { type: 'localDance', on: true, clip: 'cheer', variant: 0 });
+  s = activityReducer(s, { type: 'state', activity: 'dancing', runs: [], danceId: 'd9', danceClip: 'dance', danceVariant: 1 });
+  assert.equal(danceClipOf(s), 'cheer', '같은 데몬 춤이 다시 오면 로컬 춤을 내리지 않는다');
   // 점심도 춤 자리 종류
   s = activityReducer(initialActivity(), { type: 'state', activity: 'dancing', runs: [], danceId: 'l', danceClip: 'lunch', danceVariant: 0 });
   assert.equal(danceClipOf(s), 'lunch');
