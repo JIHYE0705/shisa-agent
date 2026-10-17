@@ -6,6 +6,7 @@ import { loadConfig } from "./config.ts";
 import { setCharacter } from "./characters.ts";
 import type { PendingAction } from "./actions.ts";
 import { Chat, CHAT_PROPOSALS, CHAT_SYSTEM, chatPrompt, threadTitle, todoThreadFor, type ChatEvent, type ChatReply, type Converse } from "./chat.ts";
+import { linkNewTodos } from "./chat.ts";
 
 const sent = (r: ReturnType<Chat["send"]>) => { if ("error" in r) throw new Error(r.error); return r; };
 
@@ -610,4 +611,12 @@ test("로컬 뇌·Gemini 면 대화 제목 짓기 run 을 만들지 않는다(�
     assert.equal(await suggestTitle(cfg, "안녕", "응"), undefined, provider);
     assert.equal(runs.listRuns({ limit: 200 }).length, before, provider);
   }
+});
+
+// 실제 앱(OpenAI)에서 「주간 보고 프로젝트 만들고 할 일 하나 넣어 줘」가 프로젝트와 할 일을 따로 만들었다(add 의 project 가 null)
+test("같은 답에서 프로젝트를 하나 만들면 프로젝트 없는 새 할 일은 거기에 묶는다", () => {
+  const ops = [{ op: "add", title: "주간 보고서 작성", project: null }, { op: "add", title: "b", project: "" }, { op: "add", title: "c", project: "다른 것" }, { op: "edit", id: "x", project: null }];
+  assert.deepEqual(linkNewTodos(ops, [{ id: "proj:1" }]).map((o) => o.project), ["proj:1", "proj:1", "다른 것", null]);
+  assert.deepEqual(linkNewTodos(ops, []), ops, "새 프로젝트가 없으면 그대로");
+  assert.deepEqual(linkNewTodos(ops, [{ id: "a" }, { id: "b" }]), ops, "둘 이상이면 어느 것인지 모른다");
 });

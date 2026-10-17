@@ -1154,7 +1154,7 @@ ${meetingsContext(this.store) || "(로컬에 저장된 다가오는 회의 없�
     };
   }
   // 채팅이 낸 project_ops 적용 — 할 일 op 보다 먼저(같은 답에서 만든 프로젝트에 할 일을 묶을 수 있게)
-  applyProjectOps(ops: unknown[]): { applied: string[]; errors: string[] } {
+  applyProjectOps(ops: unknown[]): { applied: string[]; errors: string[]; added: { id: string; name: string }[] } {
     const r = applyProjectOps(this.projects, ops);
     if (r.applied.length) this.changed();
     return r;
