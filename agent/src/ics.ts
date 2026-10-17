@@ -12,7 +12,7 @@ export type IcsProp = { name: string; params: Record<string, string>; value: str
 export type VEvent = {
   uid: string; summary: string; start: IcsTime; end?: IcsTime; durationMs?: number;
   rrule?: Record<string, string>; exdates: IcsTime[]; recurrenceId?: IcsTime;
-  status?: string; transp?: string; organizer?: string; attendees: { email: string; partstat: string; name?: string }[];
+  status?: string; transp?: string; organizer?: string; organizerName?: string; attendees: { email: string; partstat: string; name?: string }[];
   location?: string; description?: string; url?: string; conference?: string;
 };
 export type IcsCalendar = { events: VEvent[]; tzOffsets: Map<string, number> }; // VTIMEZONE TZID → 표준시 오프셋(분)
@@ -116,7 +116,7 @@ export function parseIcs(text: string): IcsCalendar {
       case "RECURRENCE-ID": ev.recurrenceId = parseTime(p.value, p.params) ?? undefined; break;
       case "STATUS": ev.status = p.value.toUpperCase(); break;
       case "TRANSP": ev.transp = p.value.toUpperCase(); break;
-      case "ORGANIZER": ev.organizer = mailto(p.value); break;
+      case "ORGANIZER": { ev.organizer = mailto(p.value); const cn = (p.params.CN ?? "").replace(/^"|"$/g, "").trim(); if (cn) ev.organizerName = cn; break; }
       case "ATTENDEE": { const cn = (p.params.CN ?? "").replace(/^"|"$/g, "").trim(); ev.attendees.push({ email: mailto(p.value), partstat: (p.params.PARTSTAT ?? "NEEDS-ACTION").toUpperCase(), ...(cn ? { name: cn } : {}) }); break; }
       case "LOCATION": ev.location = unescapeText(p.value); break;
       case "DESCRIPTION": ev.description = unescapeText(p.value); break;
@@ -297,7 +297,9 @@ function toCalEvent(ev: VEvent, id: string, startMs: number, endMs: number, opts
   if (ev.attendees.length) out.attendees = ev.attendees.filter((a) => a.email !== me && a.email !== ev.organizer).length + (ev.organizer && ev.organizer !== me ? 1 : 0);
   const desc = ev.description?.trim();
   if (desc) out.description = desc;
-  const names = ev.attendees.filter((a) => a.email !== me).map((a) => a.name || a.email).filter(Boolean);
+  // 참석자 이름(주최자 먼저, 나 빼고). 이름이 없으면 메일 주소
+  const names = [...(ev.organizer && ev.organizer !== me ? [ev.organizerName || ev.organizer] : []),
+    ...ev.attendees.filter((a) => a.email !== me && a.email !== ev.organizer).map((a) => a.name || a.email)].filter(Boolean);
   if (names.length) out.attendeeNames = [...new Set(names)];
   return out;
 }

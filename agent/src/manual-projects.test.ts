@@ -170,8 +170,8 @@ test("가짜 캘린더(ICS 둘): 캘린더 이름·설명·참석자 이름이 �
   assert.equal(r.ok, true);
   assert.deepEqual(r.events.map((e) => [e.title, e.calendar]), [["킥오프", "회사"], ["이사 상담", "캘린더 2"]]);
   const k = r.events[0];
-  assert.deepEqual(k.attendees, ["김하나"], "참석자 이름(나 빼고)");
-  assert.equal(k.draft.note, "안건 정리\n자료 공유\n장소: 본사 2층\n참석자: 김하나");
+  assert.deepEqual(k.attendees, ["박팀장", "김하나"], "참석자 이름(주최자 먼저, 나 빼고)");
+  assert.equal(k.draft.note, "안건 정리\n자료 공유\n장소: 본사 2층\n참석자: 박팀장, 김하나");
   assert.deepEqual([k.draft.start, k.draft.due, k.draft.source?.calendar], ["2026-10-20", "2026-10-20", "회사"]);
   // 캘린더 안 붙음
   const off = await calendarPick(new CalendarSync(cfgOf(), store, { source: null }), now);
