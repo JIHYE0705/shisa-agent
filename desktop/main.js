@@ -1,6 +1,6 @@
 // 데스크톱 마스코트 — 메인 프로세스.
 // 데몬 SSE 를 여기서 받고 IPC 로 렌더러에 넘긴다. 렌더러는 네트워크 접근 없음.
-import { app, BrowserWindow, Menu, Tray, clipboard, dialog, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, clipboard, dialog, globalShortcut, ipcMain, nativeImage, net, powerMonitor, protocol, screen, session, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -465,6 +465,14 @@ function initialPosition() {
   return restorePosition(state.pos, areas, SIZE) ?? defaultPosition(screen.getPrimaryDisplay().workArea, SIZE);
 }
 
+// 오버레이를 다시 맨 위로(윈도우만, 보일 때만). moveTop 은 SWP_NOACTIVATE 라 포커스 안 받는 창이 앞 창을 뺏지 않는다.
+// 다시 보일 때·화면 구성 바뀜·절전/잠금 뒤에만 — 주기적으로는 안 한다(카톡 「항상 위」 같은 남의 항상 위 창과 싸우지 않게)
+function keepOnTop(w) {
+  if (process.platform !== 'win32' || !w || w.isDestroyed() || !w.isVisible()) return;
+  w.setAlwaysOnTop(true, 'screen-saver');
+  w.moveTop();
+}
+
 function createWindow() {
   winLoaded = false;
   const { x, y } = initialPosition();
@@ -504,6 +512,7 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => win.showInactive());
+  win.on('show', () => keepOnTop(win)); // showInactive 마다(트레이·메뉴 보이기)
   win.webContents.on('did-finish-load', () => {
     winLoaded = true;
     send('connection', { connected });
@@ -2058,6 +2067,10 @@ if (SQUIRREL) {
     setInterval(checkForUpdate, 60 * 60 * 1000);
     refreshCaps(true);
     if (openSetupAtLaunch({ firstRun, env: process.env })) setTimeout(() => showPanel('setup'), 400);
+
+    // 화면 구성 바뀜·절전/잠금 뒤 캐릭터를 다시 맨 위로(윈도우)
+    for (const ev of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(ev, () => keepOnTop(win));
+    for (const ev of ['resume', 'unlock-screen']) powerMonitor.on(ev, () => keepOnTop(win));
 
     // 디스플레이 구성 바뀌면 화면 밖으로 나갔는지 확인
     screen.on('display-removed', () => {
