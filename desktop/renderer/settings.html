@@ -88,10 +88,22 @@
       <div id="cal-err" class="ph-err" role="status"></div>
     </section>
 
-    <section class="card" aria-labelledby="h-lunch">
-      <h2 id="h-lunch">점심시간 알림</h2>
-      <p class="hint">점심시간(12시대)에 하루 한 번 <span class="who">시사</span>가 점심 영상과 함께 점심 인사를 해요. 같은 날 앱을 다시 켜도 또 뜨지 않아요.</p>
-      <label class="toggle"><input id="lunch-on" type="checkbox">점심시간 알림 켜기</label>
+    <section class="card" aria-labelledby="h-work">
+      <h2 id="h-work">근무 시간</h2>
+      <p class="hint">정한 시각에 맞춰 <span class="who">시사</span>가 인사해요. 근무 요일에 하루 한 번씩만 떠요.</p>
+      <div class="work-times">
+        <label class="work-time">출근 <input id="work-start" type="time" required aria-label="출근 시각"></label>
+        <label class="work-time">점심 <input id="work-lunch" type="time" required aria-label="점심 시각"></label>
+        <label class="work-time">퇴근 <input id="work-end" type="time" required aria-label="퇴근 시각"></label>
+      </div>
+      <div id="work-days" class="toggles work-days" role="group" aria-label="근무 요일"></div>
+      <div class="toggles work-alerts">
+        <label class="toggle"><input id="start-on" type="checkbox">출근 인사</label>
+        <label class="toggle"><input id="lunch-on" type="checkbox">점심시간 알림</label>
+        <label class="toggle"><input id="leave-on" type="checkbox">퇴근 인사</label>
+      </div>
+      <p class="hint">출근 시각이 지나면 아침 인사를 해요. 점심은 점심 시각부터 한 시간 안에 점심 영상과 함께, 퇴근 10분 전에는 일정 알림 영상과 함께 인사해요. 같은 날 앱을 다시 켜도 또 뜨지 않아요.</p>
+      <div id="work-err" class="ph-err" role="status"></div>
     </section>
 
     <section id="am-card" class="card" aria-labelledby="h-am">

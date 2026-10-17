@@ -31,7 +31,7 @@ export function autoMergeNext(list, slug, add) {
 export function sanitizeSettingsPatch(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
   const out = {};
-  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert' && k !== 'lunchAlert' && k !== 'character') return null;
+  for (const k of Object.keys(p)) if (k !== 'models' && k !== 'briefing' && k !== 'phrases' && k !== 'autoMerge' && k !== 'todayReminder' && k !== 'readSessions' && k !== 'calendarAlert' && k !== 'lunchAlert' && !WORK_KEYS.includes(k) && k !== 'character') return null;
   // 캐릭터(src/character.js 의 id)
   if (p.character !== undefined) {
     if (!okCharacterId(p.character)) return null; // 기본 여덟 또는 사용자 캐릭터 모양(있는지는 데몬이)
@@ -84,6 +84,22 @@ export function sanitizeSettingsPatch(p) {
     if (typeof p.lunchAlert !== 'boolean') return null;
     out.lunchAlert = p.lunchAlert;
   }
+  // 근무 시간: 시각은 HH:MM, 요일은 0(일)~6(토) 하나 이상, 알림은 켬/끔. 출근 < 퇴근은 데몬이 지금 값과 합쳐서 본다
+  for (const k of ['workStart', 'lunchTime', 'workEnd']) {
+    if (p[k] === undefined) continue;
+    if (!okHhmm(p[k])) return null;
+    out[k] = p[k];
+  }
+  if (p.workDays !== undefined) {
+    const d = cleanWorkDays(p.workDays);
+    if (!d || !d.length) return null;
+    out.workDays = d;
+  }
+  for (const k of ['startAlert', 'leaveAlert']) {
+    if (p[k] === undefined) continue;
+    if (typeof p[k] !== 'boolean') return null;
+    out[k] = p[k];
+  }
   // 일정 알림: { minutesBefore: [분…] } ([] = 끔)
   if (p.calendarAlert !== undefined) {
     const c = cleanCalendarAlert(p.calendarAlert);
@@ -91,6 +107,43 @@ export function sanitizeSettingsPatch(p) {
     out.calendarAlert = c;
   }
   return Object.keys(out).length ? out : null;
+}
+
+// ---- 근무 시간(GET /settings workStart·lunchTime·workEnd·workDays·startAlert·lunchAlert·leaveAlert) ----
+// 데몬 agent/src/work-hours.ts 와 같은 규칙. 요일 칩은 월요일부터
+export const WORK_KEYS = ['workStart', 'lunchTime', 'workEnd', 'workDays', 'startAlert', 'leaveAlert'];
+export const WORK_DEFAULT = { workStart: '09:00', lunchTime: '12:00', workEnd: '18:00', workDays: [1, 2, 3, 4, 5], startAlert: true, lunchAlert: true, leaveAlert: true };
+export const WORK_DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+export const DAY_LABEL = ['일', '월', '화', '수', '목', '금', '토'];
+export const okHhmm = (v) => typeof v === 'string' && /^([01]\d|2[0-3]):([0-5]\d)$/.test(v);
+export function cleanWorkDays(v) {
+  if (!Array.isArray(v) || !v.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)) return null;
+  return [...new Set(v)].sort((a, b) => a - b);
+}
+// 설정 값 → 화면에 그릴 값(빠지거나 이상하면 기본값)
+export function workHoursView(s) {
+  const o = s && typeof s === 'object' ? s : {};
+  return {
+    workStart: okHhmm(o.workStart) ? o.workStart : WORK_DEFAULT.workStart,
+    lunchTime: okHhmm(o.lunchTime) ? o.lunchTime : WORK_DEFAULT.lunchTime,
+    workEnd: okHhmm(o.workEnd) ? o.workEnd : WORK_DEFAULT.workEnd,
+    workDays: cleanWorkDays(o.workDays) ?? [...WORK_DEFAULT.workDays],
+    startAlert: o.startAlert !== false, lunchAlert: o.lunchAlert !== false, leaveAlert: o.leaveAlert !== false,
+  };
+}
+// 요일 칩을 켜고 끄기 → { workDays } | { error }(하나도 안 남으면)
+export function workDaysNext(list, day, on) {
+  const cur = cleanWorkDays(list) ?? [...WORK_DEFAULT.workDays];
+  const next = cleanWorkDays(on ? [...cur, day] : cur.filter((d) => d !== day));
+  if (!next.length) return { error: '근무 요일을 하나 이상 골라 주세요' };
+  return { workDays: next };
+}
+// 시각 하나 바꾸기 → { patch } | { error }. 출근은 퇴근보다 앞
+export function workTimeNext(view, key, value) {
+  if (!okHhmm(value)) return { error: '시각을 HH:MM(예: 09:00)으로 골라 주세요' };
+  const v = { ...workHoursView(view), [key]: value };
+  if (v.workStart >= v.workEnd) return { error: '출근 시각은 퇴근 시각보다 앞이어야 해요' };
+  return { patch: { [key]: value } };
 }
 
 // ---- 일정 알림(GET /settings calendarAlert) ----

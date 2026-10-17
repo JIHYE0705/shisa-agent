@@ -6,6 +6,7 @@ import {
   repoSlugFrom, autoMergeNext, needsSetupHint, localReadView,
   REMINDER_DEFAULT, REMINDER_HOURS, cleanReminder, parseTimes, reminderSummary,
   ALERT_DEFAULT, cleanCalendarAlert, alertMinutesNext, parseAlertMinutes, alertChoices, calendarAlertSummary,
+  workHoursView, workDaysNext, workTimeNext, WORK_DAY_ORDER, DAY_LABEL,
 } from '../src/settings.js';
 import { mountGuidelines } from '../src/guidelines.js';
 import { CHARACTERS, CHARACTER_IDS, characterAssets, characterName, okCharacterId, USER_CHAR_DIR, defaultFrame, MULTI_SLOTS } from '../src/character.js';
@@ -808,19 +809,61 @@ function renderCalAlert() {
   }
   $('cal-summary').textContent = calendarAlertSummary(calAlert());
 }
-// 점심시간 알림(기본 켬)
-function renderLunch() {
+// 근무 시간: 출근·점심·퇴근 시각, 요일, 알림 셋(출근 인사·점심시간 알림·퇴근 인사, 기본 다 켬)
+function renderWork() {
   if (!settings) return;
-  $('lunch-on').checked = settings.lunchAlert !== false;
+  const v = workHoursView(settings);
+  // 입력 중인 칸은 그대로 둔다(저장 응답이 와도 커서가 튀지 않게)
+  for (const [id, k] of [['work-start', 'workStart'], ['work-lunch', 'lunchTime'], ['work-end', 'workEnd']]) if (document.activeElement !== $(id)) $(id).value = v[k];
+  $('start-on').checked = v.startAlert;
+  $('lunch-on').checked = v.lunchAlert;
+  $('leave-on').checked = v.leaveAlert;
+  const box = $('work-days');
+  box.replaceChildren();
+  for (const d of WORK_DAY_ORDER) {
+    const lab = el('label', 'toggle');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = v.workDays.includes(d);
+    cb.setAttribute('aria-label', `${DAY_LABEL[d]}요일`);
+    cb.addEventListener('change', async () => {
+      $('work-err').textContent = '';
+      const r = workDaysNext(workHoursView(settings).workDays, d, cb.checked);
+      if (r.error) { cb.checked = !cb.checked; $('work-err').textContent = r.error; return; }
+      cb.disabled = true;
+      const ok = await save({ workDays: r.workDays });
+      cb.disabled = false;
+      renderWork();
+      if (!ok) cb.checked = !cb.checked;
+    });
+    lab.append(cb, document.createTextNode(DAY_LABEL[d]));
+    box.append(lab);
+  }
 }
-$('lunch-on').addEventListener('change', async (e) => {
-  const cb = e.target;
-  cb.disabled = true;
-  const ok = await save({ lunchAlert: cb.checked });
-  cb.disabled = false;
-  if (!ok) cb.checked = !cb.checked;
-  else flash(cb.checked ? '점심시간 알림을 켰어요' : '점심시간 알림을 껐어요');
-});
+for (const [id, k] of [['work-start', 'workStart'], ['work-lunch', 'lunchTime'], ['work-end', 'workEnd']]) {
+  $(id).addEventListener('change', async (e) => {
+    $('work-err').textContent = '';
+    const r = workTimeNext(settings, k, e.target.value);
+    if (r.error) { $('work-err').textContent = r.error; return; }
+    if (await save(r.patch)) renderWork();
+  });
+  // 고르다 만 값(오류)은 칸을 떠나면 저장된 값으로 되돌린다
+  $(id).addEventListener('blur', () => { if ($('work-err').textContent) { $('work-err').textContent = ''; renderWork(); } });
+}
+for (const [id, k, on, off] of [
+  ['start-on', 'startAlert', '출근 인사를 켰어요', '출근 인사를 껐어요'],
+  ['lunch-on', 'lunchAlert', '점심시간 알림을 켰어요', '점심시간 알림을 껐어요'],
+  ['leave-on', 'leaveAlert', '퇴근 인사를 켰어요', '퇴근 인사를 껐어요'],
+]) {
+  $(id).addEventListener('change', async (e) => {
+    const cb = e.target;
+    cb.disabled = true;
+    const ok = await save({ [k]: cb.checked });
+    cb.disabled = false;
+    if (!ok) cb.checked = !cb.checked;
+    else flash(cb.checked ? on : off);
+  });
+}
 $('cal-off').addEventListener('change', (e) => saveCalAlert(e.target.checked ? [] : (lastAlertOn ?? ALERT_DEFAULT.minutesBefore)));
 async function addCustomAlert() {
   const p = parseAlertMinutes($('cal-custom').value);
@@ -1070,7 +1113,7 @@ async function load() {
   if (k && typeof k === 'object' && typeof k.claude === 'boolean') caps = { claude: k.claude, codex: k.codex === true };
   if (!s?.ok || !c?.ok) banner(`${who()}에 연결되지 않았어요. ${who()}가 켜져 있는지 확인해 주세요.`);
   else banner(null);
-  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderLunch(); renderAutoMerge(); renderPhrases(); renderCharacter(); loadCharacters(); }
+  if (s?.ok) { settings = s.data; renderBrains(); renderModels(); renderSources(); renderLocal(); renderReminder(); renderCalAlert(); renderWork(); renderAutoMerge(); renderPhrases(); renderCharacter(); loadCharacters(); }
   if (c?.ok) {
     await loadCalendars();
     rows = Array.isArray(c.data?.rows) ? c.data.rows : [];

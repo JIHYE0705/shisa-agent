@@ -119,7 +119,7 @@ test('점심시간: 설정 창에서 끄고 켜기(기본 켬), 사용자 캐릭
   const html = fs.readFileSync(new URL('../renderer/settings.html', import.meta.url), 'utf8');
   assert.match(html, /id="lunch-on"/);
   const js = fs.readFileSync(new URL('../renderer/settings.js', import.meta.url), 'utf8');
-  assert.match(js, /settings\.lunchAlert !== false/);
+  assert.match(js, /\$\('lunch-on'\)\.checked = v\.lunchAlert/);
   const lunch = slotRows().find((r) => r.slot === 'lunch');
   assert.deepEqual([lunch.multi, lunch.say, lunch.required], [true, true, false]);
   assert.match(lunch.hint, /없으면 일정 알림/);
