@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { Settings } from "./settings.ts";
@@ -10,7 +10,7 @@ import { statusOf } from "./status.ts";
 import { redact } from "./connections.ts";
 import {
   GENSPARK_NO_CREDIT, GENSPARK_URL, BrainAuthError, BrainCreditError, brainAuthFailed, brainCreditNeeded, brainKeyReady, gensparkJson, gensparkKey,
-  gensparkModels, gskLoginKey, isGensparkCreditNotice, pickGensparkModel, resetBrainAuth, resetGensparkModels, type FetchLike,
+  gensparkModels, gskLoginKey, gskLoginPath, isGensparkCreditNotice, pickGensparkModel, resetBrainAuth, resetGensparkModels, type FetchLike,
 } from "./providers.ts";
 
 const FAKE = "gsk-unit-test-fake-key-0123456789abcdefghijklmnopqrstuvwxyz";
@@ -158,7 +158,7 @@ test("genspark: 리다이렉트는 따라가지 않는다(진짜 fetch 로 30x �
 test("genspark: 키는 환경변수 > 설정 > gsk login 파일(읽기만, 쓸 때마다 읽는다)", () => {
   const home = mkdtempSync(join(tmpdir(), "gsk-home-"));
   try {
-    const env = { HOME: home };
+    const env = { HOME: home, USERPROFILE: home };
     assert.equal(gskLoginKey(env), undefined);
     assert.equal(brainKeyReady(cfgOf(), env), false);
     mkdirSync(join(home, ".genspark-tool-cli"));
@@ -178,11 +178,24 @@ test("genspark: 키는 환경변수 > 설정 > gsk login 파일(읽기만, 쓸 �
     assert.equal(gskLoginKey(env), undefined);
     writeFileSync(file, JSON.stringify({ api_key: "not-a-gsk-key" }));
     assert.equal(gskLoginKey(env), undefined);
-    // HOME 없는 env 를 따로 넘기면 진짜 홈은 읽지 않는다
+    // 메모장 등이 붙인 BOM 은 벗기고 읽는다
+    writeFileSync(file, "\uFEFF" + raw);
+    assert.equal(gskLoginKey(env), FAKE);
+    // 홈 없는 env 를 따로 넘기면 진짜 홈은 읽지 않는다
     assert.equal(gskLoginKey({}), undefined);
     writeFileSync(file, raw);
     assert.equal(readFileSync(file, "utf8"), raw); // 우리는 고치지 않는다
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("genspark: gsk login 홈은 os.homedir() 와 같게 — 윈도우는 USERPROFILE(전역 HOME 이 따로 있어도), 그 밖은 HOME", () => {
+  const p = (dir: string) => join(dir, ".genspark-tool-cli", "config.json");
+  assert.equal(gskLoginPath({ HOME: "/h/git", USERPROFILE: "C:/Users/me" }, "win32"), p("C:/Users/me"));
+  assert.equal(gskLoginPath({ HOME: "/h/git" }, "win32"), undefined);
+  assert.equal(gskLoginPath({ HOME: "/home/me", USERPROFILE: "/x" }, "linux"), p("/home/me"));
+  assert.equal(gskLoginPath({ HOME: "/Users/me" }, "darwin"), p("/Users/me"));
+  assert.equal(gskLoginPath({ USERPROFILE: "/x" }, "darwin"), undefined);
+  assert.equal(gskLoginPath(process.env), p(homedir())); // 진짜 env 면 os.homedir()
 });
 
 test("genspark: 설정 — provider·키 받기, 화면엔 있는지만(gsk login 파일 포함), 키는 오류 글·로그에 안 나간다", () => {
@@ -193,7 +206,7 @@ test("genspark: 설정 — provider·키 받기, 화면엔 있는지만(gsk logi
     const path = join(dir, "config.json");
     writeFileSync(path, "{}");
     const cfg = loadConfig({});
-    const s = new Settings(cfg, { path, env: { HOME: home } });
+    const s = new Settings(cfg, { path, env: { HOME: home, USERPROFILE: home } });
     assert.ok(s.put({ brain: { provider: "genspark", keys: { genspark: FAKE } } }).ok);
     assert.equal(cfg.brain.provider, "genspark");
     assert.equal(cfg.brain.gensparkApiKey, FAKE);

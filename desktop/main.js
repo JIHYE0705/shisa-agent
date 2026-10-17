@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ASSET_SCHEME, resolveAsset, parseRange, assetCandidates, userCharacterFile } from './src/assets.js';
 import { cleanMergeQuestion, normalizeOpen } from './src/bubbles.js';
-import { createSSEParser, backoffDelay } from './src/sse.js';
+import { createSSEParser, backoffDelay, isEventStream, createSSEGate } from './src/sse.js';
 import { isSafeLink } from './src/bubbles.js';
 import { defaultPosition, restorePosition } from './src/geometry.js';
 import { normalizeSection } from './src/dashboard.js';
@@ -42,7 +42,7 @@ import { tourSteps, tourBubble, TOUR_VERSION } from './src/tour.js';
 import { NEW_DAEMON_CONFIG, cleanSetupPatch, openSetupAtLaunch, setupView } from './src/setup-plan.js';
 import { attachConsole, assembleBundle, collectLogFiles, createRing, formatLogLine, redact, shapeConnectorsSafe } from './src/debug-share.js';
 import { bundlePaths, launchdOwns, spawnDecision, daemonEnv, daemonArgs, loginItemPlan, loginItemHint, defaultLoginPref, daemonStatusKind, LAUNCHD_DAEMON, DAEMON_LOG } from './src/bundle.js';
-import { createDaemonHost } from './src/daemon-host.js';
+import { createDaemonHost, portFree } from './src/daemon-host.js';
 import { RELEASES_API, checkDue, newestRelease, shouldNotify, updateBubble } from './src/update-check.js';
 import { denied } from './src/denied.js';
 import { withCalendarAdded, withCalendarRemoved, calendarRows, calendarUrlById, calendarUrls, hubDoneFor, calendarReloadNote, okCalendarId, CALENDAR_DUP } from './src/calendars.js';
@@ -743,15 +743,20 @@ async function connectLoop() {
   while (!quitting) {
     const ac = new AbortController();
     currentAbort = ac;
+    let gate = null;
     try {
       const res = await fetch(`${BASE}/events`, {
         headers: { Accept: 'text/event-stream' },
         signal: ac.signal,
       });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-      setConnected(true);
-      attempt = 0;
-      const parser = createSSEParser(onSSE, { onRetry: (ms) => { retryOverride = ms; } });
+      const type = res.headers.get('content-type');
+      if (!isEventStream(res.ok, type, !!res.body)) {
+        res.body?.cancel().catch(() => {});
+        throw new Error(`HTTP ${res.status} ${type ?? ''}`); // 그 포트의 다른 프로그램: 연결로 치지 않고 물러난다
+      }
+      // 연결됨은 첫 이벤트(state)가 온 뒤 — 남의 서버에 붙어 /status·/characters 등을 퍼붓지 않게
+      gate = createSSEGate(() => { setConnected(true); attempt = 0; });
+      const parser = createSSEParser((ev) => { if (gate.check(ev) === 'live') onSSE(ev); else ac.abort(); }, { onRetry: (ms) => { retryOverride = ms; } });
       const dec = new TextDecoder();
       for await (const chunk of res.body) parser.push(dec.decode(chunk, { stream: true }));
       parser.end();
@@ -761,6 +766,7 @@ async function connectLoop() {
     }
     setConnected(false);
     if (quitting) break;
+    if (!gate?.live) retryOverride = null; // 시사 데몬이 아니면 그쪽 retry: 를 따르지 않는다
     const delay = retryOverride ?? backoffDelay(attempt++);
     retryOverride = null;
     await new Promise((r) => { wakeSleep = r; setTimeout(r, delay); });
@@ -1886,6 +1892,7 @@ async function startDaemonHost() {
   daemonHost = createDaemonHost({
     spawn: () => spawnDaemon(entry, dir),
     probe: daemonAlive,
+    portFree: () => portFree(PORT),
     now: Date.now,
     setTimeout,
     clearTimeout,
@@ -2026,10 +2033,12 @@ if (SQUIRREL) {
   app.quit();
 } else {
   // 맞춤법 검사는 안 쓴다(창마다 spellcheck:false). 그래도 세션의 검사기는 첫 실행에 사전(ko-3-0.bdic, 11MB)을
-  // redirector.gvt1.com 에서 받는다 → 세션 단위로 끈다. 나중에 생기는 세션(fromPartition 등)도 같게
-  app.on('session-created', (s) => s.setSpellCheckerEnabled(false));
+  // redirector.gvt1.com 에서 받는다. setSpellCheckerEnabled(false) 만으로는 윈도우(Hunspell)에서 그대로 받는다 —
+  // 받을 언어(기본: 앱 로캘 ko)를 비워야 멈춘다(Electron 44 실측). 나중에 생기는 세션(fromPartition 등)도 같게
+  const noSpellcheck = (s) => { s.setSpellCheckerLanguages([]); s.setSpellCheckerEnabled(false); };
+  app.on('session-created', noSpellcheck);
   app.whenReady().then(() => {
-    session.defaultSession.setSpellCheckerEnabled(false); // 창보다 먼저
+    noSpellcheck(session.defaultSession); // 창보다 먼저
     const firstRun = !fs.existsSync(statePath()); // 이 앱 저장소를 처음 쓴다 → 마법사를 바로 연다
     loadState();
     registerAssetProtocol();

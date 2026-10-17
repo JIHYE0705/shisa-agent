@@ -60,3 +60,25 @@ export function backoffDelay(attempt, { base = 1000, max = 30000, jitter = Math.
   const d = Math.min(max, base * 2 ** Math.max(0, attempt));
   return Math.round(d * (0.8 + 0.4 * jitter()));
 }
+
+// GET /events 응답이 SSE 인가: 2xx · 본문 있음 · content-type text/event-stream.
+// 아니면(그 포트의 다른 프로그램이 준 HTML·JSON) 연결로 치지 않고 보통처럼 물러난다
+export function isEventStream(ok, contentType, hasBody = true) {
+  return !!ok && !!hasBody && /^\s*text\/event-stream\s*(;|$)/i.test(String(contentType ?? ''));
+}
+
+// 연결됨은 첫 이벤트가 온 뒤. 시사 데몬은 붙자마자 state 를 보낸다(bus.ts /events)
+// → 첫 이벤트가 state 가 아니면 남의 SSE 로 보고 끊는다. 이벤트마다 'live'(넘김) · 'reject'(끊기)
+export function createSSEGate(onLive) {
+  let live = false;
+  return {
+    check(ev) {
+      if (live) return 'live';
+      if (ev?.event !== 'state') return 'reject';
+      live = true;
+      onLive?.();
+      return 'live';
+    },
+    get live() { return live; },
+  };
+}

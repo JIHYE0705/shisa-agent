@@ -77,16 +77,17 @@ export function openaiKey(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv): s
 
 // gsk login(공식 CLI)이 남긴 키: ~/.genspark-tool-cli/config.json 의 api_key. 읽기만 하고 그 파일은 고치지 않는다.
 // 설정에 복사해 두지 않고 쓸 때마다 읽는다(다시 로그인해 키가 바뀌어도 따라간다)
-// 홈은 넘겨받은 env 의 HOME(테스트는 임시 홈). HOME 이 없는 env 를 따로 넘기면 진짜 홈을 읽지 않는다
-export function gskLoginPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const home = nonempty(env.HOME) ?? nonempty(env.USERPROFILE) ?? (env === process.env ? homedir() : undefined);
+// 홈은 os.homedir() 와 같게(gsk CLI·앱 llm-check.js 도 그것): 윈도우는 USERPROFILE, 그 밖은 HOME.
+// 윈도우에 전역 HOME 이 따로 있어도 따라가지 않는다. 테스트는 env·platform 을 넘긴다(그 env 에 없으면 진짜 홈을 읽지 않는다)
+export function gskLoginPath(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  const home = env === process.env ? homedir() : nonempty(platform === "win32" ? env.USERPROFILE : env.HOME);
   return home ? join(home, ".genspark-tool-cli", "config.json") : undefined;
 }
-export function gskLoginKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const path = gskLoginPath(env);
+export function gskLoginKey(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  const path = gskLoginPath(env, platform);
   if (!path) return undefined;
   try {
-    const v = JSON.parse(readFileSync(path, "utf8"))?.api_key;
+    const v = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, ""))?.api_key; // 메모장 등이 붙인 BOM
     return typeof v === "string" && /^gsk-\S+$/.test(v.trim()) ? v.trim() : undefined;
   } catch {
     return undefined; // 없거나 깨졌으면 없는 것과 같다(내용은 오류 글에 넣지 않는다)
