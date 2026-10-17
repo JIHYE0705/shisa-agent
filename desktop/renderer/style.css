@@ -154,6 +154,9 @@ html, body {
 .bubble .md table { border-collapse: collapse; margin: 3px 0; font-size: 12px; }
 .bubble .md th, .bubble .md td { padding: 3px 7px 3px 0; text-align: left; border-bottom: 1px solid var(--bubble-border); vertical-align: top; }
 .bubble .md th { color: var(--bubble-muted); font-weight: 600; }
+/* 말풍선에 표가 오면 깨지지 않게 줄여 보인다: 말풍선 폭을 넘지 않고, 칸은 한 줄로 자르고 … */
+.bubble .md table { display: block; max-width: 100%; overflow: hidden; }
+.bubble .md th, .bubble .md td { max-width: 9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bubble .md a { color: var(--accent); }
 .bubble .md .c-red { color: #c62828; } .bubble .md .c-green { color: #1b7a3a; } .bubble .md .c-blue { color: #1f5fbf; }
 .bubble .md .c-orange { color: #b35400; } .bubble .md .c-purple { color: #6b3fc4; } .bubble .md .c-gray { color: var(--bubble-muted); }

@@ -973,7 +973,7 @@ button.small { padding: 2px 8px; font-size: 12px; }
 #chat-send { padding-top: 0; padding-bottom: 0; }
 #chat-send.stop { background: var(--err); color: #fff; } /* 답하는 중 — 멈추기 */
 #chat-model[hidden] { display: none; }
-#chat-model { max-width: 150px; text-overflow: ellipsis; }
+#chat-model { max-width: 120px; text-overflow: ellipsis; }
 #chat-model.picked { border-color: var(--accent, #6b8afd); }
 #chat-model-custom { height: 38px; flex: none; width: 130px; border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; }
 #chat-model-custom[hidden] { display: none; }
@@ -1038,6 +1038,11 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .md table { border-collapse: collapse; margin: 6px 0; font-size: 0.95em; }
 .md th, .md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
 .md th { background: var(--code); font-weight: 600; }
+/* 채팅 답의 표: 좁은 패널에서는 표만 가로로 밀어 보고(답 말풍선은 넘치지 않게), 칸 안 글은 줄바꿈 */
+.msg .md table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.msg .md th, .msg .md td { max-width: 22em; overflow-wrap: break-word; word-break: keep-all; }
+.msg .md td:first-child { white-space: nowrap; }
+.msg .md th { white-space: nowrap; }
 
 /* 할 일 백로그(P4 · 언젠가)와 규칙 — todo-rules.js */
 .group.p4 h2::before { background: var(--faint); }

@@ -7,7 +7,7 @@ import type { Config } from "./config.ts";
 import type { Store, ChatTurn, ChatSendMeta, Todo, Thread, ThreadKind, ChatPick, AnsweredBy } from "./store.ts";
 import { BRAIN_LABEL, isChatProvider, modelFits, modelLabel, roleModel } from "./models.ts";
 import type { PanelSection } from "./bus.ts";
-import { ask, brainFacts, buildContext, SCHEMA as THOUGHT_SCHEMA, INTERACTIVE_SYSTEM, NO_TOOLS_SYSTEM, WRITE_GUIDE, type Thought } from "./brain.ts";
+import { ask, tidyThought, brainFacts, buildContext, SCHEMA as THOUGHT_SCHEMA, INTERACTIVE_SYSTEM, NO_TOOLS_SYSTEM, WRITE_GUIDE, type Thought } from "./brain.ts";
 import { buildDashboard, dashboardSummary } from "./dashboard.ts";
 import { TODO_OPS_SCHEMA, trashedNote, type TodoOp } from "./todos.ts";
 import { PROJECT_OPS_SCHEMA } from "./manual-projects.ts";
@@ -199,7 +199,7 @@ export const CHAT_SCHEMA = {
   additionalProperties: false,
   required: ["reply_md", "bubble", "show", "proposals", "todo_ops", "project_ops", "plan_ops", "memory_ops", "rule", "guideline", "merges", "auto_merge"],
   properties: {
-    reply_md: { type: "string", description: "대화 답변(Markdown). 짧게, 필요한 만큼만. 링크 포함." },
+    reply_md: { type: "string", description: "대화 답변(Markdown). 짧게, 필요한 만큼만. 링크 포함. 굵게는 한두 곳만, 긴 줄표(—) 없이, 같은 칸이 있는 항목 셋 이상은 표로." },
     bubble: { type: "string", description: "캐릭터 말풍선용 요약. 정해진 캐릭터 말투로, 40자 이내." },
     show: {
       anyOf: [{ type: "string", enum: [...SECTIONS] }, { type: "null" }],
@@ -332,7 +332,7 @@ export async function converse(
   const prompt = chatPrompt(cfg, store, history, text, summary, focus, repo, thread, att?.note);
   const via: ActionVia = thread?.kind === "hover" ? "hover" : "chat";
   const r = await ask<ChatReply>(cfg, prompt, CHAT_SCHEMA, onStep, { ...chatAskOpts(cfg, text || attachmentsTitle(attachments), repo, threadId, via, model), ...(inlineContext(cfg) ? {} : { ctx: { ...ctx, store } }), ...(abort ? { abort } : {}), ...(att?.blocks.length ? { blocks: att.blocks } : {}), facts: brainFacts(store) });
-  return { ...r, show: SECTIONS.includes(r.show as PanelSection) ? r.show : null, proposals: r.proposals ?? [], todo_ops: r.todo_ops ?? [], project_ops: Array.isArray(r.project_ops) ? r.project_ops : [], plan_ops: r.plan_ops ?? [], memory_ops: r.memory_ops ?? [], rule: r.rule ?? null, guideline: r.guideline ?? null, actions: Array.isArray(r.actions) ? r.actions : [], merges: Array.isArray(r.merges) ? r.merges : [], auto_merge: Array.isArray(r.auto_merge) ? r.auto_merge : [] };
+  return { ...tidyThought(r), show: SECTIONS.includes(r.show as PanelSection) ? r.show : null, proposals: r.proposals ?? [], todo_ops: r.todo_ops ?? [], project_ops: Array.isArray(r.project_ops) ? r.project_ops : [], plan_ops: r.plan_ops ?? [], memory_ops: r.memory_ops ?? [], rule: r.rule ?? null, guideline: r.guideline ?? null, actions: Array.isArray(r.actions) ? r.actions : [], merges: Array.isArray(r.merges) ? r.merges : [], auto_merge: Array.isArray(r.auto_merge) ? r.auto_merge : [] };
 }
 
 // 슬래시 명령 한 번: 맥락·스키마로 감싸지 않고 말 그대로 프롬프트로(Claude Code 가 명령·스킬을 펼친다).

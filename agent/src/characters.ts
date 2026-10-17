@@ -98,9 +98,16 @@ export function mergeLines<T>(base: T, over: unknown): T {
 }
 
 const nonEmpty = <R extends object>(r?: R) => (r && Object.keys(r).length ? r : undefined);
+
+// 「소리 (할 말)」 캐릭터(우사기·카니·치이카와·쿠리만쥬 · 그런 말투로 만든 사용자 캐릭터): 긴 답 전체가 괄호 하나에 들어가면 읽기 힘들다.
+// 말투에 이 규칙이 없으면(예전에 고쳐 둔 말투·사용자 캐릭터) 뒤에 붙인다. 대사(문구·정해진 말)는 건드리지 않는다
+export const PAREN_LONG_RULE = "긴 답(여러 줄·목록·표가 필요한 답)은 첫 줄만 \"소리 (한마디)\"로 하고, 그 아래 본문은 괄호 밖에 보통 마크다운으로 쓴다. 본문 전체를 괄호 하나에 넣지 않는다. 짧은 답과 bubble 은 소리 뒤 괄호 하나로.";
+export function withLongRule(tone: string): string {
+  return /괄호 안/.test(tone) && !/긴 답/.test(tone) ? `${tone} ${PAREN_LONG_RULE}` : tone;
+}
 function fromLines(id: CharacterId, e: Partial<LinesEntry>, extra: Partial<Character> = {}): Character {
   return {
-    id, name: e.name || id, intro: ownIntro(e.prompt?.intro) || (e.name ? introFor(e.name) : SHISA_INTRO), tone: e.prompt?.tone || SHISA_TONE, stretch: false,
+    id, name: e.name || id, intro: ownIntro(e.prompt?.intro) || (e.name ? introFor(e.name) : SHISA_INTRO), tone: e.prompt?.tone ? withLongRule(e.prompt.tone) : SHISA_TONE, stretch: false,
     lead: nonEmpty(e.flair?.lead) as Character["lead"], tail: nonEmpty(e.flair?.tail) as Character["tail"],
     phrases: e.phrases ?? {}, lines: e.local ?? {}, cheer: e.cheer?.length ? e.cheer : undefined, ...extra,
   };
@@ -124,7 +131,7 @@ function shisaWith(o: LinesPatch): Character {
     ...SHISA,
     name: o.name || SHISA.name,
     intro: ownIntro(o.prompt?.intro) || (o.name && o.name !== SHISA.name ? introFor(o.name) : SHISA.intro), // 이름만 바꿨으면 새 이름으로 소개
-    tone: o.prompt?.tone || SHISA.tone,
+    tone: o.prompt?.tone ? withLongRule(o.prompt.tone) : SHISA.tone,
     lead: nonEmpty(o.flair?.lead) as Character["lead"],
     tail: (o.flair?.tail ? nonEmpty(o.flair.tail) : SHISA.tail) as Character["tail"],
     phrases: o.phrases as Record<string, string[]> ?? {},
