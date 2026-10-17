@@ -38,6 +38,10 @@ const clip = (s: unknown, n: number) => {
 export function fmtTime(iso?: string) {
   return iso ? new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false }) : "?";
 }
+// 프롬프트의 「지금」: 요일까지(「2026. 10. 17. (토) 15시 2분 34초」). 요일이 없으면 모델이 요일을 지어냈다(토요일을 화요일로)
+export function fmtNow(now: Date = new Date()) {
+  return now.toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false, year: "numeric", month: "numeric", day: "numeric", weekday: "short", hour: "numeric", minute: "numeric", second: "numeric" });
+}
 
 // ── 머리말 ─────────────────────────────────────────────
 const KIND_KO: Record<string, string> = { chat: "채팅", todo: "할 일 대화", hover: "캐릭터 대화" };
@@ -50,7 +54,7 @@ export function contextHeader(cfg: Pick<Config, "slackUserId" | "gitAuthor"> & P
   const who = [cfg.gitAuthor?.name ? `GitHub ${cfg.gitAuthor.name}` : "", cfg.slackUserId ? `Slack ${cfg.slackUserId}` : ""].filter(Boolean).join(", ");
   const lines = [
     "## 지금",
-    `- 시각: ${fmtTime(now.toISOString())} (KST)`,
+    `- 시각: ${fmtNow(now)} (KST)`,
     workHoursLine(workHoursOf(cfg as Record<string, unknown>), now), // 「퇴근까지 얼마나 남았어?」 같은 질문용(설정 「근무 시간」)
     `- 사용자: ${displayUserName(cfg.user) || "(이름 모름 — 설정 user.name)"}${who ? ` (${who})` : ""}`,
   ];

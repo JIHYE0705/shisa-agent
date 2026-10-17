@@ -2,6 +2,7 @@
 // 바깥 쓰기(메일·문서·회의 응답 등)는 도구로 바로 시도 — 팝오버에 승인 카드가 뜬다(permissions.ts, via todo).
 // 모델은 대화 기록을 보지 않는다(문답은 core 가 그 할 일의 스레드에 남긴다). 맥락은 가볍게(프로필·관련 KG·다른 열린 할 일).
 // 마지막 문답(제안 ops·규칙·rev·결과)은 todo_asks 표에 할 일마다 하나 — 세션 창 "원래 화면 열기"가 팝오버를 그대로 다시 띄운다.
+import { fmtNow } from "./ctx-tools.ts";
 import type { Config } from "./config.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { Store, Todo } from "./store.ts";
@@ -49,7 +50,7 @@ const when = (iso: string | undefined, now: Date) => {
 export function askPrompt(store: Store, todo: Todo, text: string, opts: { now?: Date; selfId?: string } = {}): string {
   const now = opts.now ?? new Date();
   const others = store.openTodos().filter((t) => t.id !== todo.id).slice(0, 30);
-  const lines = [`현재 시각: ${now.toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false })} (KST)`];
+  const lines = [`현재 시각: ${fmtNow(now)} (KST)`];
   const profile = profileContext(store, { now, selfId: opts.selfId, maxChars: 1200 });
   if (profile) lines.push("", profile);
   const kg = kgContext(store, { limit: 3, query: `${todo.title} ${text}`, maxChars: 1000 });

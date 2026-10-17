@@ -7,7 +7,7 @@ import { buildContext, stepName, toolOptions } from "./brain.ts";
 import { ensureMergeTables } from "./kg/merge.ts";
 import { buildDashboard, dashboardSummary } from "./dashboard.ts";
 import { CHAT_SYSTEM, CHAT_SYSTEM_INLINE, Chat, chatAskOpts, chatPrompt, type ChatReply, type Converse } from "./chat.ts";
-import { contextHeader, ctxHandlers, ctxMcpServer, CTX_GUIDE, CTX_MAX_OUT, CTX_SERVER, CTX_TOOL_NAMES, HEADER_MAX } from "./ctx-tools.ts";
+import { contextHeader, fmtNow, ctxHandlers, ctxMcpServer, CTX_GUIDE, CTX_MAX_OUT, CTX_SERVER, CTX_TOOL_NAMES, HEADER_MAX } from "./ctx-tools.ts";
 import { isReadOnlyCall } from "./guard.ts";
 
 const NOW = new Date("2026-10-12T03:00:00Z"); // KST 12:00
@@ -88,7 +88,7 @@ test("크기: 예전 큰 맥락 블록 vs 작은 머리말 — 채팅 한 턴 �
 test("contextHeader: 시각(KST)·사용자·이 대화·대상 할 일·도구 안내만, 상한 안", () => {
   const h = contextHeader(cfg(), { now: NOW, thread: { title: "견적 얘기", kind: "todo" }, focus: { id: "mail:9", title: "견적서 회신", priority: 1 } });
   assert.ok(h.length <= HEADER_MAX, `${h.length}`);
-  assert.match(h, /시각: 2026\. 10\. 12\. 12시 0분 0초 \(KST\)/);
+  assert.match(h, /시각: 2026\. 10\. 12\. \(월\) 12시 0분 0초 \(KST\)/);
   assert.match(h, /사용자: 홍길동 \(GitHub hong, Slack UME\)/);
   assert.match(h, /이 대화: 할 일 대화 "견적 얘기"/);
   assert.match(h, /대상 할 일: id=mail:9 \[P1\] 견적서 회신/);
@@ -239,4 +239,14 @@ test("cy 도구: 숨긴 프로젝트는 세션·KG 에서 빠진다", async () =
   assert.match(txt(await h.session_get({ id: "session:s4" })), /숨긴 프로젝트/);
   assert.doesNotMatch(txt(await h.kg_search({ query: "wiki" })), /\[project\] wiki/);
   assert.match(txt(await h.kg_node({ name: "wiki" })), /못 찾음/);
+});
+
+// 요일이 없으면 모델이 요일을 지어냈다(실제 앱에서 토요일 브리핑이 「화요일」). 프롬프트의 「지금」은 요일까지
+test("지금 시각에 요일: fmtNow · 머리말 · 브리핑 프롬프트", async () => {
+  const sat = new Date("2026-10-17T06:02:34Z");
+  assert.equal(fmtNow(sat), "2026. 10. 17. (토) 15시 2분 34초");
+  assert.match(contextHeader(cfg(), { now: sat }), /\(토\)/);
+  const brain = await import("./brain.ts");
+  const src = (await import("node:fs")).readFileSync(new URL("./brain.ts", import.meta.url), "utf8");
+  assert.ok(brain && /현재 시각: \$\{fmtNow\(now\)\}/.test(src));
 });
