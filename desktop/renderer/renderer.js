@@ -11,7 +11,7 @@ import { createAttachTray } from './attach-tray.js';
 import { hasFiles, filesFromTransfer, ATTACH_ERRORS } from '../src/attachments.js';
 import { normFocus, focusBubble, doingBubble } from '../src/focus.js';
 import { who, setWho } from './who.js';
-import { characterAssets, okCharacter, localSay, clipFor, danceClipOf, danceVariantOf, variantsOf, pickVariant, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf, fitBox } from '../src/character.js';
+import { characterAssets, redrawCharacter, okCharacter, localSay, clipFor, danceClipOf, danceVariantOf, variantsOf, pickVariant, DANCE_MAX_MS, nextBlinkDelay, blinkPlan, initialActivity, activityReducer, viewOf, fitBox } from '../src/character.js';
 import { applyCharacters } from '../src/character-registry.js';
 
 const cy = window.cy;
@@ -196,7 +196,7 @@ function setCharacter(id, force = false) {
   setWho(cid); // 이름만 바뀌었을 수도
   document.getElementById('ask-input')?.setAttribute('aria-label', `${who()}에게 물어보기`);
   try { localStorage.setItem(CHAR_KEY, typeof id === 'string' ? id : cid); } catch { /* 못 적어도 그림은 바뀐다 */ }
-  if (cid === charA.id && (!force || JSON.stringify(next) === JSON.stringify(charA))) return;
+  if (!redrawCharacter({ cur: charA, next, force, fellBack: stillIdx > 0 })) return;
   charA = next;
   wrap.dataset.character = cid;
   wrap.classList.remove('blink', 'blink-ready');
