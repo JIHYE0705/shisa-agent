@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HOME_DIR, loadConfig } from "./config.ts";
+import { HOME_DIR, loadConfig, readFileConfig } from "./config.ts";
 import { REQUEST_SCHEMA, SCHEMA, ask, think } from "./brain.ts";
 import { TODO_OPS_SCHEMA, parseOps } from "./todos.ts";
 import { Store } from "./store.ts";
@@ -29,36 +29,43 @@ function cfgOf(provider: "claude-code" | "codex" | "anthropic" | "gemini" | "ope
 
 test("loadConfig: 기본은 claude-code, 환경변수가 파일과 키보다 우선", () => {
   assert.ok(process.env.CY_AGENT_HOME && HOME_DIR === process.env.CY_AGENT_HOME && HOME_DIR.startsWith(tmpdir()), HOME_DIR);
-  const path = join(HOME_DIR, "config.json");
-  const prev = existsSync(path) ? readFileSync(path, "utf8") : null;
+  // 공유 테스트 홈(HOME_DIR)의 config.json 에 쓰지 않는다: 다른 테스트 파일(다른 프로세스)이 같은 때 loadConfig() 로 읽어서
+  // 그 사이 뇌가 local 로 보이면 흔들린다. 이 테스트만의 임시 파일을 readFileConfig 로 읽는다
+  const path = join(mkdtempSync(join(tmpdir(), "cy-prov-")), "config.json");
   const secret = "sk-test-not-a-real-key-1234567890abcdef";
-  try {
-    rmSync(path, { force: true });
-    assert.equal(loadConfig({}).brain.provider, "claude-code");
-    assert.equal(loadConfig({}).brain.geminiApiKey, undefined);
-    assert.equal(loadConfig({}).models.general, "claude-sonnet-5-5");
-    writeFileSync(path, JSON.stringify({ brain: { provider: "local", geminiApiKey: "file-gemini", openaiApiKey: "file-openai" }, models: { general: "claude-sonnet-5-5" } }));
-    assert.equal(loadConfig({}).brain.provider, "local");
-    assert.equal(loadConfig({ CY_AGENT_BRAIN: "openai" }).brain.provider, "openai");
-    assert.equal(loadConfig({}).brain.geminiApiKey, "file-gemini");
-    assert.equal(loadConfig({}).brain.openaiApiKey, "file-openai");
-    assert.equal(loadConfig({ GEMINI_API_KEY: "env-gemini" }).brain.geminiApiKey, "env-gemini");
-    assert.equal(loadConfig({ CY_AGENT_GEMINI_API_KEY: "ns-gemini", GEMINI_API_KEY: "env-gemini" }).brain.geminiApiKey, "ns-gemini");
-    assert.equal(loadConfig({ CY_AGENT_GEMINI_API_KEY: "  " }).brain.geminiApiKey, "file-gemini");
-    assert.equal(loadConfig({ OPENAI_API_KEY: "env-openai" }).brain.openaiApiKey, "env-openai");
-    assert.equal(loadConfig({ CY_AGENT_OPENAI_API_KEY: "ns-openai", OPENAI_API_KEY: "env-openai" }).brain.openaiApiKey, "ns-openai");
-    // 모르는 뇌: 죽지 않고 local + configNotes 한 줄(키 같은 값은 숨김)
-    const hid = loadConfig({ CY_AGENT_BRAIN: secret });
-    assert.equal(hid.brain.provider, "local");
-    assert.equal(JSON.stringify(hid.configNotes).includes(secret), false);
-    assert.match(hid.configNotes!.join("\n"), /brain\.provider/);
-    const nope = loadConfig({ CY_AGENT_BRAIN: "nope" });
-    assert.equal(nope.brain.provider, "local");
-    assert.match(nope.configNotes!.join("\n"), /nope/);
-  } finally {
-    if (prev === null) rmSync(path, { force: true });
-    else writeFileSync(path, prev);
+  const load = (env: NodeJS.ProcessEnv) => loadConfig(env, readFileConfig(path));
+  assert.equal(load({}).brain.provider, "claude-code");
+  assert.equal(load({}).brain.geminiApiKey, undefined);
+  assert.equal(load({}).models.general, "claude-sonnet-5-5");
+  writeFileSync(path, JSON.stringify({ brain: { provider: "local", geminiApiKey: "file-gemini", openaiApiKey: "file-openai" }, models: { general: "claude-sonnet-5-5" } }));
+  assert.equal(load({}).brain.provider, "local");
+  assert.equal(load({ CY_AGENT_BRAIN: "openai" }).brain.provider, "openai");
+  assert.equal(load({}).brain.geminiApiKey, "file-gemini");
+  assert.equal(load({}).brain.openaiApiKey, "file-openai");
+  assert.equal(load({ GEMINI_API_KEY: "env-gemini" }).brain.geminiApiKey, "env-gemini");
+  assert.equal(load({ CY_AGENT_GEMINI_API_KEY: "ns-gemini", GEMINI_API_KEY: "env-gemini" }).brain.geminiApiKey, "ns-gemini");
+  assert.equal(load({ CY_AGENT_GEMINI_API_KEY: "  " }).brain.geminiApiKey, "file-gemini");
+  assert.equal(load({ OPENAI_API_KEY: "env-openai" }).brain.openaiApiKey, "env-openai");
+  assert.equal(load({ CY_AGENT_OPENAI_API_KEY: "ns-openai", OPENAI_API_KEY: "env-openai" }).brain.openaiApiKey, "ns-openai");
+  // 모르는 뇌: 죽지 않고 local + configNotes 한 줄(키 같은 값은 숨김)
+  const hid = load({ CY_AGENT_BRAIN: secret });
+  assert.equal(hid.brain.provider, "local");
+  assert.equal(JSON.stringify(hid.configNotes).includes(secret), false);
+  assert.match(hid.configNotes!.join("\n"), /brain\.provider/);
+  const nope = load({ CY_AGENT_BRAIN: "nope" });
+  assert.equal(nope.brain.provider, "local");
+  assert.match(nope.configNotes!.join("\n"), /nope/);
+});
+
+// 테스트 파일들은 같은 테스트 홈을 함께 쓴다 — 거기 config.json 에 쓰는 테스트가 있으면 다른 파일의 loadConfig() 가 흔들린다
+test("테스트가 공유 테스트 홈의 config.json 에 쓰지 않는다", () => {
+  const dir = new URL(".", import.meta.url);
+  const bad: string[] = [];
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".test.ts"))) {
+    const src = readFileSync(new URL(f, dir), "utf8");
+    if (/join\(HOME_DIR,\s*"config\.json"\)/.test(src)) bad.push(f);
   }
+  assert.deepEqual(bad, []);
 });
 
 test("HTTP 모델: general이 Claude 기본이면 싼 공식 모델, 직접 지정하면 그 이름", () => {

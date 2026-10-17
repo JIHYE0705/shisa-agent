@@ -201,9 +201,10 @@ export function parseConfigText(raw: string): FileConfig {
   return v as FileConfig;
 }
 
-function readFileConfig(): FileConfig {
+// path: 테스트는 자기 임시 파일을 준다(같은 테스트 홈을 여러 테스트 파일이 동시에 읽으니 거기에 쓰면 다른 테스트가 흔들린다)
+export function readFileConfig(path = join(HOME_DIR, "config.json")): FileConfig {
   let raw: string;
-  try { raw = readFileSync(join(HOME_DIR, "config.json"), "utf8"); } catch (e: any) {
+  try { raw = readFileSync(path, "utf8"); } catch (e: any) {
     if (e?.code === "ENOENT") return {}; // 아직 없음(새 설치)
     return { [CONFIG_ERROR]: `설정 파일(config.json)을 읽지 못해(${e?.code ?? "오류"}) 안전 모드로 켰어요. 파일 권한을 확인한 뒤 데몬을 다시 켜 주세요` };
   }
