@@ -60,12 +60,16 @@ export type Proposal = {
 export type Briefing = { at: string; bubble: string; replyMd: string };
 // todoId·todoTitle: 사용자가 특정 할 일을 집어 들고 한 말(패널 '이 할 일로 채팅')
 // role system: 대화 안 기록 한 줄(적용한 할 일 변경·팝오버 제안/결과). 모델 답이 아니다
-export type ChatTurn = { threadId?: string; role: "user" | "assistant" | "system"; text: string; at: string; todoId?: string; todoTitle?: string; n?: number; via?: "cli"; clientId?: string; queuedAt?: string; edited?: string; attachments?: Attachment[] };
+export type ChatTurn = { threadId?: string; role: "user" | "assistant" | "system"; text: string; at: string; todoId?: string; todoTitle?: string; n?: number; via?: "cli"; clientId?: string; queuedAt?: string; edited?: string; attachments?: Attachment[]; by?: AnsweredBy };
+// 채팅에서 고른 뇌·모델(스레드에 기억 — chat_threads.pick). provider 없으면 기본 뇌, model 없으면 그 뇌의 기본 모델
+export type ChatPick = { provider?: string; model?: string };
+// 답한 뇌·모델(답 말풍선 아래 작은 글 — chat.model). label = 화면에 보일 짧은 이름
+export type AnsweredBy = { provider: string; model?: string; label: string; picked?: boolean };
 // edited: 사용자가 고쳐 다시 보낸 말이면 고친 때(화면 「수정됨」). 고치기 전 글은 store 에만(original_text — 감사용, API 로는 안 나간다) // via: 터미널 Claude Code 에서 이어 간 말(cli-sync.ts)
 // 사용자 말의 보낸 기록: clientId = 패널이 붙인 말 id(낙관적 사본과 짝 맞추기) · queuedAt = 줄 선 때(앞 답을 기다렸으면 — at 은 실제로 보낸 때)
 // editedAt·originalText: 고쳐 다시 보낸 말(Chat.edit) — 고친 때·고치기 전 글
 // attachments: 이 말에 붙인 첨부(attachments.ts — 대화 폴더로 옮긴 뒤의 것, chat.attachments 에 JSON)
-export type ChatSendMeta = { clientId?: string; queuedAt?: string; editedAt?: string; originalText?: string; attachments?: Attachment[] };
+export type ChatSendMeta = { clientId?: string; queuedAt?: string; editedAt?: string; originalText?: string; attachments?: Attachment[]; by?: AnsweredBy };
 // 대화 창(스레드). kind: chat=패널에서 연 대화, todo=할 일 하나에 붙은 대화(팝오버 문답이 쌓임), hover=캐릭터 호버 입력
 export type ThreadKind = "chat" | "todo" | "hover";
 export const THREAD_KINDS: readonly ThreadKind[] = ["chat", "todo", "hover"];
@@ -73,6 +77,7 @@ export type Thread = {
   id: string; title: string; kind: ThreadKind; todoId?: string; created: string; updated: string; archived: boolean;
   preview?: string; count: number; // 마지막 말(시스템 줄 빼고, 120자) · 말 수
   cliSync?: boolean; // 이 대화에서 난 run 에 SDK 세션이 있다 — 터미널 Claude Code 에서 이어 간 말을 불러올 수 있음(패널 ↻)
+  pick?: ChatPick; // 이 대화에서 고른 뇌·모델(없으면 기본)
 };
 export const LEGACY_THREAD = "legacy"; // 스레드 전 기록을 모은 "이전 대화"
 
@@ -173,7 +178,10 @@ export class Store {
     const chatCols = new Set((this.db.prepare("PRAGMA table_info(chat)").all() as any[]).map((c) => c.name));
     // edited_at·original_text: 고쳐 다시 보낸 말 · hidden_at: 말을 고쳐서 걷힌 뒤쪽 말(지우지 않고 숨김 — 기록은 남는다)
     for (const name of ["todo_id", "todo_title", "thread_id", "via", "client_id", "queued_at", "edited_at", "original_text", "hidden_at", "attachments"]) if (!chatCols.has(name)) this.db.exec(`ALTER TABLE chat ADD COLUMN ${name} TEXT`);
+    if (!chatCols.has("model")) this.db.exec("ALTER TABLE chat ADD COLUMN model TEXT"); // 답한 뇌·모델(AnsweredBy JSON)
     this.db.exec("CREATE INDEX IF NOT EXISTS chat_thread ON chat(thread_id, n)");
+    const threadCols = new Set((this.db.prepare("PRAGMA table_info(chat_threads)").all() as any[]).map((c) => c.name));
+    if (!threadCols.has("pick")) this.db.exec("ALTER TABLE chat_threads ADD COLUMN pick TEXT"); // 고른 뇌·모델(ChatPick JSON)
     const propCols = new Set((this.db.prepare("PRAGMA table_info(proposals)").all() as any[]).map((c) => c.name));
     if (!propCols.has("thread_id")) this.db.exec("ALTER TABLE proposals ADD COLUMN thread_id TEXT");
     if (!propCols.has("base")) this.db.exec("ALTER TABLE proposals ADD COLUMN base TEXT");
@@ -636,9 +644,9 @@ export class Store {
   // meta: 사용자 말의 clientId·queuedAt(ChatSendMeta)
   addChat(role: ChatTurn["role"], text: string, at = now(), todo?: { id: string; title: string }, threadId = LEGACY_THREAD, via?: "cli", meta: ChatSendMeta = {}): number {
     if (threadId === LEGACY_THREAD) this.db.prepare("INSERT OR IGNORE INTO chat_threads (id, title, kind, created, updated) VALUES (?, '이전 대화', 'chat', ?, ?)").run(LEGACY_THREAD, at, at);
-    const r = this.db.prepare("INSERT INTO chat (role, text, at, todo_id, todo_title, thread_id, via, client_id, queued_at, edited_at, original_text, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    const r = this.db.prepare("INSERT INTO chat (role, text, at, todo_id, todo_title, thread_id, via, client_id, queued_at, edited_at, original_text, attachments, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run(role, text, at, todo?.id ?? null, todo?.title ?? null, threadId, via === "cli" ? "cli" : null, meta.clientId ?? null, meta.queuedAt ?? null, meta.editedAt ?? null, meta.originalText ?? null,
-        meta.attachments?.length ? JSON.stringify(meta.attachments.map(({ path: _p, ...a }) => a)) : null);
+        meta.attachments?.length ? JSON.stringify(meta.attachments.map(({ path: _p, ...a }) => a)) : null, meta.by ? JSON.stringify(meta.by) : null);
     this.db.prepare("UPDATE chat_threads SET updated = MAX(updated, ?) WHERE id = ?").run(at, threadId);
     return Number(r.lastInsertRowid);
   }
@@ -685,8 +693,13 @@ export class Store {
       .all(...[opts.archived ? 1 : 0, ...(opts.before ? [opts.before] : []), opts.limit ?? 50]) as any[];
     return rows.map(threadRow);
   }
-  editThread(id: string, patch: { title?: string; archived?: boolean }): Thread | undefined {
+  // pick: 고른 뇌·모델(null = 기본으로 — 지운다)
+  editThread(id: string, patch: { title?: string; archived?: boolean; pick?: ChatPick | null }): Thread | undefined {
     if (!this.thread(id)) return undefined;
+    if (patch.pick !== undefined) {
+      const p = patch.pick && (patch.pick.provider || patch.pick.model) ? { ...(patch.pick.provider ? { provider: patch.pick.provider } : {}), ...(patch.pick.model ? { model: patch.pick.model } : {}) } : null;
+      this.db.prepare("UPDATE chat_threads SET pick = ? WHERE id = ?").run(p ? JSON.stringify(p) : null, id);
+    }
     if (patch.title !== undefined) this.db.prepare("UPDATE chat_threads SET title = ? WHERE id = ?").run(patch.title, id);
     if (patch.archived !== undefined) this.db.prepare("UPDATE chat_threads SET archived = ? WHERE id = ?").run(patch.archived ? 1 : 0, id);
     return this.thread(id);
@@ -706,7 +719,7 @@ export class Store {
   }
   // 그 스레드 말, 오래된 것 먼저. before = 메시지 n 커서(그보다 이전 limit개)
   threadMessages(id: string, opts: { limit?: number; before?: number } = {}): ChatTurn[] {
-    const rows = this.db.prepare(`SELECT n, role, text, at, todo_id, todo_title, via, client_id, queued_at, edited_at, attachments FROM chat WHERE thread_id = ? AND hidden_at IS NULL ${opts.before ? "AND n < ?" : ""} ORDER BY n DESC LIMIT ?`)
+    const rows = this.db.prepare(`SELECT n, role, text, at, todo_id, todo_title, via, client_id, queued_at, edited_at, attachments, model FROM chat WHERE thread_id = ? AND hidden_at IS NULL ${opts.before ? "AND n < ?" : ""} ORDER BY n DESC LIMIT ?`)
       .all(...[id, ...(opts.before ? [opts.before] : []), opts.limit ?? 100]) as any[];
     return rows.reverse().map((r) => ({ ...turnRow(r), n: r.n }));
   }
@@ -743,13 +756,20 @@ function threadRow(r: any): Thread {
     id: r.id, title: r.title, kind, ...(r.todo_id ? { todoId: r.todo_id } : {}), created: r.created, updated: r.updated, archived: !!r.archived,
     ...(r.last ? { preview: String(r.last).replace(/\s+/g, " ").trim().slice(0, 120) } : {}), count: Number(r.cnt ?? 0),
     ...(r.cli ? { cliSync: true } : {}),
+    ...(jsonObj(r.pick) ? { pick: jsonObj(r.pick) as ChatPick } : {}),
   };
 }
 
 function turnRow(r: any): ChatTurn {
   return { role: r.role, text: r.text, at: r.at, ...(r.todo_id ? { todoId: r.todo_id, todoTitle: r.todo_title ?? "" } : {}), ...(r.via === "cli" ? { via: "cli" as const } : {}),
     ...(r.client_id ? { clientId: r.client_id } : {}), ...(r.queued_at ? { queuedAt: r.queued_at } : {}), ...(r.edited_at ? { edited: r.edited_at } : {}),
-    ...(attachmentsOf(r.attachments) ? { attachments: attachmentsOf(r.attachments) } : {}) };
+    ...(attachmentsOf(r.attachments) ? { attachments: attachmentsOf(r.attachments) } : {}),
+    ...(r.role === "assistant" && jsonObj(r.model) && typeof (jsonObj(r.model) as AnsweredBy).label === "string" ? { by: jsonObj(r.model) as AnsweredBy } : {}) };
+}
+// JSON 글 → 객체(깨졌거나 객체가 아니면 undefined)
+function jsonObj(raw: unknown): Record<string, unknown> | undefined {
+  if (typeof raw !== "string" || !raw) return undefined;
+  try { const v = JSON.parse(raw); return v && typeof v === "object" && !Array.isArray(v) ? v : undefined; } catch { return undefined; }
 }
 // chat.attachments(JSON) → 첨부 목록. 깨졌거나 비었으면 undefined
 function attachmentsOf(raw: unknown): Attachment[] | undefined {

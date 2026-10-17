@@ -188,6 +188,15 @@ function activeKey(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv): { p: Key
   const key = p === "gemini" ? geminiKey(cfg, env) : p === "openai" ? openaiKey(cfg, env) : p === "genspark" ? gensparkKey(cfg, env) : anthropicKey(cfg, env);
   return key ? { p: p as KeyProvider, key } : undefined;
 }
+// 그 뇌(지금 고른 뇌가 아니어도)의 키가 인증 오류·크레딧 없음을 받았나 — 채팅 모델 고르기에서 준비 안 된 뇌를 가린다
+export function keyTrouble(p: string, cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv = process.env): "auth" | "credit" | undefined {
+  if (!KEY_PROVIDERS.includes(p)) return undefined;
+  const key = p === "gemini" ? geminiKey(cfg, env) : p === "openai" ? openaiKey(cfg, env) : p === "genspark" ? gensparkKey(cfg, env) : anthropicKey(cfg, env);
+  if (!key) return undefined;
+  if (badKeys.get(p as KeyProvider) === fingerprint(key)) return "auth";
+  if (noCredit.get(p as KeyProvider) === fingerprint(key)) return "credit";
+  return undefined;
+}
 // 지금 쓰는 키가 인증 오류를 받은 그 키인가(뇌가 키 방식이 아니면 false)
 export function brainAuthFailed(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv = process.env): boolean {
   const a = activeKey(cfg, env);
@@ -737,6 +746,10 @@ export function defaultExecFile(file: string, args: readonly string[], opts: { i
 // 셸은 읽기 전용 샌드박스, 세션 파일은 남기지 않는다(--ephemeral).
 export const CODEX_ARGS = ["exec", "--skip-git-repo-check", "--json", "--sandbox", "read-only", "--ephemeral", "--ignore-user-config", "-"] as const;
 export const CODEX_TIMEOUT_MS = 120_000;
+// 모델을 고르면 -m <모델> 을 프롬프트(-) 앞에. 안 고르면 CODEX_ARGS 그대로(Codex 기본 모델)
+export function codexArgs(model?: string): readonly string[] {
+  return model && /^[A-Za-z0-9._:/-]{1,100}$/.test(model) && !model.startsWith("claude-") ? [...CODEX_ARGS.slice(0, -1), "-m", model, "-"] : CODEX_ARGS;
+}
 
 export type CodexUsage = { inTokens: number; outTokens: number };
 
@@ -753,7 +766,7 @@ export function parseCodexUsage(stdout: string): CodexUsage {
   return { inTokens, outTokens };
 }
 
-export type CodexOpts = { blocks?: ContentBlock[]; system?: string; execFile?: ExecFileLike; commandExists?: (name: string) => boolean; timeoutMs?: number };
+export type CodexOpts = { blocks?: ContentBlock[]; system?: string; model?: string; execFile?: ExecFileLike; commandExists?: (name: string) => boolean; timeoutMs?: number };
 
 // codex exec 한 번 → 마지막 답의 JSON + 토큰 수. 실패는 짧은 한국어(출력 본문은 넣지 않는다)
 export async function codexExec(prompt: string, schema: unknown, opts: CodexOpts = {}): Promise<{ out: unknown; usage: CodexUsage }> {
@@ -765,7 +778,7 @@ export async function codexExec(prompt: string, schema: unknown, opts: CodexOpts
   const input = [opts.system ?? "", prompt, ...att, "도구를 부르지 말고 코드도 고치지 마라. 아래 JSON 스키마에 맞는 객체 하나만 답하라.", JSON.stringify(schema)].filter(Boolean).join("\n\n");
   let stdout = "";
   try {
-    const result = await exec("codex", CODEX_ARGS, { input, timeout: opts.timeoutMs ?? CODEX_TIMEOUT_MS, cwd: tmpdir() });
+    const result = await exec("codex", codexArgs(opts.model), { input, timeout: opts.timeoutMs ?? CODEX_TIMEOUT_MS, cwd: tmpdir() });
     stdout = result.stdout;
   } catch (e) {
     throw new Error(/초과/.test(String((e as Error)?.message ?? "")) ? "codex 실행 시간이 초과됐어요." : "codex 실행이 실패했어요.");

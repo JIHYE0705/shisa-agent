@@ -70,7 +70,8 @@ export type BusHandlers = {
   // parentRunId: 세션 창에서 그 run 의 원래 대화로 이어 말할 때(새 채팅 run 이 그 run 에 연결되고 답이 그 run 기록에도)
   // clientId: 패널이 붙인 말 id(낙관적 사본 짝 맞추기). 결과의 queued·position = 같은 스레드의 앞 답을 기다리며 줄 섰나·그 스레드 안의 차례(다른 스레드는 동시에 돈다)
   // attachments: 먼저 올려 둔 첨부 id(POST /chat/attachments). { error: "bad_attachment", message } → 400
-  chat(text: string, opts?: { threadId?: string; todoId?: string; kind?: "chat" | "hover"; parentRunId?: string; model?: string; clientId?: string; attachments?: string[] }): string | { chatId: string; threadId: string; queued?: boolean; position?: number; clientId?: string } | { error: string; message?: string };
+  // pick: 채팅 입력줄에서 고른 뇌·모델(provider·model) — 이번 말에 쓰고 그 대화에 기억. null = 기본으로(useDefault). { error: "bad_model", message } → 400
+  chat(text: string, opts?: { threadId?: string; todoId?: string; kind?: "chat" | "hover"; parentRunId?: string; model?: string; pick?: { provider?: string; model?: string } | null; clientId?: string; attachments?: string[] }): string | { chatId: string; threadId: string; queued?: boolean; position?: number; clientId?: string } | { error: string; message?: string };
   // 채팅 첨부(attachments.ts). 없으면 /chat/attachments* 503
   // stage: 올리기(본문 = 파일 바이트) → { attachment } | { error }(너무 큼·빔) · file: 저장 파일 절대 경로(첨부 폴더 밖·모양이 틀리면 undefined → 404)
   // open: 기본 앱으로 열기
@@ -82,7 +83,7 @@ export type BusHandlers = {
   chatStop?(chatId: string): boolean; // 답하던 대화 멈추기. 모르는·이미 끝난 chatId 면 false → 404. 없으면 503
   chatNow?(chatId: string): boolean; // 기다리던 대화 지금 보내기(그 스레드에서 답하던 건 멈춤). 모르는·이미 끝난 chatId 면 false → 404. 없으면 503
   // 마지막 사용자 말 고치기(그 턴을 다시) · 줄 선 말 고치기(글만). 결과 { error } 면 404(no_thread)·409(그 밖). 없으면 503
-  chatEdit?(threadId: string, n: number, text: string, opts: { stopAgents?: boolean; clientId?: string; model?: string }): Promise<{ error: string; [k: string]: unknown } | Record<string, unknown>>;
+  chatEdit?(threadId: string, n: number, text: string, opts: { stopAgents?: boolean; clientId?: string; model?: string; pick?: { provider?: string; model?: string } | null }): Promise<{ error: string; [k: string]: unknown } | Record<string, unknown>>;
   chatEditQueued?(chatId: string, text: string): { error: string; [k: string]: unknown } | Record<string, unknown>;
   todoExists?(id: string): boolean; // POST /chat 의 todoId 확인용(없는 id면 404)
   chatHistory(): unknown;
@@ -116,6 +117,8 @@ export type BusHandlers = {
   repos?(): unknown; // 세션 창 "새 작업" 레포 목록
   // 세션 창에서 고를 수 있는 모델(models.ts). 요청의 model 은 이 안의 id 만. 없으면 GET /models 503, model 은 무시 못 하고 400
   models?(): { choices: { id: string; label: string; role: string }[]; defaults: { fix: string; chat: string } };
+  // 채팅에서 고를 수 있는 뇌·모델(chat-models.ts). fresh = 목록 다시 받기. 없으면 GET /chat/models 503
+  chatModels?(fresh: boolean): Promise<unknown>;
   // 채팅 슬래시 명령 목록(commands.ts, 캐시 10분). 없으면 GET /commands 503
   commands?(): Promise<{ name: string; description: string; argumentHint: string }[]>;
   newTask?(repo: string, text: string): Promise<{ ok: boolean; status?: number; error?: string; [k: string]: unknown }>; // 명시 요청 제안(승인 대기)
@@ -157,12 +160,29 @@ export type PermissionsApi = { list(): unknown; remove(id: string): boolean };
 export type ThreadsApi = {
   list(opts: { limit: number; before?: string; archived?: boolean }): unknown;
   create(t: { title?: string; kind?: "chat" | "todo" | "hover"; todoId?: string }): unknown; // "no_todo" → 404
-  edit(id: string, patch: { title?: string; archived?: boolean }): unknown;
+  edit(id: string, patch: { title?: string; archived?: boolean; pick?: { provider?: string; model?: string } | null }): unknown;
   remove(id: string): boolean;
   messages(id: string, opts: { limit: number; before?: number }): unknown;
 };
 export type RunsApi = Pick<RunRegistry, "listRuns" | "getRun" | "sendMessage" | "setModel" | "interrupt" | "stop" | "subscribe" | "active">
   & Partial<Pick<RunRegistry, "cancelMessage" | "sendMessageNow">>; // 전달 대기 중인 말 빼기·지금 보내기(없으면 503)
+
+// 채팅 요청의 뇌·모델 고르기: provider(아는 뇌, 로컬 빼고)가 있으면 model 은 그 뇌의 모델 이름(모양만 본다) — 이번 말에 쓰고 그 대화에 기억.
+// provider 가 없으면 model 은 예전처럼 작업 세션 창 모델(GET /models 목록 안, bodyModel) — 이때 pick 은 undefined(그 대화에 기억한 것).
+// useDefault: true 면 null(기본으로 — 기억도 지운다). 그 뇌에 맞는 이름인지는 Chat.send 가 본다(bad_model → 400)
+export const CHAT_PICK_PROVIDERS = ["claude-code", "codex", "anthropic", "gemini", "openai", "genspark"];
+const PICK_MODEL = /^[A-Za-z0-9._:/-]{1,100}$/;
+export function bodyPick(body: any): { provider?: string; model?: string } | null | undefined {
+  if (body?.useDefault !== undefined && typeof body.useDefault !== "boolean") throw new BadRequest("useDefault must be boolean");
+  const provider = body?.provider ?? undefined, model = provider !== undefined ? body?.model ?? undefined : undefined;
+  if (provider !== undefined && (typeof provider !== "string" || !CHAT_PICK_PROVIDERS.includes(provider))) throw new BadRequest(`provider must be one of ${CHAT_PICK_PROVIDERS.join("|")}`);
+  if (model !== undefined && (typeof model !== "string" || !PICK_MODEL.test(model))) throw new BadRequest("model must be a model name ([A-Za-z0-9._:/-], 1-100)");
+  if (body?.useDefault === true) {
+    if (provider !== undefined) throw new BadRequest("useDefault cannot be combined with provider");
+    return null;
+  }
+  return provider !== undefined ? { provider, ...(model ? { model } : {}) } : undefined;
+}
 
 // 요청 본문의 model: 없으면 undefined(기본값), GET /models 목록 밖이면 400
 function bodyModel(h: BusHandlers, body: any): string | undefined {
@@ -445,6 +465,10 @@ export class Bus {
     if (req.method === "GET" && url.pathname === "/connections") {
       if (!h.connections) return json(res, 503, { error: "connections unavailable" });
       return json(res, 200, await h.connections.list());
+    }
+    if (req.method === "GET" && url.pathname === "/chat/models") {
+      if (!h.chatModels) return json(res, 503, { error: "chat models unavailable" });
+      return json(res, 200, await h.chatModels(url.searchParams.get("fresh") === "1"));
     }
     if (req.method === "GET" && url.pathname === "/models") {
       if (!h.models) return json(res, 503, { error: "models unavailable" });
@@ -899,11 +923,12 @@ export class Bus {
         if (threadId !== undefined && (typeof threadId !== "string" || !/^[\w-]{1,64}$/.test(threadId))) throw new BadRequest("threadId must be a thread id");
         if (kind !== undefined && kind !== "chat" && kind !== "hover") throw new BadRequest("kind must be chat|hover");
         if (parentRunId !== undefined && (typeof parentRunId !== "string" || !/^[\w-]{1,64}$/.test(parentRunId))) throw new BadRequest("parentRunId must be a run id");
-        const model = bodyModel(h, body);
-        const opts = { ...(threadId ? { threadId } : {}), ...(todoId ? { todoId } : {}), ...(kind ? { kind } : {}), ...(parentRunId ? { parentRunId } : {}), ...(model ? { model } : {}), ...(clientId ? { clientId } : {}), ...(atts?.length ? { attachments: atts as string[] } : {}) };
+        const pick = bodyPick(body);
+        const model = body.provider === undefined ? bodyModel(h, body) : undefined;
+        const opts = { ...(threadId ? { threadId } : {}), ...(todoId ? { todoId } : {}), ...(kind ? { kind } : {}), ...(parentRunId ? { parentRunId } : {}), ...(model ? { model } : {}), ...(pick !== undefined ? { pick } : {}), ...(clientId ? { clientId } : {}), ...(atts?.length ? { attachments: atts as string[] } : {}) };
         const r = Object.keys(opts).length ? h.chat(text, opts) : h.chat(text);
         if (typeof r === "string") return json(res, 202, { chatId: r });
-        if ("error" in r && r.error === "bad_attachment") return json(res, 400, { error: r.message ?? "bad attachment" });
+        if ("error" in r && (r.error === "bad_attachment" || r.error === "bad_model")) return json(res, 400, { error: r.message ?? r.error.replace("_", " ") });
         if ("error" in r) return json(res, 404, { error: r.error === "no_todo" ? "no such todo" : "no such thread" });
         return json(res, 202, r);
       }
@@ -922,9 +947,10 @@ export class Bus {
         if (body.stopAgents !== undefined && typeof body.stopAgents !== "boolean") throw new BadRequest("stopAgents must be boolean");
         const clientId = body.clientId ?? undefined;
         if (clientId !== undefined && (typeof clientId !== "string" || !/^[\w-]{1,64}$/.test(clientId))) throw new BadRequest("clientId must match [\\w-]{1,64}");
-        const model = bodyModel(h, body);
-        const r = await h.chatEdit(me[1], Number(me[2]), text, { ...(body.stopAgents ? { stopAgents: true } : {}), ...(clientId ? { clientId } : {}), ...(model ? { model } : {}) });
-        if ("error" in r) return json(res, r.error === "no_thread" ? 404 : 409, r);
+        const pick = bodyPick(body);
+        const model = body.provider === undefined ? bodyModel(h, body) : undefined;
+        const r = await h.chatEdit(me[1], Number(me[2]), text, { ...(body.stopAgents ? { stopAgents: true } : {}), ...(clientId ? { clientId } : {}), ...(model ? { model } : {}), ...(pick !== undefined ? { pick } : {}) });
+        if ("error" in r) return json(res, r.error === "no_thread" ? 404 : r.error === "bad_model" ? 400 : 409, r);
         return json(res, 202, r);
       }
       // 줄 서 있는 말 고치기 — 글만(차례 그대로)
@@ -964,8 +990,17 @@ export class Bus {
         }
         if (th[2] === "delete") return h.chatThreads.remove(th[1]) ? json(res, 200, { ok: true }) : json(res, 404, { error: "no such thread" });
         const body = await readJson(req);
-        const patch: { title?: string; archived?: boolean } = {};
-        for (const k of Object.keys(body)) if (k !== "title" && k !== "archived") throw new BadRequest(`unknown key: ${k}`);
+        const patch: { title?: string; archived?: boolean; pick?: { provider?: string; model?: string } | null } = {};
+        for (const k of Object.keys(body)) if (k !== "title" && k !== "archived" && k !== "pick") throw new BadRequest(`unknown key: ${k}`);
+        // pick: 이 대화에서 고른 뇌·모델({ provider?, model? }) · null = 기본으로
+        if (body.pick !== undefined) {
+          if (body.pick === null) patch.pick = null;
+          else if (!body.pick || typeof body.pick !== "object" || Array.isArray(body.pick) || Object.keys(body.pick).some((k) => k !== "provider" && k !== "model")) throw new BadRequest("pick must be { provider?, model? } or null");
+          else {
+            if (body.pick.provider === undefined && body.pick.model !== undefined) throw new BadRequest("pick.model needs pick.provider");
+            patch.pick = bodyPick({ provider: body.pick.provider, model: body.pick.model }) ?? null;
+          }
+        }
         const t = title(body.title);
         if (t !== undefined) patch.title = t;
         if (body.archived !== undefined) {

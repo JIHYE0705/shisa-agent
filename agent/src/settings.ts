@@ -9,7 +9,8 @@ import { readFileSync, renameSync, writeFileSync, mkdirSync, existsSync } from "
 import { dirname, join } from "node:path";
 import { isAbsolute } from "node:path";
 import { BRAIN_PROVIDERS, DEFAULT_GENERAL_MODEL, HOME_DIR, configErrorText, type BrainProvider, type Config } from "./config.ts";
-import { modelLabel } from "./models.ts";
+import { BRAIN_LABEL, CHAT_ROLES, modelFits, modelLabel, roleModel, usesClaudeModels, type ChatRole } from "./models.ts";
+import { homedir } from "node:os";
 import { gskLoginKey } from "./providers.ts";
 import { AUTO_MERGE_MAX, inAutoMerge, normSlug } from "./auto-merge.ts";
 import { STEP_HEAD } from "./briefing-sources.ts";
@@ -72,6 +73,10 @@ export type SettingsView = {
   onboarded: boolean;
   readSessions: boolean;
   configPath: string;
+  configPathLabel: string; // 화면용(홈은 ~ 로 줄임)
+  // 지금 뇌의 세부 모델 칸(설정 창 「○○ 세부 모델」). claude: Claude 모델 목록(modelOptions)에서 고른다(models 로 저장),
+  // 그 밖의 뇌: 그 뇌 목록(GET /chat/models)에서 고르고 brainModels 로 저장. enabled=false 면 이유(why)와 함께 막아 둔다
+  modelSlots: { provider: BrainProvider; title: string; claude: boolean; roles: { role: ModelRole; label: string; value: string | null; enabled: boolean; why?: string }[] };
 };
 export type BrainKey = "gemini" | "openai" | "anthropic" | "genspark";
 const BRAIN_KEY_FIELD: Record<BrainKey, "geminiApiKey" | "openaiApiKey" | "anthropicApiKey" | "gensparkApiKey"> = { gemini: "geminiApiKey", openai: "openaiApiKey", anthropic: "anthropicApiKey", genspark: "gensparkApiKey" };
@@ -89,6 +94,8 @@ export type SettingsPatch = {
   lunchAlert?: boolean;
   workStart?: string; lunchTime?: string; workEnd?: string; workDays?: number[]; startAlert?: boolean; leaveAlert?: boolean;
   character?: CharacterId;
+  // Claude 가 아닌 뇌의 세부 모델: { provider, models: { 역할: 이름 | null(그 뇌 기본으로) } } — 그 뇌 칸만 바꾼다
+  brainModels?: { provider: BrainProvider; models: Partial<Record<ChatRole, string | null>> };
 };
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,100}$/;
 export type PutResult = { ok: true; settings: SettingsView; applied: "live"; restartNeeded: false; note?: string } | { ok: false; status: 400 | 409 | 500; error: string };
@@ -101,7 +108,7 @@ export class ConfigFileError extends Error {}
 export function validatePatch(body: unknown, cfg: Pick<Config, "models">): SettingsPatch {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new SettingsError("json object required");
   const b = body as Record<string, unknown>;
-  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions", "calendarAlert", "lunchAlert", "workStart", "lunchTime", "workEnd", "workDays", "startAlert", "leaveAlert", "character"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
+  for (const k of Object.keys(b)) if (!["models", "brainModels", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions", "calendarAlert", "lunchAlert", "workStart", "lunchTime", "workEnd", "workDays", "startAlert", "leaveAlert", "character"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
   const out: SettingsPatch = {};
   if (b.models !== undefined) {
     if (!b.models || typeof b.models !== "object" || Array.isArray(b.models)) throw new SettingsError("models must be an object");
@@ -113,6 +120,23 @@ export function validatePatch(body: unknown, cfg: Pick<Config, "models">): Setti
       m[k as ModelRole] = v;
     }
     out.models = m;
+  }
+  if (b.brainModels !== undefined) {
+    const bm = b.brainModels as Record<string, unknown>;
+    if (!bm || typeof bm !== "object" || Array.isArray(bm)) throw new SettingsError("brainModels must be an object");
+    for (const k of Object.keys(bm)) if (k !== "provider" && k !== "models") throw new SettingsError(`unknown key: brainModels.${k}`);
+    const p = bm.provider;
+    if (typeof p !== "string" || !(BRAIN_PROVIDERS as readonly string[]).includes(p) || p === "local" || usesClaudeModels(p)) throw new SettingsError("brainModels.provider must be codex|gemini|openai|genspark (Claude 뇌는 models 로)");
+    const ms = bm.models as Record<string, unknown>;
+    if (!ms || typeof ms !== "object" || Array.isArray(ms)) throw new SettingsError("brainModels.models must be an object");
+    const m: Partial<Record<ChatRole, string | null>> = {};
+    for (const [k, v] of Object.entries(ms)) {
+      if (!(CHAT_ROLES as readonly string[]).includes(k)) throw new SettingsError(`unknown model role for ${p}: ${k}`);
+      if (v === null || v === "") { m[k as ChatRole] = null; continue; }
+      if (typeof v !== "string" || !modelFits(p, v)) throw new SettingsError(`brainModels.models.${k} must be a ${p} model name`);
+      m[k as ChatRole] = v;
+    }
+    out.brainModels = { provider: p as BrainProvider, models: m };
   }
   if (b.briefing !== undefined) {
     if (!b.briefing || typeof b.briefing !== "object" || Array.isArray(b.briefing)) throw new SettingsError("briefing must be an object");
@@ -254,6 +278,15 @@ export function mergeConfigFile(path: string, patch: SettingsPatch): void {
   const obj = (x: unknown) => (x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, unknown>) : {});
   const next = { ...cur };
   if (patch.models && Object.keys(patch.models).length) next.models = { ...obj(cur.models), ...patch.models };
+  if (patch.brainModels) {
+    const all = { ...obj(cur.brainModels) };
+    const mine: Record<string, unknown> = { ...obj(all[patch.brainModels.provider]) };
+    for (const [r, v] of Object.entries(patch.brainModels.models)) { if (v) mine[r] = v; else delete mine[r]; }
+    if (Object.keys(mine).length) all[patch.brainModels.provider] = mine;
+    else delete all[patch.brainModels.provider];
+    if (Object.keys(all).length) next.brainModels = all;
+    else delete next.brainModels;
+  }
   if (patch.briefing?.exclude) next.briefing = { ...obj(cur.briefing), exclude: patch.briefing.exclude };
   if (patch.phrases && Object.keys(patch.phrases).length) {
     const p = mergePhrases(obj(cur.phrases), patch.phrases);
@@ -270,7 +303,18 @@ export function mergeConfigFile(path: string, patch: SettingsPatch): void {
       else delete br[f];
     }
     next.brain = br;
-    if (patch.brain.model !== undefined) {
+    // 설치 마법사가 고른 모델: Claude 가 아닌 뇌면 그 뇌 칸(brainModels)에 — models.general(Claude Code 가 쓰는 값)은 그대로
+    const bp = String(br.provider ?? "claude-code");
+    if (patch.brain.model !== undefined && !usesClaudeModels(bp) && bp !== "local") {
+      const all = { ...obj(next.brainModels) };
+      const mine: Record<string, unknown> = { ...obj(all[bp]) };
+      if (patch.brain.model) mine.general = patch.brain.model;
+      else delete mine.general;
+      if (Object.keys(mine).length) all[bp] = mine;
+      else delete all[bp];
+      if (Object.keys(all).length) next.brainModels = all;
+      else delete next.brainModels;
+    } else if (patch.brain.model !== undefined) {
       const m = { ...obj(next.models) };
       if (patch.brain.model) m.general = patch.brain.model;
       else delete m.general;
@@ -327,6 +371,13 @@ export function briefingExcludeOf(cfg: Pick<Config, "briefing" | "readSessions">
   return ex;
 }
 
+// 화면에 홈 경로를 그대로 보이지 않게: /Users/me/.cy-agent/config.json → ~/.cy-agent/config.json
+export function shortHome(path: string, home = homedir()): string {
+  if (!home) return path;
+  const h = home.replace(/[\\/]+$/, "");
+  return path === h ? "~" : path.startsWith(`${h}/`) || path.startsWith(`${h}\\`) ? `~${path.slice(h.length)}` : path;
+}
+
 export class Settings {
   private cfg: Config;
   private path: string;
@@ -355,7 +406,7 @@ export class Settings {
       calendarAlert: calendarAlertOf(c.calendarAlert),
       ...workHoursOf(c as unknown as Record<string, unknown>), // lunchAlert·근무 시간(새 배열이라 그대로 내보낸다)
       brain: {
-        provider: c.brain?.provider ?? "claude-code", model: c.models.general,
+        provider: c.brain?.provider ?? "claude-code", model: roleModel(c, "general") ?? "",
         // genspark: 설정에 키가 있거나, Genspark 를 고른 채 gsk login 파일에 키가 있으면 true(키 값은 내보내지 않는다).
         // 고르지 않았으면 gsk login 만 해 둔 것으로 「연결됨」이 되지 않게 파일은 보지 않는다
         keys: { gemini: !!c.brain?.geminiApiKey, openai: !!c.brain?.openaiApiKey, anthropic: !!c.brain?.anthropicApiKey, genspark: !!c.brain?.gensparkApiKey || (c.brain?.provider === "genspark" && !!gskLoginKey(this.env)) },
@@ -367,6 +418,8 @@ export class Settings {
       onboarded: c.onboarded !== false,
       readSessions: c.readSessions !== false,
       configPath: this.path,
+      configPathLabel: shortHome(this.path),
+      modelSlots: this.slots(),
     };
   }
 
@@ -384,6 +437,7 @@ export class Settings {
       return { ok: false, status: 500, error: `설정 파일을 쓰지 못했어요(${e?.code ?? "오류"}). 폴더 권한·남은 공간을 확인해 주세요` };
     }
     if (patch.models) Object.assign(this.cfg.models, patch.models);
+    if (patch.brainModels) this.setBrainModels(patch.brainModels.provider, patch.brainModels.models);
     if (patch.briefing?.exclude) this.cfg.briefing = { ...(this.cfg.briefing ?? {}), exclude: patch.briefing.exclude };
     if (patch.phrases) {
       this.cfg.phrases = mergePhrases(this.cfg.phrases ?? {}, patch.phrases) as Record<string, string[]>;
@@ -399,7 +453,11 @@ export class Settings {
         else delete b[f];
       }
       this.cfg.brain = b; // brain.ts·connections 가 매번 cfg.brain 을 읽으니 다음 질문부터 바로
-      if (patch.brain.model !== undefined) this.cfg.models.general = patch.brain.model || DEFAULT_GENERAL_MODEL;
+      if (patch.brain.model !== undefined) {
+        const bp = b.provider ?? "claude-code";
+        if (!usesClaudeModels(bp) && bp !== "local") this.setBrainModels(bp, { general: patch.brain.model || null });
+        else this.cfg.models.general = patch.brain.model || DEFAULT_GENERAL_MODEL;
+      }
     }
     if (patch.user) this.cfg.user = { aliases: this.cfg.user?.aliases ?? [], ...(patch.user.name ? { name: patch.user.name } : {}) };
     if (patch.repoRoots) this.cfg.repoRoots = [...patch.repoRoots];
@@ -417,6 +475,37 @@ export class Settings {
       ok: true, settings: this.view(), applied: "live", restartNeeded: false,
       ...(locked.length ? { note: `${locked.map((r) => MODEL_ENV[r as ModelRole]).join(", ")} 환경변수가 있어서 데몬을 다시 켜면 그 값으로 돌아가요` } : {}),
     };
+  }
+
+  // 메모리 cfg 의 그 뇌 세부 모델(null = 지우기 — 그 뇌 기본)
+  private setBrainModels(p: BrainProvider, models: Partial<Record<ChatRole, string | null>>) {
+    const all = { ...(this.cfg.brainModels ?? {}) };
+    const mine = { ...(all[p] ?? {}) };
+    for (const [r, v] of Object.entries(models)) { if (v) mine[r as ChatRole] = v; else delete mine[r as ChatRole]; }
+    if (Object.keys(mine).length) all[p] = mine;
+    else delete all[p];
+    this.cfg.brainModels = all;
+  }
+
+  // 지금 뇌의 세부 모델 칸. 코드 작업은 늘 Claude Code 라 Claude Code 일 때만 바꾼다. 경량은 Claude 뇌면 수집·제목, 그 밖이면 제목 짓기
+  private slots(): SettingsView["modelSlots"] {
+    const c = this.cfg;
+    const p = c.brain?.provider ?? "claude-code";
+    const claude = usesClaudeModels(p);
+    const title = p === "local" ? "세부 모델" : `${BRAIN_LABEL[p]} 세부 모델`;
+    const roles = MODEL_ROLES.map((role) => {
+      const label = MODEL_ROLE_LABEL[role];
+      if (p === "local") return { role, label, value: null, enabled: false, why: "AI 를 연결하면 고를 수 있어요" };
+      if (role === "code") {
+        return p === "claude-code"
+          ? { role, label, value: c.models.code, enabled: true }
+          : { role, label, value: null, enabled: false, why: "코드 작업은 Claude Code 로만 해요. Claude Code 일 때만 바꿀 수 있어요" };
+      }
+      if (claude) return { role, label, value: role === "quick" ? c.models.quick ?? DEFAULT_QUICK : c.models[role], enabled: true };
+      const own = c.brainModels?.[p]?.[role as ChatRole];
+      return { role, label, value: own ?? (role === "general" ? roleModel(c, "general", p) ?? null : null), enabled: true };
+    });
+    return { provider: p, title, claude, roles };
   }
 
   // onboarded 를 처음 적으면 config.json 이 "새 방식"(onboarding.ts)이 되어 빈 칸의 기본값이 바뀐다(작업 기록 끔·레포 폴더 없음·뇌 미선택).

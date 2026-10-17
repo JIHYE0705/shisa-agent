@@ -4,7 +4,8 @@
 import { workHoursLine, workHoursOf } from "./work-hours.ts";
 import { randomUUID } from "node:crypto";
 import type { Config } from "./config.ts";
-import type { Store, ChatTurn, ChatSendMeta, Todo, Thread, ThreadKind } from "./store.ts";
+import type { Store, ChatTurn, ChatSendMeta, Todo, Thread, ThreadKind, ChatPick, AnsweredBy } from "./store.ts";
+import { BRAIN_LABEL, isChatProvider, modelFits, modelLabel, roleModel } from "./models.ts";
 import type { PanelSection } from "./bus.ts";
 import { ask, brainFacts, buildContext, SCHEMA as THOUGHT_SCHEMA, INTERACTIVE_SYSTEM, NO_TOOLS_SYSTEM, WRITE_GUIDE, type Thought } from "./brain.ts";
 import { buildDashboard, dashboardSummary } from "./dashboard.ts";
@@ -55,8 +56,9 @@ export type ChatEvent = { chatId: string; threadId: string } & (
   // 차례가 와서 모델에 보냄(sentAt). 줄 섰던 말이면 queuedAt 도
   | { status: "thinking"; sentAt?: string; queuedAt?: string; clientId?: string }
   | { status: "step"; step: string }
-  | { status: "done"; text: string; show: Exclude<PanelSection, "chat"> | null; actions?: PendingAction[] }
-  | { status: "error"; text: string }
+  | { status: "done"; text: string; show: Exclude<PanelSection, "chat"> | null; actions?: PendingAction[]; by?: AnsweredBy }
+  // retry: 고른 뇌·모델이 답하지 못함 — 그 말(n)을 기본으로 다시 보낼 수 있다(패널 [기본 모델로 다시 보내기] → 말 고치기 + useDefault)
+  | { status: "error"; text: string; retry?: { n: number; text: string; label: string } }
   | { status: "stopped"; text: string } // 사용자가 멈춤(POST /chat/:chatId/stop · 세션 창 정지) — 답 없이 끝
   // 사용자가 마지막 말을 고침(Chat.edit · editQueued). n: 고친(숨긴) 말 순번 — 그 말부터 뒤는 숨겼고 chatId 가 새 말로 다시 돈다.
   // n 이 없으면 줄 서 있던 말의 글만 바뀐 것(chatId 그대로). replaces: 고치느라 멈춘 답의 chatId(캐릭터 창이 새 답을 제 것으로 잇게)
@@ -79,13 +81,37 @@ export type Converse = (cfg: Config, store: Store, history: ChatTurn[], text: st
 // clientId: 패널이 이 말에 붙인 id(낙관적 사본 ↔ 서버 기록·큐 짝 맞추기, 모양 CLIENT_ID)
 // edit: 고쳐 다시 보내는 말(Chat.edit — 기록에 고친 때·고치기 전 글)
 // attachments: 올려 둔 첨부 id(POST /chat/attachments — 차례가 오면 그 대화 폴더로 옮겨 기록) · keep: 이미 대화에 있는 첨부(고칠 때 원래 말의 것)
-export type SendOpts = { threadId?: string; todoId?: string; kind?: Exclude<ThreadKind, "todo">; model?: string; clientId?: string; edit?: { editedAt: string; originalText: string }; attachments?: string[]; keep?: Attachment[] };
+// pick: 채팅에서 고른 뇌·모델 — 객체면 이번 말에 쓰고 그 대화에 기억, null 이면 기본으로(기억도 지운다), 없으면 그 대화에 기억한 것
+export type SendOpts = { threadId?: string; todoId?: string; kind?: Exclude<ThreadKind, "todo">; model?: string; pick?: ChatPick | null; clientId?: string; edit?: { editedAt: string; originalText: string }; attachments?: string[]; keep?: Attachment[] };
 // 말 고치기 결과. agents_running: 그 턴이 띄운 백그라운드 에이전트가 아직 돈다 — stopAgents 로 멈추겠다고 해야 고친다
-export type EditFail = { error: "no_thread" | "not_latest" | "not_queued" | "agents_running"; agents?: { toolUseId: string; description: string }[] };
+export type EditFail = { error: "no_thread" | "not_latest" | "not_queued" | "agents_running" | "bad_model"; agents?: { toolUseId: string; description: string }[] };
 export type Edited = Extract<Sent, { chatId: string }> & { replaced: number; stoppedAgents?: number };
 // queued: 같은 스레드의 앞 답을 기다리며 줄 섰나(position = 그 스레드 안의 차례) — 안 섰으면 바로 모델에 보냄
-export type Sent = { chatId: string; threadId: string; queued?: boolean; position?: number; clientId?: string } | { error: "no_thread" | "no_todo" } | { error: "bad_attachment"; message: string };
+export type Sent = { chatId: string; threadId: string; queued?: boolean; position?: number; clientId?: string } | { error: "no_thread" | "no_todo" } | { error: "bad_attachment" | "bad_model"; message: string };
 export const CLIENT_ID = /^[\w-]{1,64}$/;
+
+// 고른 것이 그 뇌에 맞나 — 맞지 않으면 이유(400). 로컬 뇌·모르는 뇌는 고를 수 없다
+export function pickProblem(cfg: Pick<Config, "brain">, pick: ChatPick | null | undefined): string | undefined {
+  if (!pick) return undefined;
+  if (pick.provider !== undefined && !isChatProvider(pick.provider)) return "그 AI 는 채팅에서 고를 수 없어요";
+  const provider = pick.provider ?? cfg.brain?.provider ?? "claude-code";
+  if (pick.model !== undefined && !modelFits(provider, pick.model)) return `그 모델(${String(pick.model).slice(0, 60)})은 ${BRAIN_LABEL[provider as keyof typeof BRAIN_LABEL] ?? provider} 에서 못 써요`;
+  return undefined;
+}
+
+// 이번 답에 쓸 뇌(cfg 사본 — 기본 뇌 설정은 바꾸지 않는다)·모델·답 표시
+export function pickedBrain(cfg: Config, pick: ChatPick | undefined, opts: { model?: string; hover?: boolean } = {}): { cfg: Config; model?: string; by: AnsweredBy } {
+  const base = cfg.brain?.provider ?? "claude-code";
+  const provider = pick?.provider && isChatProvider(pick.provider) ? pick.provider : base;
+  const c = provider === base ? cfg : { ...cfg, brain: { ...cfg.brain, provider } };
+  const chosen = pick?.model && modelFits(provider, pick.model) ? pick.model : undefined;
+  const fallback = opts.model && modelFits(provider, opts.model) ? opts.model : undefined;
+  // model: converse 에 넘길 것(없으면 converse 가 그 뇌의 일반 모델) · shown: 답 표시용(실제로 쓸 모델)
+  const model = chosen ?? fallback ?? (opts.hover ? roleModel(c, "quick", provider) : undefined);
+  const shown = model ?? roleModel(c, "general", provider);
+  const name = shown ? modelLabel(shown) : "기본 모델";
+  return { cfg: c, ...(model ? { model } : {}), by: { provider, ...(shown ? { model: shown } : {}), label: `${BRAIN_LABEL[provider as keyof typeof BRAIN_LABEL] ?? provider} · ${name}`, ...(pick?.provider || chosen ? { picked: true } : {}) } };
+}
 // 말에 「춤」「댄스」「dance」가 들어 있으면 보내자마자 캐릭터가 춤 영상을 튼다(모델 답을 기다리지 않는다)
 // 「○○ 프로젝트 만들고 할 일 하나 넣어 줘」: 같은 답에서 프로젝트를 딱 하나 새로 만들었는데 새 할 일(add)에 프로젝트가 비었으면
 // 그 프로젝트로 묶는다. 모델(특히 OpenAI strict 스키마)은 add 의 project 를 null 로 채우기 쉬워서 실제 앱에서 따로 놀았다.
@@ -337,7 +363,7 @@ export async function suggestTitle(cfg: Config, text: string, reply: string, thr
   if (provider === "gemini") return undefined;
   const prompt = `아래 대화의 제목을 지어라.\n\n사용자: """${text.slice(0, 600)}"""\n${character().name}: """${reply.slice(0, 600)}"""`;
   const r = await ask<{ title: string }>(cfg, prompt, TITLE_SCHEMA, undefined, {
-    model: cfg.models.light, tools: false, system: "너는 대화 목록에 붙일 짧은 제목을 짓는 도우미다.",
+    model: cfg.models.light, role: "light", tools: false, system: "너는 대화 목록에 붙일 짧은 제목을 짓는 도우미다.",
     run: { kind: "chat", title: "대화 제목 짓기", ...(threadId ? { ref: threadId } : {}) },
   });
   const t = typeof r?.title === "string" ? r.title.replace(/["'“”‘’.]/g, "").trim() : "";
@@ -348,7 +374,7 @@ export async function suggestTitle(cfg: Config, text: string, reply: string, thr
 // 대화형: 모든 도구, 쓰기는 이 대화에 승인 카드(via chat|hover)
 export function chatAskOpts(cfg: Config, text: string, repo?: RelatedRepo, threadId?: string, via: ActionVia = "chat", model?: string) {
   return {
-    system: chatSystemFor(cfg), model: model ?? cfg.models.general,
+    system: chatSystemFor(cfg), model: model ?? roleModel(cfg, "general"),
     code: { roots: cfg.repoRoots, ...(repo ? { cwd: repo.path } : {}) },
     interactive: { origin: { via, ...(threadId ? { threadId } : {}) } },
     run: { kind: "chat" as const, title: `채팅: ${text.split("\n")[0].slice(0, 60)}`, ...(threadId ? { ref: threadId } : {}) },
@@ -447,6 +473,8 @@ export class Chat {
       if (why) return { error: "bad_attachment", message: why };
       briefs = [...briefs, ...ids.map((id) => { const x = st!.staged(id)!; return { id, name: x.name, kind: x.kind, size: x.size }; })];
     }
+    const bad = pickProblem(this.cfg, o.pick); // 스레드를 만들기 전에
+    if (bad) return { error: "bad_model", message: bad };
     let thread: Thread | undefined, fresh = false;
     if (o.threadId) {
       thread = this.store.thread(o.threadId);
@@ -463,6 +491,8 @@ export class Chat {
       fresh = true;
     }
     const threadId = thread!.id;
+    // 고른 뇌·모델: 이번 말에 쓰고 그 대화에 기억(null = 기본으로 — 기억을 지운다)
+    if (o.pick !== undefined) thread = this.store.editThread(threadId, { pick: o.pick }) ?? thread;
     this.ports.threads?.({ thread: thread! });
     // 춤: 보내자마자. 한마디(문구 dance)는 캐릭터 말풍선으로 — 캐릭터 대화에서 춤뿐인 말이면 답 말풍선이 그 한마디라 따로 안 띄운다
     const only = !briefs.length && danceOnly(text); // 첨부가 있으면 춤뿐인 말이 아니다(모델이 첨부를 본다)
@@ -471,6 +501,7 @@ export class Chat {
       const said = this.ports.dance?.(DANCE_MS, danceLine, !(only && thread!.kind === "hover"));
       if (typeof said === "string" && said.trim()) danceLine = said; // 고른 영상의 전용 한마디(영상과 같은 번호)
     }
+    const pick = o.pick !== undefined ? o.pick ?? undefined : thread!.pick; // 보낼 때 정한다(줄 서 있는 동안 드롭다운을 바꿔도 이 말은 그대로)
     const chatId = randomUUID();
     const abort = new AbortController();
     const clientId = o.clientId && CLIENT_ID.test(o.clientId) ? o.clientId : undefined;
@@ -495,7 +526,7 @@ export class Chat {
         const meta = { ...(clientId ? { clientId } : {}), ...(queued ? { queuedAt: at } : {}), ...(o.edit ? { editedAt: o.edit.editedAt, originalText: o.edit.originalText } : {}) };
         const now = this.live.get(chatId)?.text ?? text; // 줄 서 있는 동안 고쳤으면(editQueued) 고친 글
         const att = ids.length || keep.length ? { ids, keep } : undefined;
-        return inRunContext({ origin }, () => this.run(chatId, threadId, now, o.todoId, fresh && !o.todoId ? thread!.title : undefined, o.model, abort, meta, danceLine, att));
+        return inRunContext({ origin }, () => this.run(chatId, threadId, now, o.todoId, fresh && !o.todoId ? thread!.title : undefined, o.model, abort, meta, danceLine, att, pick));
       },
     });
     if (queued) this.emitQueued(chatId);
@@ -624,8 +655,9 @@ export class Chat {
   // 아직 결정 안 된 그 턴의 카드는 취소(결정된 건 기록으로 제 시각 자리에 남는다), 그 말과 뒤의 답·시스템 줄은 숨기고(지우지 않는다),
   // 고친 글로 그 턴을 다시 돌린다(새 chatId — 기록에 「수정됨」·고치기 전 글). 그 턴이 띄운 백그라운드 에이전트가 아직 돌면
   // agents_running 으로 거절 — 사용자가 멈추겠다고(stopAgents) 해야 멈추고 고친다(옛 물음에 대한 결과가 새 답 뒤에 끼지 않게)
-  async edit(threadId: string, n: number, text: string, opts: { stopAgents?: boolean; clientId?: string; model?: string } = {}): Promise<Edited | EditFail> {
+  async edit(threadId: string, n: number, text: string, opts: { stopAgents?: boolean; clientId?: string; model?: string; pick?: ChatPick | null } = {}): Promise<Edited | EditFail> {
     if (!this.store.thread(threadId)) return { error: "no_thread" };
+    if (pickProblem(this.cfg, opts.pick)) return { error: "bad_model" };
     const last = this.store.lastUserMessage(threadId);
     if (!last || last.n !== n) return { error: "not_latest" };
     // 그 뒤에 줄 선 말이 있으면 그게 마지막 말이다(그건 editQueued 로)
@@ -644,7 +676,7 @@ export class Chat {
     this.store.hideChatFrom(threadId, n);
     const todoId = last.todoId && this.store.getTodo(last.todoId) ? last.todoId : undefined;
     // 첨부는 원래 말의 것을 그대로 붙여 다시 보낸다(고치기 창에서는 글만 고친다)
-    const r = this.send(text, { threadId, ...(todoId ? { todoId } : {}), ...(opts.clientId ? { clientId: opts.clientId } : {}), ...(opts.model ? { model: opts.model } : {}),
+    const r = this.send(text, { threadId, ...(todoId ? { todoId } : {}), ...(opts.clientId ? { clientId: opts.clientId } : {}), ...(opts.model ? { model: opts.model } : {}), ...(opts.pick !== undefined ? { pick: opts.pick } : {}),
       ...(last.attachments?.length ? { keep: last.attachments } : {}), edit: { editedAt: new Date().toISOString(), originalText: last.text } });
     if ("error" in r) return { error: "no_thread" };
     this.ports.emit({ chatId: r.chatId, threadId, status: "edited", text, n, ...(replaces ? { replaces } : {}) });
@@ -676,8 +708,9 @@ export class Chat {
   // meta: 사용자 말 기록에 붙는 clientId·queuedAt(줄 섰으면). 기록 시각(at)은 지금 = 실제로 보낸 때
   // danceLine: 보낼 때 고른 춤 한마디(말풍선과 같은 글로 답하게)
   // att: 첨부(ids = 올려 둔 것 — 여기서 그 대화 폴더로 옮긴다, keep = 이미 대화에 있는 것)
-  private async run(chatId: string, threadId: string, text: string, todoId?: string, autoTitle?: string, model?: string, abort = new AbortController(), meta: ChatSendMeta = {}, danceLine?: string, att?: { ids: string[]; keep: Attachment[] }) {
-    const emit = (ev: { status: "step"; step: string } | { status: "done"; text: string; show: Exclude<PanelSection, "chat"> | null; actions?: PendingAction[] } | { status: "error"; text: string } | { status: "stopped"; text: string }) =>
+  // pick: 이 말에 쓸 뇌·모델(보낼 때 정함 — 없으면 기본 뇌·설정의 모델)
+  private async run(chatId: string, threadId: string, text: string, todoId?: string, autoTitle?: string, model?: string, abort = new AbortController(), meta: ChatSendMeta = {}, danceLine?: string, att?: { ids: string[]; keep: Attachment[] }, pick?: ChatPick) {
+    const emit = (ev: { status: "step"; step: string } | { status: "done"; text: string; show: Exclude<PanelSection, "chat"> | null; actions?: PendingAction[]; by?: AnsweredBy } | { status: "error"; text: string; retry?: { n: number; text: string; label: string } } | { status: "stopped"; text: string }) =>
       this.ports.emit({ chatId, threadId, ...ev } as ChatEvent);
     const stopped = () => abort.signal.aborted;
     const since = new Date().toISOString(); // 이 턴의 시작 — 이 뒤에 뜬 승인 카드가 이 턴 것
@@ -696,11 +729,15 @@ export class Chat {
     };
     if (++this.active === 1) this.ports.mood?.(true); // 하나라도 돌면 바쁨 — 여러 스레드가 동시에 돌아도 마지막이 끝날 때까지
     let done: string | undefined;
+    let brain: ReturnType<typeof pickedBrain> | undefined; // 이번 답의 뇌·모델(실패 글에 그 이름)
+    let userN: number | undefined;
     try {
       // 차례가 왔을 때 다시 본다 — 앞선 대화가 그 할 일·스레드를 지웠을 수도 있다
       const thread = this.store.thread(threadId);
       if (!thread) { emit({ status: "error", text: "이 대화가 지워졌어요." }); return; }
-      if (thread.kind === "hover") model ??= this.cfg.models.quick; // 캐릭터 빠른 대화: 설정의 빠른 대화 모델(패널 선택과 따로)
+      // 고른 뇌·모델(이 대화에 기억한 것). 캐릭터 빠른 대화는 그 뇌의 빠른 대화 모델(패널 선택과 따로). 기본 뇌 설정은 그대로
+      brain = pickedBrain(this.cfg, pick, { ...(model ? { model } : {}), hover: thread.kind === "hover" });
+      model = brain.model;
       const picked = todoId ? this.store.getTodo(todoId) : undefined;
       if (todoId && !picked) { emit({ status: "error", text: "그 할 일을 못 찾았어요. 이미 지워졌을 수도 있어요." }); return; }
       // 할 일 스레드면 따로 집어 들지 않아도 그 할 일이 대화 대상(지워졌으면 대상 없이)
@@ -714,7 +751,7 @@ export class Chat {
         catch (e: any) { emit({ status: "error", text: String(e?.message ?? e) }); return; }
       }
       if (attachments.length) meta = { ...meta, attachments };
-      const userN = this.store.addChat("user", text, undefined, picked && { id: picked.id, title: picked.title }, threadId, undefined, meta);
+      userN = this.store.addChat("user", text, undefined, picked && { id: picked.id, title: picked.title }, threadId, undefined, meta);
       const me = this.live.get(chatId);
       if (me) me.userN = userN;
       recorded = true;
@@ -741,8 +778,8 @@ export class Chat {
       const summary = !command && inlineContext(this.cfg) && this.ports.summary ? await this.ports.summary().catch(() => undefined) : undefined;
       if (stopped()) { onStopped(); return; }
       const r = command
-        ? await this.runCommand(this.cfg, this.store, history, text, onStep, threadId, model, thread.kind === "hover" ? "hover" : "chat", abort, ...(attachments.length ? [attachments] : []))
-        : await this.converse(this.cfg, this.store, history, text, onStep, summary, focus, threadId, model, abort, this.ports.dashboard ? { dashboard: () => this.ports.dashboard!() } : undefined, ...(attachments.length ? [attachments] : []));
+        ? await this.runCommand(brain.cfg, this.store, history, text, onStep, threadId, model, thread.kind === "hover" ? "hover" : "chat", abort, ...(attachments.length ? [attachments] : []))
+        : await this.converse(brain.cfg, this.store, history, text, onStep, summary, focus, threadId, model, abort, this.ports.dashboard ? { dashboard: () => this.ports.dashboard!() } : undefined, ...(attachments.length ? [attachments] : []));
       if (stopped()) { onStopped(); return; } // 멈춘 사이 답이 와도 버린다(제안이 수정 run 을 띄우지 않게)
       let reply = r.reply_md?.trim() || r.bubble || "(답이 비었어)";
       // 집어 든 할 일이 있으면 id 빠진 op는 그 할 일로
@@ -818,12 +855,12 @@ export class Chat {
       if (wtLine) reply += `\n\n${wtLine}`;
       const alive = !!this.store.thread(threadId); // 답하는 사이 지워졌으면 기록하지 않는다
       if (alive) {
-        const n = this.store.addChat("assistant", reply, undefined, undefined, threadId);
+        const n = this.store.addChat("assistant", reply, undefined, undefined, threadId, undefined, { by: brain.by });
         if (this.ports.attachAction) actions = actions.map((x) => this.ports.attachAction!(x.id, n) ?? x);
         for (const l of lines) this.store.addChat("system", l, undefined, undefined, threadId);
       }
       if (r.show) this.ports.openPanel(r.show);
-      emit({ status: "done", text: reply, show: r.show === "chat" ? null : r.show ?? null, ...(actions.length ? { actions } : {}) });
+      emit({ status: "done", text: reply, show: r.show === "chat" ? null : r.show ?? null, ...(actions.length ? { actions } : {}), by: brain.by });
       const proposed = actions.filter((x) => x.type !== "tool_permission");
       if (proposed.length) this.ports.announceActions?.(proposed);
       if (alive) { this.ports.threads?.({ thread: this.store.thread(threadId) }); done = reply; }
@@ -837,7 +874,9 @@ export class Chat {
           const expired = (this.ports.threadPermissions?.(threadId, since) ?? []).some((a) => a.status === "expired");
           closeTurn(unfinishedLine(expired ? EXPIRED_WHY : `오류로 멈췄어요(${msg.slice(0, 120)})`));
         }
-        emit({ status: "error", text: `대화하다 막혔어요: ${msg}` });
+        // 고른 뇌·모델이면 그 이름으로 + 기본으로 다시 보내기(그 말 n 을 고쳐 보내는 길)
+        if (brain?.by.picked) emit({ status: "error", text: `${brain.by.label} 모델이 답하지 못했어요: ${msg}`, ...(userN ? { retry: { n: userN, text, label: brain.by.label } } : {}) });
+        else emit({ status: "error", text: `대화하다 막혔어요: ${msg}` });
       }
     } finally {
       this.ports.changed();

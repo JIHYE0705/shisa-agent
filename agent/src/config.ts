@@ -32,6 +32,9 @@ export type Config = {
   // quick: 캐릭터 더블클릭 빠른 대화(스레드 kind hover) 전용 — 패널 모델 선택과 따로. 설정 창에서 바꾼다.
   // loadConfig 는 늘 채운다(기본 Sonnet). 손으로 만든 cfg(시험)에 없으면 hover 도 general
   models: { code: string; general: string; light: string; quick?: string };
+  // Claude 가 아닌 뇌(Codex·Gemini·OpenAI·Genspark)의 세부 모델: 뇌 → 역할(general·quick·light) → 모델 이름.
+  // 설정 창 「세부 모델」이 지금 뇌의 칸만 고친다(다른 뇌 값은 그대로). 없으면 그 뇌의 기본(models.ts roleModel)
+  brainModels?: Partial<Record<BrainProvider, Partial<Record<"general" | "quick" | "light", string>>>>;
   // 브리핑에서 뺄 출처(settings.ts BRIEFING_SOURCES 의 id: mail·calendar·slack·issues·sessions). 설정 창에서 끈다
   briefing?: { exclude: string[] };
   // 고친 고정 문구(phrases.ts 키 → 줄들, 여러 줄이면 하나를 무작위로). 없으면 기본. 설정 창 「문구」에서 고친다
@@ -299,6 +302,7 @@ export function loadConfig(env = process.env, file: FileConfig = readFileConfig(
       light: env.CY_AGENT_MODEL_LIGHT ?? (f.models as any)?.light ?? "claude-haiku-5-5",
       quick: env.CY_AGENT_MODEL_QUICK ?? (f.models as any)?.quick ?? "claude-sonnet-5-5",
     },
+    brainModels: brainModelsOf(f.brainModels),
     briefing: { exclude: Array.isArray((f.briefing as any)?.exclude) ? ((f.briefing as any).exclude as unknown[]).filter((x): x is string => typeof x === "string") : [] },
     phrases: phrasesOf(f.phrases),
     autoMerge: autoMergeList(f.autoMerge),
@@ -329,6 +333,22 @@ export function loadConfig(env = process.env, file: FileConfig = readFileConfig(
   if (configError) cfg.configError = configError;
   if (notes.length) cfg.configNotes = [...new Set(notes)];
   return cfg;
+}
+
+// config.json brainModels: 아는 뇌·역할·모델 이름 모양만 남긴다(나머지는 조용히 버린다)
+export function brainModelsOf(raw: unknown): Config["brainModels"] {
+  const out: NonNullable<Config["brainModels"]> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [p, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(BRAIN_PROVIDERS as readonly string[]).includes(p) || p === "local" || !v || typeof v !== "object" || Array.isArray(v)) continue;
+    const roles: Partial<Record<"general" | "quick" | "light", string>> = {};
+    for (const r of ["general", "quick", "light"] as const) {
+      const id = (v as Record<string, unknown>)[r];
+      if (typeof id === "string" && /^[A-Za-z0-9._:/-]{1,100}$/.test(id)) roles[r] = id;
+    }
+    if (Object.keys(roles).length) out[p as BrainProvider] = roles;
+  }
+  return out;
 }
 
 // ~/.cy-agent: 나만 열 수 있게(0700). 이미 있으면 권한만 고친다

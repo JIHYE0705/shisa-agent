@@ -17,7 +17,7 @@ import { briefingMilestone, briefingTask, readySources, type SourceId } from "./
 import { runFix as realRunFix, mergePr as realMergePr, normalizeBase, resolveRepo, type FixResult } from "./fixer.ts";
 import { Chat, converse as realConverse, todoThreadFor, unfinishedLine, RESTART_WHY, type Converse, type RunCommand, type SendOpts, type Sent } from "./chat.ts";
 import type { SlashCommands } from "./commands.ts";
-import type { Thread, ThreadKind } from "./store.ts";
+import type { Thread, ThreadKind, ChatPick } from "./store.ts";
 import { buildDashboard, dashboardSummary, type Dashboard } from "./dashboard.ts";
 import { DailyPlanService } from "./daily-plan.ts";
 import { CAPABILITIES, CONNECTORS } from "./connectors.ts";
@@ -296,7 +296,7 @@ export class Agent {
   }
 
   // 말 고치기(POST /chat/threads/:id/messages/:n/edit): 그 대화의 마지막 사용자 말을 고쳐 그 턴을 다시(chat.ts Chat.edit)
-  chatEdit(threadId: string, n: number, text: string, opts: { stopAgents?: boolean; clientId?: string; model?: string } = {}) {
+  chatEdit(threadId: string, n: number, text: string, opts: { stopAgents?: boolean; clientId?: string; model?: string; pick?: ChatPick | null } = {}) {
     return this.chatRunner.edit(threadId, n, text, opts);
   }
   // 줄 서 있는 말 고치기(POST /chat/:chatId/edit): 글만 바꾼다
@@ -326,7 +326,7 @@ export class Agent {
     this.bus.threads({ thread });
     return thread;
   }
-  editThread(id: string, patch: { title?: string; archived?: boolean }): Thread | undefined {
+  editThread(id: string, patch: { title?: string; archived?: boolean; pick?: ChatPick | null }): Thread | undefined {
     const thread = this.store.editThread(id, patch);
     if (thread) this.bus.threads({ thread });
     return thread;

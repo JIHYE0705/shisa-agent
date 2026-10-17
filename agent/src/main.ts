@@ -8,6 +8,7 @@ import { Store } from "./store.ts";
 import { Bus, EXIT_PORT_TAKEN } from "./bus.ts";
 import { runs } from "./runs.ts";
 import { modelChoices } from "./models.ts";
+import { chatModels } from "./chat-models.ts";
 import { Agent, LOCAL_GREET_ID } from "./core.ts";
 import { suggestTitle } from "./chat.ts";
 import { briefingDue } from "./briefing-sources.ts";
@@ -290,6 +291,7 @@ await bus.listen(cfg.port, {
     tokensOf: (runId, parent) => runs.tokensOf(runId, parent), askedAt: (pid) => store.proposal(pid)?.created,
   }) : undefined),
   models: () => ({ choices: modelChoices(cfg), defaults: { fix: cfg.models.code, chat: cfg.models.general } }),
+  chatModels: (fresh) => chatModels(cfg, { fresh }),
   commands: () => commands.list(),
   repos: () => agent.repos(),
   newTask: (repo, text) => agent.newTask(repo, text),

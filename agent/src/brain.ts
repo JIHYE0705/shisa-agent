@@ -34,6 +34,7 @@ import { TONE } from "./voice.ts";
 import { SHISA_INTRO, withCharacter } from "./characters.ts";
 import { localThought, type LocalTodo } from "./local-mode.ts";
 import { calendarNote, calendarStaleNote, readCalendarState } from "./calendar-state.ts";
+import { modelFits, roleModel, type ChatRole } from "./models.ts";
 import { LOCAL_ONLY, remoteJson, resolveAnthropicModel, resolveHttpModel, type ProviderDeps } from "./providers.ts";
 import { GH_HINT, GH_SERVER, ghEnabled, ghMcpServer } from "./gh.ts";
 import { SUBAGENT_SDK_OPTIONS, SUBAGENT_TOOLS, subagentEnv } from "./subagents.ts";
@@ -313,6 +314,8 @@ export async function ask<T>(
   const spec = opts.run ?? { kind: "other" as RunKind, title: opts.interactive ? "질문" : "질문(읽기 전용)" };
   const provider = cfg.brain?.provider ?? "claude-code";
   if (provider !== "claude-code") return askOther<T>(provider, cfg, prompt, schema, onStep, opts, spec);
+  // Claude Code 에 다른 뇌 모델 이름(예전 설정의 gemini-… 등)이 가지 않게: 맞지 않으면 그 역할의 Claude 모델
+  if (!modelFits("claude-code", opts.model)) opts = { ...opts, model: roleModel(cfg, opts.role ?? "general", "claude-code") };
   // cwd = SDK 가 실제로 도는 폴더(관련 레포면 그 레포). 세션 기록이 그 폴더의 프로젝트 아래 생기니 "Claude Code에서 열기"가 여기서 찾는다
   return withRun({ kind: spec.kind, title: spec.title, model: opts.model ?? cfg.models.general, cwd: askCwd(cfg, opts), ...(spec.ref ? { ref: spec.ref } : {}) },
     // 이 run 이 잡은 레포 쓰기 잠금(repo-lock.ts — 권한 훅이 처음 쓸 때 잡는다)은 끝나면 푼다(성공·실패·멈춤 모두)
@@ -325,7 +328,10 @@ export const TEXT_SCHEMA = { type: "object", additionalProperties: false, requir
 // local·gemini·openai·genspark·codex: SDK·도구 없이 JSON만. 키가 없으면 여기서 실패하고 local로 넘어가지 않는다
 async function askOther<T>(provider: string, cfg: Config, prompt: string, schema: unknown, onStep: ((s: string) => void) | undefined, opts: AskOpts, spec: AskRun): Promise<T> {
   // genspark: 실제 모델은 GET /models 목록을 받은 뒤 정한다(providers.ts gensparkJson) — 기록엔 고른 이름이나 "genspark"
-  const model = provider === "local" ? "local" : provider === "codex" ? "codex" : provider === "genspark" ? ((opts.model ?? "").trim() || "genspark") : provider === "anthropic" ? resolveAnthropicModel(cfg.models?.general, opts.model) : resolveHttpModel(provider as "gemini" | "openai", cfg.models?.general, opts.model);
+  // 그 뇌에 맞는 이름만(Codex·Gemini 에 claude-… 를 넘기지 않는다). 맞지 않거나 없으면 그 뇌의 그 역할 모델(설정 창 세부 모델), 그것도 없으면 그 뇌 기본
+  const want = opts.model && modelFits(provider, opts.model) ? opts.model : roleModel(cfg, opts.role ?? "general", provider);
+  opts = { ...opts, model: want };
+  const model = askedModel(provider, cfg, want);
   return withRun({ kind: spec.kind, title: spec.title, model, cwd: join(HOME_DIR, "brain"), ...(spec.ref ? { ref: spec.ref } : {}) }, async (run) => {
     run.log({ type: "user", text: prompt });
     onStep?.(provider);
@@ -341,6 +347,16 @@ async function askOther<T>(provider: string, cfg: Config, prompt: string, schema
     }
     return remoteJson(provider as any, cfg, prompt, schema, { system, model: opts.model, blocks: opts.blocks, ...opts.deps }) as Promise<T>; // 첨부 블록도(예전엔 버려져 본 척했다)
   });
+}
+
+// 기록·말풍선에 적을 모델 이름(그 뇌가 실제로 쓸 것). Codex·Genspark 기본은 그 이름 그대로("codex"·"genspark")
+export function askedModel(provider: string, cfg: Pick<Config, "models">, want: string | undefined): string {
+  if (provider === "local") return "local";
+  if (provider === "codex") return want || "codex";
+  if (provider === "genspark") return want || "genspark";
+  if (provider === "anthropic") return resolveAnthropicModel(cfg.models?.general, want);
+  if (provider === "gemini" || provider === "openai") return resolveHttpModel(provider, want ? undefined : cfg.models?.general, want);
+  return want || cfg.models.general;
 }
 
 // 백그라운드 에이전트 run(bg-agents.ts): 세션 창·대화 속 카드가 서브에이전트와 같은 모양으로 보이게
@@ -376,6 +392,8 @@ export function askCwd(cfg: Config, opts: AskOpts): string {
 //   origin = 승인 카드를 띄울 자리. broker 없으면 데몬이 붙인 것(getBroker), 그것도 없으면 쓰기는 거부
 export type AskOpts = {
   system?: string; model?: string; tools?: boolean; code?: { roots: string[]; cwd?: string };
+  // model 이 없거나 그 뇌에 맞지 않을 때 쓸 역할(설정 창 세부 모델 — models.ts roleModel). 없으면 general
+  role?: ChatRole;
   interactive?: { origin: PermOrigin; broker?: PermissionBroker };
   project?: boolean; // 프로젝트 설정(.claude/commands·skills 등)도 읽는다(슬래시 명령)
   // 멈춤 손잡이(채팅 정지): SDK options.abortController 로 넘기고, 세션 창 [정지](RunControl.stop)도 이걸 abort 한다.
