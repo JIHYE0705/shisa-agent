@@ -10,6 +10,7 @@
   --line: rgba(0, 0, 0, 0.08);
   --accent: #6b5cff;
   --accent-soft: rgba(107, 92, 255, 0.12);
+  --accent-btn: #6b5cff; /* 흰 글자를 얹는 바탕(다크 모드에서도 진하게: 밝은 보라는 흰 글자 대비가 3:1 남짓) */
   --ok: #30b158;
   --err: #ff453a;
   --warn: #ff9f0a;
@@ -51,7 +52,7 @@ html, body {
 }
 button { font: inherit; border: 0; border-radius: 7px; padding: 5px 12px; background: var(--btn); color: var(--fg); cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: default; }
-button.primary { background: var(--accent); color: #fff; }
+button.primary { background: var(--accent-btn); color: #fff; }
 button.ghost { background: transparent; border: 1px solid var(--line); }
 button.danger { background: transparent; border: 1px solid var(--err); color: var(--err); }
 button:focus-visible, textarea:focus-visible, .run:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -213,7 +214,7 @@ pre.diff .del { color: var(--del-fg); background: var(--del-bg); }
 pre.diff .ctx { color: var(--muted); }
 .trunc { font-size: 11px; color: var(--faint); }
 
-#pill { position: sticky; bottom: 10px; left: 50%; transform: translateX(-50%); display: block; margin: 0 auto; background: var(--accent); color: #fff; border-radius: 999px; padding: 4px 14px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2); }
+#pill { position: sticky; bottom: 10px; left: 50%; transform: translateX(-50%); display: block; margin: 0 auto; background: var(--accent-btn); color: #fff; border-radius: 999px; padding: 4px 14px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2); }
 #pill[hidden] { display: none; }
 
 /* 입력 */
@@ -313,7 +314,7 @@ pre.diff .ctx { color: var(--muted); }
 .btw-list { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
 .btw { border: 1px dashed var(--accent); border-radius: 10px; padding: 8px 10px; background: var(--accent-soft); }
 .btw-q { display: flex; align-items: flex-start; gap: 6px; font-weight: 500; }
-.btw-tag { flex: none; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 6px; padding: 0 6px; margin-top: 2px; }
+.btw-tag { flex: none; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--accent-btn); border-radius: 6px; padding: 0 6px; margin-top: 2px; }
 .btw-qt { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
 .btw-x { flex: none; background: transparent; padding: 0 4px; color: var(--muted); }
 .btw-a { margin-top: 4px; padding-left: 2px; }

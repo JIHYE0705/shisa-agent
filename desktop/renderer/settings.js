@@ -915,7 +915,7 @@ function phraseRow(p) {
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !saveBtn.disabled) { e.preventDefault(); saveBtn.click(); } });
   saveBtn.addEventListener('click', () => put(phraseSaveValue(p, ta.value)));
   reset.addEventListener('click', () => put(null));
-  foot.append(def, err, saveBtn, reset);
+  foot.append(def, err, reset, saveBtn); // 저장은 늘 오른쪽 끝(캐릭터 고치기와 같게)
   row.append(head, ta, foot);
   return row;
 }

@@ -197,7 +197,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
 .char-add:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .char-add-plus { font-size: 30px; line-height: 64px; height: 64px; }
 .char-new-hint { margin: 8px 0 0; }
-.slot-frame { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); margin-right: auto; cursor: pointer; }
+.slot-frame { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 11.5px; color: var(--muted); margin-right: auto; cursor: pointer; }
 .slot-frame input { margin: 0; accent-color: var(--accent); }
 .char-editor { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
 .ce-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -217,7 +217,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
 .slot-file { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
 .slot-say { width: 100%; box-sizing: border-box; font-size: 11.5px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: inherit; }
 .slot-multi-hint { color: var(--accent); }
-.slot-btns { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+.slot-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: auto; }
 .char-lines details { border-top: 1px solid var(--line); }
 .char-lines .ph-list { display: flex; flex-direction: column; gap: 6px; }
 .ce-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
