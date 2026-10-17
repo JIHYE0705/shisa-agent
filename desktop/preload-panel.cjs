@@ -36,6 +36,12 @@ contextBridge.exposeInMainWorld('cy', {
   todoReorder: (id, priority, beforeId) => ipcRenderer.invoke('todo-reorder', String(id), Number(priority), beforeId == null ? null : String(beforeId)),
   // 프로젝트 숨기기(hide=true) / 다시 보이기(false). id = 프로젝트 경로
   projectHide: (path, hide) => ipcRenderer.invoke('project-hide', String(path), !!hide),
+  // 직접 만든 프로젝트: 목록 · 만들기({ name, note?, start?, due?, source? }) · 고치기({ name?, note?, start?, due?, status? }) · 지우기 · 일정에서 가져올 일정
+  projectsManual: () => ipcRenderer.invoke('projects-manual'),
+  projectCreate: (body) => ipcRenderer.invoke('project-create', body && typeof body === 'object' ? JSON.parse(JSON.stringify(body)) : null),
+  projectEdit: (id, patch) => ipcRenderer.invoke('project-edit', String(id), patch && typeof patch === 'object' ? JSON.parse(JSON.stringify(patch)) : null),
+  projectDelete: (id) => ipcRenderer.invoke('project-delete', String(id)),
+  projectCalendarEvents: () => ipcRenderer.invoke('project-calendar-events'),
   // 할 일 규칙: 목록 · 켜기/끄기·글 고치기({ enabled?, text? }) · 지우기
   todoRules: () => ipcRenderer.invoke('todo-rules'),
   todoRuleEdit: (id, patch) => ipcRenderer.invoke('todo-rule-edit', String(id), patch),

@@ -244,5 +244,24 @@
       0,
       302
     ]
+  },
+  "lunch": {
+    "file": "lunch.webm",
+    "poster": "lunch.png",
+    "size": 512,
+    "fps": 23.976,
+    "frames": 46,
+    "duration": 1.919,
+    "scene": true,
+    "source": {
+      "file": "shisa-eat.gif",
+      "w": 498,
+      "h": 281
+    },
+    "square": [
+      109,
+      0,
+      281
+    ]
   }
 }

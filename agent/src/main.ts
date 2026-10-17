@@ -26,12 +26,13 @@ import { existsSync } from "node:fs";
 import { WAIT_SETUP, markFreshInstall, modelWorkAllowed, sessionsAllowed } from "./onboarding.ts";
 import { execFile } from "node:child_process";
 import { openSpec } from "./plat.ts";
-import { CalendarSync, alertDetail } from "./calendar-sync.ts";
+import { CalendarSync, alertDetail, alertVars } from "./calendar-sync.ts";
+import { calendarPick } from "./manual-projects.ts";
 import { withRun, asRoutine } from "./runs.ts";
 import { KgBackfill } from "./kg/backfill.ts";
 import { refineIncremental } from "./kg/refine.ts";
 import { connectorStatus, connectorsChanged, resolveConnectors } from "./connectors.ts";
-import { phrase, phraseVoice } from "./phrases.ts";
+import { phrase, phraseVoice, fillVars } from "./phrases.ts";
 import { probeGh } from "./gh.ts";
 import { CliSync } from "./cli-sync.ts";
 import { AgentsNotifier, AGENT_LIMITS, agentsForThread, sessionsForThread, threadWorktrees } from "./thread-agents.ts";
@@ -208,6 +209,9 @@ await bus.listen(cfg.port, {
   todoReorder: (id, priority, beforeId) => agent.reorderTodo(id, priority, beforeId),
   projectHide: (id) => agent.hideProject(id),
   projectUnhide: (id) => agent.unhideProject(id),
+  manualProjects: agent.manualProjectsApi(),
+  projectExists: (id) => agent.projectExists(id),
+  calendarPick: () => calendarPick(calendar),
   todoAsk: (id, text) => agent.askTodo(id, text),
   todoApply: (id, ops, rev, rule) => agent.applyAsk(id, ops, rev, rule),
   todoReject: (id, text, ops, rule) => agent.rejectAsk(id, text, ops, rule),
@@ -479,9 +483,10 @@ setInterval(() => { if (briefingHours(new Date())) brief(); }, cfg.briefingInter
 setTimeout(() => briefIfDue("시작"), 5e3);
 // 일정 N분 전(설정 calendarAlert): 춤 + 말풍선(회의실·온라인 여부, 링크 버튼은 회의 링크, 없으면 캘린더 일정). 일정·분마다 한 번(DB에 남김)
 const stopCalendar = asRoutine(calendar.schedule.bind(calendar))((m, text, mins) => {
-  bus.activity.startDance(8000);
+  // 영상 번호는 데몬이 고른다. 그 영상에 전용 한마디가 있으면 일정 말풍선 글 대신(같은 자리표시 {mins}·{title}·{time}·{where})
+  const d = bus.activity.play(8000, "plan");
   const detail = alertDetail(m);
-  bus.bubble({ id: `meeting:${m.id}@${m.start}#${mins}`, text, kind: "todo", ttlMs: Math.max(60e3, Date.parse(m.start) - Date.now()), link: m.link ?? m.webLink, ...(detail ? { detail } : {}) });
+  bus.bubble({ id: `meeting:${m.id}@${m.start}#${mins}`, text: d.say ? fillVars(d.say, alertVars(m, mins)) : text, kind: "todo", ttlMs: Math.max(60e3, Date.parse(m.start) - Date.now()), link: m.link ?? m.webLink, ...(detail ? { detail } : {}) });
 }, (r) => console.log("[calendar]", JSON.stringify({ meetings: r.meetings, events: r.events, calls: r.calls, errors: r.errors, costUsd: r.costUsd })));
 
 // 설치 마법사를 막 마쳤을 때(PUT /settings onboarded: true): 시작할 때 하던 첫 정리를 지금 한 번

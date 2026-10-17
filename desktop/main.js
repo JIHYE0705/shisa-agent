@@ -14,6 +14,7 @@ import { isSafeLink } from './src/bubbles.js';
 import { defaultPosition, restorePosition } from './src/geometry.js';
 import { normalizeSection } from './src/dashboard.js';
 import { sanitizeTodoPatch } from './src/todos.js';
+import { sanitizeProjectBody, okProjectId } from './src/manual-projects.js';
 import { okRuleId, sanitizeRulePatch } from './src/todo-rules.js';
 import { clickTarget, pickRun, okRunId, okModelId, cleanMessage } from './src/session.js';
 import { okClientId, okMsgId } from './src/session-inbox.js';
@@ -822,6 +823,10 @@ async function request(method, pathname, body, timeoutMs) {
     headers['X-CY-Agent'] = '1';
     headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body ?? {});
+  } else if (method === 'PATCH') { // PATCH /projects/manual/:id
+    headers['X-CY-Agent'] = '1';
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body ?? {});
   } else if (method === 'DELETE') headers['X-CY-Agent'] = '1'; // 쓰기는 다 헤더(DELETE /guidelines/:id)
   try {
     const res = await fetch(`${BASE}${pathname}`, init);
@@ -1609,6 +1614,24 @@ function setupIPC() {
     if (!fromOurs(e) || typeof id !== 'string' || !id || id.length > 1000 || typeof hide !== 'boolean') return denied();
     return post(`/projects/${hide ? 'hide' : 'unhide'}`, { id });
   });
+  // 직접 만든 프로젝트(프로젝트 탭 ＋): 목록 · 만들기 · 고치기·끝내기 · 지우기 · 일정에서 가져올 일정
+  ipcMain.handle('projects-manual', (e) => (fromOurs(e) ? request('GET', '/projects/manual') : denied()));
+  ipcMain.handle('project-create', (e, body) => {
+    const b = sanitizeProjectBody(body);
+    if (!fromOurs(e) || !b) return denied();
+    return post('/projects/manual', b);
+  });
+  ipcMain.handle('project-edit', (e, id, patch) => {
+    const p = sanitizeProjectBody(patch, { partial: true });
+    if (!fromOurs(e) || !okProjectId(id) || !p) return denied();
+    return request('PATCH', `/projects/manual/${encodeURIComponent(id)}`, p);
+  });
+  ipcMain.handle('project-delete', (e, id) => {
+    if (!fromOurs(e) || !okProjectId(id)) return denied();
+    return request('DELETE', `/projects/manual/${encodeURIComponent(id)}`);
+  });
+  // MCP 캘린더는 모델이 중계해서 오래 걸릴 수 있다
+  ipcMain.handle('project-calendar-events', (e) => (fromOurs(e) ? request('GET', '/projects/calendar-events', undefined, 120_000) : denied()));
   // 할 일 규칙: 목록 · 켜기/끄기·글 고치기 · 지우기
   ipcMain.handle('todo-rules', (e) => (fromOurs(e) ? request('GET', '/todo-rules') : denied()));
   ipcMain.handle('todo-rule-edit', (e, id, patch) => {

@@ -60,6 +60,11 @@ export type BusHandlers = {
   todoReorder?(id: string, priority: number, beforeId?: string): unknown; // "missing" → 404, "bad_before" → 400, 그 외 바뀐 할 일
   projectHide?(id: string): boolean | Promise<boolean>; // 프로젝트 숨기기(id = 경로). 모르는 프로젝트면 false → 404
   projectUnhide?(id: string): boolean | Promise<boolean>; // 숨긴 적 없으면 false → 404
+  // 직접 만든 프로젝트(manual-projects.ts): GET/POST /projects/manual · GET/PATCH/DELETE /projects/manual/:id. 없으면 503
+  manualProjects?: { handle(method: string, id: string | undefined, body: unknown): { status: number; body: unknown } };
+  projectExists?(id: string): boolean; // 할 일의 projectId 확인(없는 프로젝트면 400)
+  // 일정에서 프로젝트 만들기: 연결된 캘린더의 고를 일정(지난 며칠 ~ 2주). { connected: false } 면 캘린더 안 붙음. 없으면 503
+  calendarPick?(): Promise<unknown>;
   // chatId(옛 모양) 또는 { chatId, threadId } / { error: "no_thread"|"no_todo" } → 404.
   // opts: threadId(이어 말할 스레드) · todoId(대화 대상 할 일) · kind(새 스레드 종류 chat|hover)
   // parentRunId: 세션 창에서 그 run 의 원래 대화로 이어 말할 때(새 채팅 run 이 그 run 에 연결되고 답이 그 run 기록에도)
@@ -525,6 +530,22 @@ export class Bus {
       const r = h.characters.handle(method, parts, body, upload);
       return json(res, r.status, r.body);
     }
+    // 직접 만든 프로젝트 — 쓰기(POST·PATCH·DELETE)는 POST 와 같은 헤더 규칙
+    if (req.method === "GET" && url.pathname === "/projects/calendar-events") {
+      if (!h.calendarPick) return json(res, 503, { error: "calendar pick unavailable" });
+      return json(res, 200, await h.calendarPick());
+    }
+    const mp = url.pathname.match(/^\/projects\/manual(?:\/([^/]{1,200}))?$/);
+    if (mp) {
+      const method = req.method ?? "GET";
+      if (method !== "GET" && (req.headers["x-cy-agent"] !== "1" || (req.headers.origin && !req.headers.origin.startsWith("file://")))) return json(res, 403, { error: "forbidden" });
+      if (!h.manualProjects) return json(res, 503, { error: "manual projects unavailable" });
+      let id: string | undefined;
+      try { id = mp[1] === undefined ? undefined : decodeURIComponent(mp[1]); } catch { throw new BadRequest("bad project id"); }
+      const body = method === "POST" || method === "PATCH" ? await readJson(req) : undefined;
+      const r = h.manualProjects.handle(method, id, body);
+      return json(res, r.status, r.body);
+    }
     // 행동 지침 — 쓰기(POST·PUT·DELETE)는 POST 와 같은 헤더 규칙
     const gl = url.pathname.match(/^\/guidelines(?:\/([\w-]{1,64}))?$/);
     if (gl) {
@@ -768,6 +789,7 @@ export class Bus {
         if (!h.todoAdd) return json(res, 503, { error: "todo edit unavailable" });
         const p = parseNew(await readJson(req));
         if (!p.ok) throw new BadRequest(p.error);
+        if (p.value.projectId && h.projectExists && !h.projectExists(p.value.projectId)) throw new BadRequest("no such project");
         return json(res, 201, { id: (await h.todoAdd(p.value)).id });
       }
       if (url.pathname === "/todos/trash/empty") {
@@ -837,6 +859,7 @@ export class Bus {
         if (!h.todoEdit) return json(res, 503, { error: "todo edit unavailable" });
         const p = parsePatch(await readJson(req));
         if (!p.ok) throw new BadRequest(p.error);
+        if (p.value.projectId && h.projectExists && !h.projectExists(p.value.projectId)) throw new BadRequest("no such project");
         const t = await h.todoEdit(id, p.value);
         return t ? json(res, 200, { ok: true, todo: t }) : missing();
       }

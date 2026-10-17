@@ -18,7 +18,12 @@ export const CHARACTER_CLIPS = {
         "file": "studying"
       }
     ],
-    "lunch": "plan"
+    "lunch": [
+      {
+        "file": "lunch",
+        "scene": true
+      }
+    ]
   },
   "hachi": {
     "plan": [
@@ -38,7 +43,12 @@ export const CHARACTER_CLIPS = {
         "file": "study"
       }
     ],
-    "lunch": "plan"
+    "lunch": [
+      {
+        "file": "lunch",
+        "scene": true
+      }
+    ]
   },
   "rakko": {
     "plan": [
@@ -60,7 +70,12 @@ export const CHARACTER_CLIPS = {
         "scene": true
       }
     ],
-    "lunch": "plan"
+    "lunch": [
+      {
+        "file": "lunch",
+        "scene": true
+      }
+    ]
   },
   "momonga": {
     "plan": [
@@ -105,6 +120,104 @@ export const CHARACTER_CLIPS = {
         "file": "study"
       }
     ],
-    "lunch": "plan"
+    "lunch": [
+      {
+        "file": "lunch"
+      }
+    ]
+  },
+  "kani": {
+    "plan": [
+      {
+        "file": "plan",
+        "scene": true
+      }
+    ],
+    "dance": [
+      {
+        "file": "dance",
+        "scene": true
+      }
+    ],
+    "cheer": [
+      {
+        "file": "cheer",
+        "scene": true
+      }
+    ],
+    "lunch": [
+      {
+        "file": "lunch",
+        "scene": true
+      }
+    ],
+    "study": [
+      {
+        "file": "study",
+        "scene": true
+      }
+    ]
+  },
+  "chiikawa": {
+    "dance": [
+      {
+        "file": "dance",
+        "scene": true
+      },
+      {
+        "file": "dance2",
+        "scene": true
+      }
+    ],
+    "cheer": [
+      {
+        "file": "cheer",
+        "scene": true
+      }
+    ],
+    "plan": [
+      {
+        "file": "plan",
+        "scene": true
+      },
+      {
+        "file": "plan2",
+        "scene": true,
+        "say": "으아앙... (〈{title}〉 {mins}분 전이야! {time}{where})"
+      }
+    ],
+    "study": [
+      {
+        "file": "study"
+      }
+    ],
+    "lunch": [
+      {
+        "file": "lunch",
+        "scene": true
+      }
+    ]
+  },
+  "kuri": {
+    "cheer": [
+      {
+        "file": "cheer",
+        "scene": true
+      }
+    ],
+    "dance": "cheer",
+    "plan": "cheer",
+    "study": [
+      {
+        "file": "study",
+        "scene": true
+      }
+    ],
+    "lunch": [
+      {
+        "file": "lunch",
+        "scene": true
+      }
+    ]
   }
 };

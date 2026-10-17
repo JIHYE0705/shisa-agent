@@ -3,7 +3,7 @@
 데몬(`agent/src/bus.ts`)은 `127.0.0.1`에서만 연다. 포트는 `CY_AGENT_PORT`로 바꿀 수 있다.
 
 **공통 규칙**
-- 쓰기(POST·PUT·DELETE)는 `X-CY-Agent: 1` 헤더가 필수다. `Origin`이 있으면 거부한다(`file://` 제외) → 403. 첨부 파일 읽기(GET)도 같은 규칙이다.
+- 쓰기(POST·PUT·PATCH·DELETE)는 `X-CY-Agent: 1` 헤더가 필수다. `Origin`이 있으면 거부한다(`file://` 제외) → 403. 첨부 파일 읽기(GET)도 같은 규칙이다.
 - 본문은 JSON 객체(`content-type: application/json`)이고, 본문이 없어도 되는 곳은 `{}`로 본다.
 - 처리기가 없으면(모듈이 꺼짐) 503, 모양이 틀리면 400, 없는 id면 404다.
 - `Host` 헤더가 `127.0.0.1:<포트>`나 `localhost:<포트>`가 아니면 모든 경로(`/events` 포함)를 403으로 막는다. 다른 이름이 127.0.0.1을 가리키게 하는 DNS 리바인딩을 막기 위해서다.
@@ -17,7 +17,7 @@
 |---|---|---|
 | `bubble` | `Bubble`(아래) | 말풍선. 같은 `id`로 다시 오면 통째로 바꾼다 |
 | `clear` | `{ id }` | 말풍선 걷기 |
-| `state` | `{ mood: idle\|thinking\|working\|alert, activity: idle\|studying\|dancing, runs: [{ id, kind, title, startedAt }], danceId?, danceClip?, danceVariant?, character }` | 캐릭터 상태. `danceClip`은 춤 자리에 틀 칸(`plan` 일정 알림·`dance` 춤·`cheer` 응원·`lunch` 점심시간), `danceVariant`는 그 칸 영상 목록에서 데몬이 고른 번호(0부터)다. `character`는 고른 캐릭터 id(`shisa`·`hachi`·`rakko`·`momonga`·`usagi` 또는 사용자가 만든 `u-…`)이고, 바뀌면 바로 다시 보낸다 |
+| `state` | `{ mood: idle\|thinking\|working\|alert, activity: idle\|studying\|dancing, runs: [{ id, kind, title, startedAt }], danceId?, danceClip?, danceVariant?, character }` | 캐릭터 상태. `danceClip`은 춤 자리에 틀 칸(`plan` 일정 알림·`dance` 춤·`cheer` 응원·`lunch` 점심시간), `danceVariant`는 그 칸 영상 목록에서 데몬이 고른 번호(0부터)다. `character`는 고른 캐릭터 id(`shisa`·`hachi`·`rakko`·`momonga`·`usagi`·`kani`·`chiikawa`·`kuri` 또는 사용자가 만든 `u-…`)이고, 바뀌면 바로 다시 보낸다 |
 | `status` | `{ status: Status }` | 연결 상태가 바뀜(`GET /status`와 같은 모양) |
 | `dashboard` | `{}` | 대시보드를 다시 가져오라는 신호 |
 | `open_panel` | `{ section: overview\|projects\|todos\|today\|chat\|null }` | 패널을 그 탭으로 열기 |
@@ -45,7 +45,7 @@ type Bubble = {
 - `dancing`: 일정 알림(기본 10분 전, 설정 `calendarAlert`), 「춤」·「춤춰 줘」·「응원해 줘」, 점심시간 알림(설정 `lunchAlert`) 때 8초 동안이다.
 - 앱은 캐릭터마다 다른 영상을 튼다. 기본 캐릭터의 칸별 영상 목록은 `assets/characters/clips.json`(렌더러 사본 `desktop/src/character-clips.js`, `node desktop/scripts/sync-character-lines.mjs`로 맞춘다)에 있다. 시사는 `assets/character/`, 다른 캐릭터는 `assets/characters/<id>/`의 파일이다.
 - 한 칸에 영상이 여러 개면 그때마다 하나가 나온다. 춤 자리는 데몬이 춤을 시작할 때(`activity.play`) 번호를 골라 `danceVariant`로 알리고, 그 영상에 전용 한마디(`say`)가 있으면 기본 대사 대신 그 말을 말풍선·답으로 띄운다. 두 개 이상이면 같은 번호가 연달아 나오지 않는다. 앱은 그 번호의 영상을 튼다. 데몬과 끊겨 있을 때 앱이 스스로 추는 춤은 앱이 번호를 고르고 그 한마디를 앱 말풍선으로 띄운다. 집중 영상은 앱이 들어갈 때마다 고른다.
-- 칸 목록이 없으면 대신 쓴다: 응원은 춤, 춤은 응원, 일정 알림은 춤(그다음 응원), 점심시간은 일정 알림(그다음 춤, 응원)이다. 다른 칸 목록을 대신 쓸 때는 한마디를 빼고 그 칸 기본 대사를 쓴다. 일정 알림은 일정 말풍선이 뜨므로 한마디를 쓰지 않는다.
+- 칸 목록이 없으면 대신 쓴다: 응원은 춤, 춤은 응원, 일정 알림은 춤(그다음 응원), 점심시간은 일정 알림(그다음 춤, 응원)이다. 다른 칸 목록을 대신 쓸 때는 한마디를 빼고 그 칸 기본 대사를 쓴다. 일정 알림 영상의 한마디는 일정 말풍선 글(문구 `meeting_alert`)을 대신하고 같은 자리표시 `{mins}`·`{title}`·`{time}`·`{where}`를 쓴다(예: 치이카와의 우는 장면). 다른 칸 한마디는 자리표시를 쓰지 않는다.
 - 점심시간 알림: 로컬 12시대에 하루 한 번 `danceClip: "lunch"`로 추고 점심 인사(`local.lunch`, 그 영상에 한마디가 있으면 그 말)를 띄운다. 날짜는 `~/.cy-agent/lunch.json`에 남겨 같은 날 다시 켜도 또 뜨지 않는다.
 
 ## 상태·설정
@@ -105,7 +105,7 @@ type Bubble = {
   "onboarded": true,                                      // 설치 마법사를 마침(마법사가 보낸다)
   "calendarAlert": { "minutesBefore": [15, 5] },          // 일정 몇 분 전(양의 정수, 개수·크기 상한 없음). [] = 알림 끔, 기본 [10]
   "lunchAlert": false,                                    // 점심시간 알림 켜고 끄기(기본 켬)
-  "character": "hachi"                                    // shisa·hachi·rakko·momonga·usagi. 모르는 값은 400
+  "character": "hachi"                                    // shisa·hachi·rakko·momonga·usagi·kani·chiikawa·kuri. 모르는 값은 400
 }
 ```
 
@@ -127,9 +127,9 @@ type Bubble = {
 
 | | |
 |---|---|
-| `GET /characters` | `{ current, characters, slots, types, help, schema }`. `characters`는 기본 다섯(`builtin`, `defaults` 기본 대사, `override` 고친 칸 또는 `null`, `lines` 둘을 합친 것)과 사용자 캐릭터(`custom`, `from`, `media { 칸: 첫 저장 이름 }`, `frames { 칸: 테두리 }`, `clips { 칸: [{ file, say?, frame }] }`, `lines`)다. 응원·춤·집중·일정 알림·점심시간은 파일을 여러 개 넣는 칸이라 `clips`에 전부 있고, `media`·`frames`에는 칸마다 첫 파일만 있다. `schema`는 고칠 수 있는 칸 목록 `[{ path, kind: text\|list, vars, oneLine?, label? }]`, `help`는 `lines.json`의 `_help`다 |
+| `GET /characters` | `{ current, characters, slots, types, help, schema }`. `characters`는 기본 여덟(`builtin`, `defaults` 기본 대사, `override` 고친 칸 또는 `null`, `lines` 둘을 합친 것)과 사용자 캐릭터(`custom`, `from`, `media { 칸: 첫 저장 이름 }`, `frames { 칸: 테두리 }`, `clips { 칸: [{ file, say?, frame }] }`, `lines`)다. 응원·춤·집중·일정 알림·점심시간은 파일을 여러 개 넣는 칸이라 `clips`에 전부 있고, `media`·`frames`에는 칸마다 첫 파일만 있다. `schema`는 고칠 수 있는 칸 목록 `[{ path, kind: text\|list, vars, oneLine?, label? }]`, `help`는 `lines.json`의 `_help`다 |
 | `POST /characters { name, from?, lines?, frames? }` | 새 캐릭터. `from`(기본 `shisa`)의 대사를 전부 복사하고 이름이 든 줄은 새 이름으로 바꾼다. `lines`를 주면 그 위에 덮는다(시사의 정해진 답처럼 앱에만 있는 칸). 201 `{ character }` |
-| `GET /characters/:id` · `PUT /characters/:id` | 사용자 캐릭터는 `{ name?, lines?, frames?, files? }`(`lines`는 통째로, `frames`는 준 칸만이고 여러 개 넣는 칸은 그 칸 파일 전부, `files`는 `{ 저장 이름: { say?, frame? } }`로 파일마다 한마디·테두리이며 `null`이면 기본으로 돌린다. 일정 알림 파일의 `say`는 400). 기본 캐릭터는 `{ lines }`만 받고 기본값과 다른 칸만 `overrides/<id>.json`에 남긴다 |
+| `GET /characters/:id` · `PUT /characters/:id` | 사용자 캐릭터는 `{ name?, lines?, frames?, files? }`(`lines`는 통째로, `frames`는 준 칸만이고 여러 개 넣는 칸은 그 칸 파일 전부, `files`는 `{ 저장 이름: { say?, frame? } }`로 파일마다 한마디·테두리이며 `null`이면 기본으로 돌린다. `say`에 그 칸이 모르는 자리표시가 있으면 400). 기본 캐릭터는 `{ lines }`만 받고 기본값과 다른 칸만 `overrides/<id>.json`에 남긴다 |
 | `DELETE /characters/:id/lines` | 기본 캐릭터 대사를 기본값으로(덮어쓰기 파일을 지운다) |
 | `DELETE /characters/:id` | 사용자 캐릭터를 폴더째 지운다. 지금 쓰던 캐릭터면 시사로 돌아가고 `config.json`도 고친다. 기본 캐릭터는 400 |
 | `PUT /characters/:id/media/:slot` · `DELETE …` · `DELETE …/:file` | 그림·영상 올리기(본문 = 파일 바이트, 이름은 `x-file-name`) · 칸 비우기 · 그 파일 하나만 빼기. 칸은 `eyes_open`·`eyes_closed`·`cheer`·`dance`(꼭 넣을 넷)와 `study`·`plan`·`lunch`(골라서 넣는 것)다. 눈 그림은 바꾸고, 나머지 칸은 더한다(개수 상한 없음) |
@@ -166,11 +166,29 @@ type Bubble = {
 - `GET /dashboard` → 200. 패널 전체 데이터다.
   - `generatedAt`, `briefing{at,bubble,replyMd}|null`, `commitsToday`
   - `projects[]`: `name`, `path`, `lastActive`, `sessions24h`, `lastTitle`, `lastPrompt`, `branch`, `commitsToday`, `recentCommits`, `hidden`
+  - `manualProjects[]`: 직접 만든 프로젝트(아래 「직접 만든 프로젝트」, 진행 중 먼저)
   - `todos[]`(아래), `recentDone[]`, `proposals[]`, `today{date,asked,items}`
   - `connectors[]{cap,label,mode,ready,detail,doc}`, `meetings[]{id,subject,start,end,link?}`, `todoRules[]`
 - `POST /briefing` → 202. 지금 브리핑(오래 걸리니 기다리지 않는다).
 - `POST /refresh` → 202. Slack 다시 훑기 → 새 할 일 → 브리핑.
 - `POST /projects/hide|unhide { id: 경로 }` → 200 / 404. 숨긴 프로젝트는 집계·프롬프트에서 빠진다.
+
+### 직접 만든 프로젝트(`manual-projects.ts`)
+
+코드 작업에서 저절로 모은 `projects[]`와 따로, 사람이 패널 ＋나 채팅으로 만든 프로젝트다. `cy.db`의 `manual_projects` 테이블에 두고, 할 일은 `todos.project_id`로 묶는다.
+
+항목(`ManualProjectView`): `id`(`proj:<uuid>`), `name`, `note?`, `start?`·`due?`(YYYY-MM-DD), `status: open|done`, `created`, `updated`, `doneAt?`, `source?{ kind: "calendar", eventId, calendar?, title?, start?, end? }`(일정에서 가져왔을 때), `todos`(묶인 할 일 수, 휴지통 제외), `openTodos`(남은 수)
+
+| | |
+|---|---|
+| `GET /projects/manual` | 200 `{ projects }` |
+| `POST /projects/manual { name, note?, start?, due?, source? }` | 201 `{ project }`. `name` 필수 |
+| `GET /projects/manual/:id` | 200 `{ project, todos }`(묶인 할 일, 열린 것 먼저) |
+| `PATCH /projects/manual/:id { name?, note?, start?, due?, status? }` | 200 `{ project }`. `null`·빈 글은 지우기, `status: done`이면 `doneAt` |
+| `DELETE /projects/manual/:id` | 200 `{ ok, unlinked }`. 프로젝트만 지우고 묶인 할 일은 남긴다(묶음만 푼다) |
+| `GET /projects/calendar-events` | 200 `{ connected, ok, from, to, events[] }`. 연결된 캘린더(ICS 여러 개·MCP)에서 지난 3일 ~ 앞으로 14일 일정. 항목: `id`, `title`, `start`, `end`, `allDay`, `past`, `calendar?`, `location?`, `description?`, `attendees?`, `joinUrl?`, `draft`(그 일정으로 채운 `POST /projects/manual` 본문: 제목 → 이름, 설명·장소·참석자 → 메모, 날짜 → 시작·기한, `source`). 취소·거절한 일정은 뺀다. 캘린더가 안 붙었으면 `connected: false` |
+
+할 일에 묶기: `POST /todos`·`POST /todos/:id`의 `projectId`(id, 빼기는 `null`). 없는 프로젝트면 400.
 
 ## 할 일
 
@@ -178,13 +196,14 @@ type Bubble = {
 - `id`, `title`, `source`, `link?`, `priority: 1–4`(4 = 언젠가·백로그), `note?`, `description?`, `userEdited`
 - `doing?`(사용자가 ▶로 정한 진행중), `progress?`·`progressAt?`(작업 세션에서 본 진척)
 - `appliedRule?`, `doneBy?: user|auto|briefing`, `autoReason?`, `autoEvidence?`
+- `projectId?`: 묶인 직접 만든 프로젝트
 
 화면에 「(진행중)」은 `doing`이 있으면 그 값으로, 없으면 `progress`가 있을 때 붙는다.
 
 | | |
 |---|---|
-| `POST /todos { title, priority?, link?, note? }` | 201 `{ id }`(`user:<uuid>`) |
-| `POST /todos/:id { title?, priority?, link?, note?, description?, status?: open\|done, doing?: boolean\|null }` | 200 `{ ok, todo }`. 사용자가 고친 필드는 브리핑이 덮지 않는다(`doing`은 예외) |
+| `POST /todos { title, priority?, link?, note?, today?, projectId? }` | 201 `{ id }`(`user:<uuid>`) |
+| `POST /todos/:id { title?, priority?, link?, note?, description?, status?: open\|done, doing?: boolean\|null, today?, projectId?: string\|null }` | 200 `{ ok, todo }`. 사용자가 고친 필드는 브리핑이 덮지 않는다(`doing`은 예외) |
 | `POST /todos/:id/done` | 완료 |
 | `POST /todos/:id/delete` → `/restore` → `/purge`, `POST /todos/trash/empty` | 휴지통(30일 뒤 자동 비움) |
 | `POST /todos/:id/revert` | 자동 완료 되돌리기. 409 = 자동 완료가 아님 |
@@ -255,6 +274,8 @@ type FocusView = {
 - `{ status: "error", text }`
 
 같은 대화 안에서는 차례로, 다른 대화끼리는 동시에 돈다.
+
+채팅 답의 `project_ops`(만들기 `add`·고치기 `edit`·끝내기 `done`·다시 열기 `reopen`, 지우기는 패널에서만)는 `todo_ops`보다 먼저 적용된다. `todo_ops`의 `project`(id 나 이름, `null`은 빼기)로 할 일을 묶으니, 한 답에서 프로젝트를 만들고 할 일을 넣을 수 있다.
 
 | | |
 |---|---|

@@ -8,6 +8,7 @@ import type { PanelSection } from "./bus.ts";
 import { ask, brainFacts, buildContext, SCHEMA as THOUGHT_SCHEMA, INTERACTIVE_SYSTEM, WRITE_GUIDE, type Thought } from "./brain.ts";
 import { buildDashboard, dashboardSummary } from "./dashboard.ts";
 import { TODO_OPS_SCHEMA, trashedNote, type TodoOp } from "./todos.ts";
+import { PROJECT_OPS_SCHEMA } from "./manual-projects.ts";
 import { PLAN_OPS_SCHEMA, type PlanOp } from "./daily-plan.ts";
 import { MEMORY_OPS_SCHEMA, applyMemoryOps, extractRememberedFact, rememberFact, type MemoryOp } from "./profile.ts";
 import { RULE_SCHEMA, RULE_GUIDE } from "./todo-rules.ts";
@@ -28,7 +29,7 @@ import { parsePrRef } from "./merge-request.ts";
 import { sessionsAllowed } from "./onboarding.ts";
 
 export type { PanelSection };
-export type ChatReply = { reply_md: string; bubble: string; show: PanelSection | null; proposals: Thought["proposals"]; todo_ops?: TodoOp[]; plan_ops?: PlanOp[]; memory_ops?: MemoryOp[]; rule?: unknown; guideline?: unknown; actions?: unknown[]; merges?: MergeAsk[]; auto_merge?: AutoMergeAsk[] };
+export type ChatReply = { reply_md: string; bubble: string; show: PanelSection | null; proposals: Thought["proposals"]; todo_ops?: TodoOp[]; project_ops?: unknown[]; plan_ops?: PlanOp[]; memory_ops?: MemoryOp[]; rule?: unknown; guideline?: unknown; actions?: unknown[]; merges?: MergeAsk[]; auto_merge?: AutoMergeAsk[] };
 // 머지해 달라는 PR 하나(모델 출력 merges) — 데몬이 PR 을 읽어 머지 승인 카드로(merge-request.ts).
 // userSaid: 사용자가 이번 말에서 그 PR 을 머지하라고 직접 말함 → 데몬이 사용자 말을 다시 보고(auto-merge.ts textMergeConsent) 맞으면 ✓ 없이 바로
 export type MergeAsk = { pr: string; repo?: string; userSaid?: boolean };
@@ -161,7 +162,7 @@ export const CHAT_AUTO_MERGE = {
 export const CHAT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["reply_md", "bubble", "show", "proposals", "todo_ops", "plan_ops", "memory_ops", "rule", "guideline", "merges", "auto_merge"],
+  required: ["reply_md", "bubble", "show", "proposals", "todo_ops", "project_ops", "plan_ops", "memory_ops", "rule", "guideline", "merges", "auto_merge"],
   properties: {
     reply_md: { type: "string", description: "대화 답변(Markdown). 짧게, 필요한 만큼만. 링크 포함." },
     bubble: { type: "string", description: "캐릭터 말풍선용 요약. 정해진 캐릭터 말투로, 40자 이내." },
@@ -171,6 +172,7 @@ export const CHAT_SCHEMA = {
     },
     proposals: CHAT_PROPOSALS,
     todo_ops: TODO_OPS_SCHEMA,
+    project_ops: PROJECT_OPS_SCHEMA,
     plan_ops: PLAN_OPS_SCHEMA,
     memory_ops: MEMORY_OPS_SCHEMA,
     rule: RULE_SCHEMA,
@@ -196,6 +198,7 @@ ${context}
 - 시작했다·맡겼다·실행했다·보냈다는 말은 이번 답에서 그 도구 호출이 실제로 일어났을 때만 한다(안 한 일을 했다고 하지 않는다).
 - 서브에이전트(Agent 도구)는 이 대화에서 **백그라운드로 따로** 돈다: 부르면 곧바로 "[백그라운드 에이전트] … 시작했어요"가 돌아온다(실패가 아니다). 그 결과는 아직 없다 — 기다리거나 짐작해서 말하지 말고 "에이전트로 점검 시작했어요 — 끝나면 이 대화에 결과를 올릴게요"처럼 시작했다고만 짧게 답하고 이 답을 끝낸다. 결과는 끝나면 이 대화에 새 답으로 따로 올라온다. 백그라운드 에이전트는 이 답과 같은 권한이다 — 파일을 고치고(Edit·Write·셸, 같은 승인 카드) 서브에이전트도 띄운다. 개수 상한이 없으니 서로 독립된 일이 여럿이면 Agent 를 한 답에서 여러 번 불러 동시에 돌린다. 같은 레포를 여럿이 고치면 isolation: "worktree" 로 불러 에이전트마다 새 워크트리(새 브랜치)를 판다 — 그래야 서로 기다리지 않는다(같은 작업 폴더에 쓰는 에이전트끼리는 차례로 쓴다). 워크트리에 바뀐 게 있으면 데몬이 그 브랜치에 커밋해 남기고 결과에 경로·브랜치·가져오는 법(git cherry-pick -n)을 붙인다, 없으면 지운다. 브랜치마다 PR 을 내려면 proposals 를 브랜치마다 하나씩(계획에 「브랜치 X 의 변경을 cherry-pick 해서」). 결과를 이 답에서 바로 써야 하면 run_in_background: false 로 부른다(끝날 때까지 이 답이 기다린다). 긴 코드 작업(커밋·PR)은 proposals(수정 작업)로.
 - "할 일에 X 추가해줘", "견적 회신 우선순위 올려줘", "그거 지워줘", "그거 끝났어"처럼 할 일을 바꾸라는 말이면 todo_ops에 넣는다. 우선순위 '올리기'는 숫자를 줄이는 것(P2→P1). '그거'는 최근 대화로 판단하고, 어느 할 일인지 애매하면 todo_ops는 비우고 되물어라. reply_md에는 무엇을 바꿨는지 한 줄로.
+- "○○ 프로젝트 만들어 줘", "그 프로젝트 끝났어", "기한 다음 주 금요일로"처럼 사람이 직접 만드는 프로젝트(레포가 아닌 일 묶음)를 만들거나 고치라는 말이면 project_ops에 넣는다(지우기는 패널에서만). "이 할 일 ○○ 프로젝트에 넣어 줘"면 todo_ops edit 에 project(그 프로젝트 id 나 이름), 새 할 일을 그 프로젝트로 만들면 add 에 project. 진행 중인 직접 만든 프로젝트는 dashboard_summary(또는 위 대시보드 요약)의 '내가 만든 프로젝트'에 있다. 코드 작업(proposals)의 레포 프로젝트와 헷갈리지 않는다.
 - "오늘 할 일 적어줘", "오늘 할 일에 회의 준비 넣어", "그거 오늘 할게"처럼 오늘 할 일이면 plan_ops에 넣는다(새로 적으면 add title·priority, 있는 할 일을 오늘로 고르면 add id). 일정 캐시를 보고 오늘 할 일을 채워도 된다.
 - "내 이름은 홍길동이야, 기억해줘"처럼 자기 정보를 맡기면 memory_ops remember에 사실 문장만 넣는다('기억해줘'는 빼고). 잊어 달라면 forget. 이미 데몬이 같은 말을 저장했으면 memory_ops는 비우고 짧게 확인만 한다.
 ${RULE_GUIDE} 규칙은 바로 저장되고 맞는 기존 할 일에도 적용된다(데몬이 결과를 덧붙인다).
@@ -288,7 +291,7 @@ export async function converse(
   const prompt = chatPrompt(cfg, store, history, text, summary, focus, repo, thread, att?.note);
   const via: ActionVia = thread?.kind === "hover" ? "hover" : "chat";
   const r = await ask<ChatReply>(cfg, prompt, CHAT_SCHEMA, onStep, { ...chatAskOpts(cfg, text || attachmentsTitle(attachments), repo, threadId, via, model), ...(inlineContext(cfg) ? {} : { ctx: { ...ctx, store } }), ...(abort ? { abort } : {}), ...(att?.blocks.length ? { blocks: att.blocks } : {}), facts: brainFacts(store) });
-  return { ...r, show: SECTIONS.includes(r.show as PanelSection) ? r.show : null, proposals: r.proposals ?? [], todo_ops: r.todo_ops ?? [], plan_ops: r.plan_ops ?? [], memory_ops: r.memory_ops ?? [], rule: r.rule ?? null, guideline: r.guideline ?? null, actions: Array.isArray(r.actions) ? r.actions : [], merges: Array.isArray(r.merges) ? r.merges : [], auto_merge: Array.isArray(r.auto_merge) ? r.auto_merge : [] };
+  return { ...r, show: SECTIONS.includes(r.show as PanelSection) ? r.show : null, proposals: r.proposals ?? [], todo_ops: r.todo_ops ?? [], project_ops: Array.isArray(r.project_ops) ? r.project_ops : [], plan_ops: r.plan_ops ?? [], memory_ops: r.memory_ops ?? [], rule: r.rule ?? null, guideline: r.guideline ?? null, actions: Array.isArray(r.actions) ? r.actions : [], merges: Array.isArray(r.merges) ? r.merges : [], auto_merge: Array.isArray(r.auto_merge) ? r.auto_merge : [] };
 }
 
 // 슬래시 명령 한 번: 맥락·스키마로 감싸지 않고 말 그대로 프롬프트로(Claude Code 가 명령·스킬을 펼친다).
@@ -343,7 +346,8 @@ export type ChatPorts = {
   changed(): void; // 대시보드 다시 불러오라는 신호
   // 코드 작업 → 바로 수정 run(데몬은 승인 없이 시작, 머지만 승인). threadId: 이 대화(수정 run 의 원래 화면). 못 올렸으면 undefined
   propose(pr: Thought["proposals"][number], threadId?: string): Promise<unknown>;
-  todoOps?(ops: TodoOp[]): { applied: string[]; errors: string[]; trashed?: string[] }; // 할 일 편집 적용(잘못된 건 이유, 휴지통으로 옮긴 제목)
+  todoOps?(ops: TodoOp[]): { applied: string[]; errors: string[]; trashed?: string[] };
+  projectOps?(ops: unknown[]): { applied: string[]; errors: string[] }; // 직접 만든 프로젝트 만들기·고치기·끝내기(manual-projects.ts) // 할 일 편집 적용(잘못된 건 이유, 휴지통으로 옮긴 제목)
   planOps?(ops: PlanOp[]): { applied: string[]; errors: string[] };
   memoryOps?(ops: MemoryOp[]): { applied: string[]; errors: string[] };
   addRule?(rule: unknown): string; // 지속 규칙 저장 + 기존 할 일 적용 → 답에 덧붙일 한 줄
@@ -729,6 +733,12 @@ export class Chat {
       // 집어 든 할 일이 있으면 id 빠진 op는 그 할 일로
       const ops = (r.todo_ops ?? []).map((op) => (focus && op.op !== "add" && !op.id ? { ...op, id: focus.id } : op));
       const lines: string[] = []; // 적용한 변경 — 스레드에 시스템 줄로
+      // 프로젝트 먼저(같은 답의 할 일 op 가 방금 만든 프로젝트 이름으로 묶을 수 있게) — 슬래시 명령 답에는 없다
+      if (!command && (r.project_ops ?? []).length && this.ports.projectOps) {
+        const res = this.ports.projectOps(r.project_ops!);
+        lines.push(...res.applied.map((a) => `✓ ${a}`));
+        if (res.errors.length) reply += `\n\n${res.errors.map((e) => `⚠️ ${e}`).join("\n")}`;
+      }
       if (ops.length && this.ports.todoOps) {
         const res = this.ports.todoOps(ops);
         lines.push(...res.applied.map((a) => `✓ ${a}`));

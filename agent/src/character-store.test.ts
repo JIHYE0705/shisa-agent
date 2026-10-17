@@ -319,7 +319,7 @@ test("HTTP: GET/POST/PUT/DELETE /characters, 그림 올리기(바이트), 쓰기
     const ev = await fetch(`${base}/events`, { signal: ac.signal });
     const reader = ev.body!.getReader();
     const g = await (await fetch(`${base}/characters`)).json();
-    assert.deepEqual(g.characters.map((c: any) => c.id), ["shisa", "hachi", "rakko", "momonga", "usagi"]);
+    assert.deepEqual(g.characters.map((c: any) => c.id), ["shisa", "hachi", "rakko", "momonga", "usagi", "kani", "chiikawa", "kuri"]);
     assert.equal(g.current, "shisa");
     assert.ok(g.schema.length > 100 && g.help.prompt && g.slots.length === 7 && g.types.includes("gif"));
     assert.equal((await fetch(`${base}/characters`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "x" }) })).status, 403);
@@ -394,9 +394,12 @@ test("여러 개 넣는 칸: 더하기·하나씩 빼기·파일마다 한마디
   assert.equal(store.removeMedia(id, "dance").status, 200);
   assert.equal(c().clips.dance, undefined);
   assert.deepEqual(readdirSync(join(dir, "characters", id)).filter((f) => f.startsWith("dance")), []);
-  // 일정 알림은 한마디를 넣지 않는다(일정 말풍선)
+  // 일정 알림 한마디는 일정 말풍선 대신 — 자리표시는 meeting_alert 와 같은 것만, 다른 칸은 자리표시 없음
   const p = (store.putMedia(id, "plan", "p.png", PNG).body as any).file;
-  assert.equal(store.update(id, { files: { [p]: { say: "일정!" } } }).status, 400);
+  assert.equal(store.update(id, { files: { [p]: { say: "으앙 ({mins}분 전 〈{title}〉)" } } }).status, 200);
+  assert.equal(c().clips.plan[0].say, "으앙 ({mins}분 전 〈{title}〉)");
+  assert.equal(store.update(id, { files: { [p]: { say: "{nope}" } } }).status, 400);
+  assert.equal(store.update(id, { files: { [files[1]]: { say: "{mins}" } } }).status, 400, "춤 한마디는 자리표시를 못 쓴다");
   assert.equal(store.update(id, { files: { [p]: { frame: true } } }).status, 200);
 });
 

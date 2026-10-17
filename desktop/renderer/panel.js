@@ -8,6 +8,7 @@ import { isFeature, isAgent, buildWalk, agentSteps } from '../src/setup-flow.js'
 import { renderSetup, clearApiDraft, readSlot, clearSlot } from './setup-view.js';
 import { mountModels } from './models-view.js';
 import { createFocusView } from './focus-view.js';
+import { createProjectsView } from './projects-view.js';
 import { connectorAction, connectorDisconnectCopy, disconnectControl } from '../src/disconnect.js';
 import { CANNED, cannedReply, connectSteps, hubItem, slotOk, EXTRAS } from '../src/ai-onboard.js';
 import { SETUP_FLOW_VERSION, isSetupPhase, phaseAfterBrain, backPhase, restorePhase, agentFrom, NO_AI } from '../src/setup-plan.js';
@@ -102,6 +103,8 @@ function h(sel, props, ...kids) {
 }
 // 집중하기: 할 일 목록의 [집중하기] · 맨 아래 「오늘 집중」 · 주·월 기록(focus-view.js)
 const focusView = createFocusView({ h, cy });
+// 직접 만든 프로젝트: 프로젝트 탭 위쪽 카드와 ＋ 만들기 창(새로 만들기·일정에서 가져오기)
+const projectsView = createProjectsView({ h, cy, fill: (el, ...k) => fill(el, ...k), onChanged: () => loadSoon(), openSettings: () => cy.openSettings() });
 
 // replaceChildren 에 null 을 넣으면 화면에 "null" 글자가 찍힌다
 function fill(el, ...kids) {
@@ -282,7 +285,7 @@ function renderNav() {
 
 function renderBadges() {
   const { stats } = vm;
-  badges.projects.textContent = vm.projects.length || '';
+  badges.projects.textContent = vm.projects.length + vm.manualProjects.filter((p) => !p.done).length || '';
   badges.todos.textContent = stats.openTodos || '';
   badges.todos.classList.toggle('hot', stats.p1Todos > 0);
   badges.overview.textContent = stats.pendingProposals || '';
@@ -956,10 +959,12 @@ function toggleHiddenGroup() {
 function renderProjects() {
   const el = $('sec-projects');
   const hidden = vm.hiddenProjects;
-  const kids = [];
+  // 위: 직접 만든 프로젝트(＋ 만들기). 아래: 코드 작업에서 저절로 모은 것(있을 때만)
+  const kids = error && !raw ? [h('div.empty', { text: '불러오지 못함' })] : projectsView.section(vm, renderProjects);
+  if (vm.projects.length || hidden.length || projMsg) kids.push(h('h2.mp-auto-title', { text: '코드 작업에서 모은 것' }));
   if (projMsg) kids.push(h(`div.result.${projMsg.ok ? 'ok' : 'err'}`, { role: 'status', text: projMsg.text }));
-  if (!vm.projects.length) kids.push(h('div.empty', { text: error && !raw ? '불러오지 못함' : hidden.length ? '숨긴 프로젝트만 있음' : '최근 프로젝트 없음' }));
-  else kids.push(projectCards());
+  if (!vm.projects.length && hidden.length) kids.push(h('div.empty', { text: '숨긴 프로젝트만 있음' }));
+  else if (vm.projects.length) kids.push(projectCards());
   if (hidden.length) {
     kids.push(h('div.hidden-projects', null,
       h('button.ghost.hidden-toggle', { type: 'button', 'aria-expanded': String(hiddenOpen), onclick: toggleHiddenGroup },
@@ -1535,10 +1540,17 @@ function todoRow(t) {
   // (진행중): 사용자가 ▶ 로 켠 것, 아니면 작업 세션을 보니 하는 중(todo-progress.ts 가 진척을 남김) → 제목 앞
   h('span.t', null, isDoing(t) ? h('span.doing', { text: '(진행중) ', title: t.progress ? `진행: ${t.progress}` : '직접 진행중으로 표시' }) : null, t.title),
   t.source ? h('span.chip', { text: t.source === 'user' ? '직접 추가' : t.source }) : null,
+  projectChip(t),
   confirming ? null : todayButton(t),
   confirming ? null : doingButton(t),
   confirming ? confirmBox('trash', () => trashTodo(t)) : trashButton(t));
   return open ? h('div.todo-wrap', null, row, todoDetailView(t)) : row;
+}
+
+// 묶인 직접 만든 프로젝트 이름(프로젝트 탭의 카드)
+function projectChip(t) {
+  const p = t.projectId ? vm.manualProjects.find((x) => x.id === t.projectId) : null;
+  return p ? h('span.chip.mp-chip', { text: `📁 ${p.name}`, title: `프로젝트: ${p.name}` }) : null;
 }
 
 function onRowKey(t, e) {
