@@ -11,6 +11,7 @@ import { autoMergeList } from "./auto-merge.ts";
 import { todayReminderOf, type TodayReminder } from "./daily-plan.ts";
 import { isNewStyle, onboardedOf, readSessionsOf } from "./onboarding.ts";
 import { calendarAlertOf, type CalendarAlertConfig } from "./calendar-alert.ts";
+import { workHoursOf } from "./work-hours.ts";
 
 export const HOME_DIR = process.env.CY_AGENT_HOME ?? join(homedir(), ".cy-agent");
 
@@ -42,8 +43,15 @@ export type Config = {
   todayReminder?: TodayReminder;
   // 일정 알림(설정 창 「일정 알림」): 일정 몇 분 전에 알릴지. 없으면 10분 전 한 번, minutesBefore: [] 이면 끔(calendar-alert.ts)
   calendarAlert?: CalendarAlertConfig;
-  // 점심시간 알림(설정 창 「점심시간 알림」): 12시대에 하루 한 번 점심 영상 + 인사. 없으면 켬, false 면 끔(lunch.ts)
+  // 점심시간 알림(설정 창 「근무 시간」): 점심 시각부터 한 시간 안에 하루 한 번 점심 영상 + 인사. 없으면 켬, false 면 끔(work-hours.ts)
   lunchAlert?: boolean;
+  // 근무 시간(설정 창 「근무 시간」, work-hours.ts): 출근·점심·퇴근 HH:MM(로컬), 요일(0 일~6 토), 출근 인사·퇴근 10분 전 인사 켜기. 없으면 기본값
+  workStart?: string;
+  lunchTime?: string;
+  workEnd?: string;
+  workDays?: number[];
+  startAlert?: boolean;
+  leaveAlert?: boolean;
   // 캐릭터(characters.ts id). 없거나 모르는 값이면 시사
   character?: string;
   // 지식그래프 2단계(엔티티·관계 추출) 모델. 1단계(업무 판정)는 늘 경량. 기본은 경량(대량 작업이라 비용 우선)
@@ -295,7 +303,7 @@ export function loadConfig(env = process.env, file: FileConfig = readFileConfig(
     autoMerge: autoMergeList(f.autoMerge),
     todayReminder: todayReminderOf(f.todayReminder, notes),
     calendarAlert: calendarAlertOf(f.calendarAlert),
-    lunchAlert: f.lunchAlert !== false,
+    ...workHoursOf(f), // lunchAlert·workStart·lunchTime·workEnd·workDays·startAlert·leaveAlert
     ...(typeof f.character === "string" && f.character ? { character: f.character } : {}),
     kgModel: env.CY_AGENT_KG_MODEL ?? (f.kgModel as string) ?? (env.CY_AGENT_MODEL_LIGHT ?? (f.models as any)?.light ?? "claude-haiku-5-5"),
     localAutoAllow: env.CY_AGENT_LOCAL_ASK === "1" ? false : f.localAutoAllow !== false,

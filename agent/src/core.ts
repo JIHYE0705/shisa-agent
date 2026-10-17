@@ -87,6 +87,8 @@ export type Deps = {
   autoMergeOp?: (op: "add" | "remove", slug: string) => { ok: true; changed: boolean; list: string[] } | { ok: false; error: string };
   autoMergePoll?: { tries: number; ms: number }; // 수정 run PR 자동 머지: 검사 끝날 때까지 다시 읽기(테스트는 짧게)
   sleep?: (ms: number) => Promise<void>;
+  // 로컬 뇌 브리핑의 시간대 인사를 띄워도 되나(main: 아침 인사는 출근 인사와 같은 하루 한 번 기록, 다른 시간대는 출근 인사를 막 띄웠으면 안 띄움). 없으면 늘 띄움
+  greetOk?: (part: string) => boolean;
 };
 
 // 같은 Slack 메시지를 너무 자주 고치지 않게(레이트리밋) 진행 로그 갱신을 묶는다
@@ -527,9 +529,12 @@ export class Agent {
       // 로컬 뇌의 시간대 인사(「좋은 저녁이에요」…)는 고정 id — 같은 인사가 겹쳐 뜨지 않고 새 것이 옛 것을 바꾼다
       const local = (this.cfg.brain?.provider ?? "claude-code") === "local";
       const b = { ...(local ? { id: LOCAL_GREET_ID } : {}), text: t.bubble, kind: hasP1 ? "todo" : "info", ttlMs: 30e3, link: posted?.permalink } as const;
+      // 아침 인사는 하루 한 번, 출근 인사를 막 띄웠으면 이 브리핑은 말풍선 없이(인사가 연달아 두 번 뜨지 않게)
+      const greet = (t as { greet?: string }).greet;
+      const quiet = local && !!greet && !!this.deps.greetOk && !this.deps.greetOk(greet);
       // 별일 없는 브리핑엔 가끔 daily 스티커, 할 거 많으면 lots(반나절 한 번)
       const notable = hasP1 || this.lastAdded > 0 || t.proposals.length > 0 || !!this.reactions?.lotsDue(open);
-      this.bus.bubble(this.reactions?.briefingBubble({ ...b }, { notable }) ?? b);
+      if (!quiet) this.bus.bubble(this.reactions?.briefingBubble({ ...b }, { notable }) ?? b);
       this.reactions?.lots(open, "briefing");
     } catch (e: any) {
       this.bus.bubble({ text: `브리핑하다 막혔어요: ${String(e?.message ?? e).slice(0, 60)}`, kind: "error" });

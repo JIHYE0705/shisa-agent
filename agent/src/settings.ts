@@ -4,6 +4,7 @@
 // config.json 의 다른 키(토큰·repoRoots…)는 그대로 둔다. 쓰기는 임시 파일 → rename(원자적). 파일이 깨져 있으면 덮어쓰지 않는다.
 import { todayReminderOf, validateTodayReminder, type TodayReminder } from "./daily-plan.ts";
 import { calendarAlertOf, validateCalendarAlert, type CalendarAlertConfig } from "./calendar-alert.ts";
+import { cleanDays, isHhmm, minutesOf, workHoursOf } from "./work-hours.ts";
 import { readFileSync, renameSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isAbsolute } from "node:path";
@@ -57,7 +58,9 @@ export type SettingsView = {
   autoMerge: string[]; // ✓ 없이 머지까지 하는 레포(owner/name)
   todayReminder: TodayReminder; // 오늘 할 일 알림(auto: 아침 + N시간마다·지정 시각 / off)
   calendarAlert: CalendarAlertConfig; // 일정 알림: 몇 분 전에 알릴지([] = 끔)
-  lunchAlert: boolean; // 점심시간 알림(12시대 하루 한 번, 기본 켬)
+  lunchAlert: boolean; // 점심시간 알림(점심 시각부터 한 시간 안에 하루 한 번, 기본 켬)
+  // 근무 시간(work-hours.ts): 출근·점심·퇴근 HH:MM, 요일(0 일~6 토), 출근 인사·퇴근 10분 전 인사
+  workStart: string; lunchTime: string; workEnd: string; workDays: number[]; startAlert: boolean; leaveAlert: boolean;
   // 뇌: 키는 절대 내보내지 않는다 — 있나 없나만
   brain: { provider: BrainProvider; model: string; keys: Record<BrainKey, boolean> };
   // 캐릭터(characters.ts): 그림·영상·말투·고정 문구 기본값이 바뀐다
@@ -84,6 +87,7 @@ export type SettingsPatch = {
   onboarded?: boolean; readSessions?: boolean;
   calendarAlert?: CalendarAlertConfig;
   lunchAlert?: boolean;
+  workStart?: string; lunchTime?: string; workEnd?: string; workDays?: number[]; startAlert?: boolean; leaveAlert?: boolean;
   character?: CharacterId;
 };
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,100}$/;
@@ -97,7 +101,7 @@ export class ConfigFileError extends Error {}
 export function validatePatch(body: unknown, cfg: Pick<Config, "models">): SettingsPatch {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new SettingsError("json object required");
   const b = body as Record<string, unknown>;
-  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions", "calendarAlert", "lunchAlert", "character"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
+  for (const k of Object.keys(b)) if (!["models", "briefing", "phrases", "autoMerge", "brain", "user", "repoRoots", "todayReminder", "onboarded", "readSessions", "calendarAlert", "lunchAlert", "workStart", "lunchTime", "workEnd", "workDays", "startAlert", "leaveAlert", "character"].includes(k)) throw new SettingsError(`unknown key: ${k}`);
   const out: SettingsPatch = {};
   if (b.models !== undefined) {
     if (!b.models || typeof b.models !== "object" || Array.isArray(b.models)) throw new SettingsError("models must be an object");
@@ -139,7 +143,19 @@ export function validatePatch(body: unknown, cfg: Pick<Config, "models">): Setti
     const name = typeof u.name === "string" ? u.name.replace(/\s+/g, " ").trim() : "";
     out.user = { name: name || null };
   }
-  for (const k of ["onboarded", "readSessions", "lunchAlert"] as const) {
+  // 근무 시각: HH:MM(24시간, 로컬). 출근 < 퇴근은 put 이 지금 값과 합쳐서 본다
+  for (const k of ["workStart", "lunchTime", "workEnd"] as const) {
+    if (b[k] === undefined) continue;
+    if (!isHhmm(b[k])) throw new SettingsError(`${{ workStart: "출근", lunchTime: "점심", workEnd: "퇴근" }[k]} 시각은 HH:MM(예: 09:00)이어야 해요`);
+    out[k] = b[k] as string;
+  }
+  if (b.workDays !== undefined) {
+    const d = cleanDays(b.workDays);
+    if (!d) throw new SettingsError("근무 요일은 0(일)~6(토) 숫자 목록이어야 해요");
+    if (!d.length) throw new SettingsError("근무 요일을 하나 이상 골라 주세요");
+    out.workDays = d;
+  }
+  for (const k of ["onboarded", "readSessions", "lunchAlert", "startAlert", "leaveAlert"] as const) {
     if (b[k] === undefined) continue;
     if (typeof b[k] !== "boolean") throw new SettingsError(`${k} must be true or false`);
     out[k] = b[k] as boolean;
@@ -274,6 +290,7 @@ export function mergeConfigFile(path: string, patch: SettingsPatch): void {
   if (patch.readSessions !== undefined) next.readSessions = patch.readSessions;
   if (patch.calendarAlert) next.calendarAlert = patch.calendarAlert; // [] 도 그대로 쓴다(끔)
   if (patch.lunchAlert !== undefined) next.lunchAlert = patch.lunchAlert;
+  for (const k of ["workStart", "lunchTime", "workEnd", "workDays", "startAlert", "leaveAlert"] as const) if (patch[k] !== undefined) next[k] = patch[k];
   if (patch.character) next.character = patch.character;
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -336,7 +353,7 @@ export class Settings {
       autoMerge: [...(c.autoMerge ?? [])],
       todayReminder: todayReminderOf(c.todayReminder),
       calendarAlert: calendarAlertOf(c.calendarAlert),
-      lunchAlert: c.lunchAlert !== false,
+      ...workHoursOf(c as unknown as Record<string, unknown>), // lunchAlert·근무 시간(새 배열이라 그대로 내보낸다)
       brain: {
         provider: c.brain?.provider ?? "claude-code", model: c.models.general,
         // genspark: 설정에 키가 있거나, Genspark 를 고른 채 gsk login 파일에 키가 있으면 true(키 값은 내보내지 않는다).
@@ -357,6 +374,10 @@ export class Settings {
   put(body: unknown): PutResult {
     let patch: SettingsPatch;
     try { patch = validatePatch(body, this.cfg); } catch (e: any) { return { ok: false, status: 400, error: String(e?.message ?? e) }; }
+    // 출근은 퇴근보다 앞이어야 한다(자정을 넘기는 근무는 다루지 않는다)
+    const cur = workHoursOf(this.cfg as unknown as Record<string, unknown>);
+    const start = patch.workStart ?? cur.workStart, end = patch.workEnd ?? cur.workEnd;
+    if (minutesOf(start) >= minutesOf(end)) return { ok: false, status: 400, error: "출근 시각은 퇴근 시각보다 앞이어야 해요" };
     if (patch.onboarded !== undefined) patch = this.withCurrentDefaults(patch);
     try { mergeConfigFile(this.path, patch); } catch (e: any) {
       if (e instanceof ConfigFileError) return { ok: false, status: 409, error: e.message };
@@ -386,6 +407,8 @@ export class Settings {
     if (patch.readSessions !== undefined) this.cfg.readSessions = patch.readSessions;
     if (patch.todayReminder) this.cfg.todayReminder = { ...patch.todayReminder, times: [...patch.todayReminder.times] }; // main 이 1분마다 cfg 를 읽으니 바로
     if (patch.lunchAlert !== undefined) this.cfg.lunchAlert = patch.lunchAlert; // main 이 1분마다 cfg 를 읽으니 바로
+    for (const k of ["workStart", "lunchTime", "workEnd", "startAlert", "leaveAlert"] as const) if (patch[k] !== undefined) (this.cfg as any)[k] = patch[k];
+    if (patch.workDays) this.cfg.workDays = [...patch.workDays];
     if (patch.calendarAlert) this.cfg.calendarAlert = { minutesBefore: [...patch.calendarAlert.minutesBefore] }; // CalendarSync 가 확인할 때마다 cfg 를 읽으니 바로
     if (patch.character) { this.cfg.character = patch.character; setCharacter(patch.character); } // 다음 말풍선·답부터(앱은 SSE state 로 그림을 바꾼다)
     this.onChange?.(Object.keys(patch));

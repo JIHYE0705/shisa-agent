@@ -14,6 +14,7 @@ export type LocalThought = {
   todos: [];
   done_todo_ids: [];
   proposals: [];
+  greet?: DayPart; // 말풍선이 시간대 인사 그대로일 때 그 시간대(아침 인사 하루 한 번: core.ts)
 };
 
 // 모델 프롬프트와 같은 말투 한 줄. 로컬 대사는 이 톤으로 쓰고 양념은 voice()에 맡긴다.
@@ -22,6 +23,7 @@ export const LOCAL_TONE = TONE;
 export const LINES = {
   morning: "좋은 아침이에요.",
   lunch: "점심 시간이에요.",
+  leave: "{mins}분 뒤면 퇴근이에요. 오늘도 고생 많으셨어요, 안녕히 가세요.",
   afternoon: "좋은 오후예요.",
   evening: "좋은 저녁이에요.",
   remind: "오늘 꼭 할 일을 다시 일깨워 드려요.",
@@ -117,6 +119,7 @@ export function localThought(now: Date, open: LocalTodo[] = [], done: LocalTodo[
     todos: [],
     done_todo_ids: [],
     proposals: [],
+    ...(!hasP1 && !hasDone ? { greet: part } : {}),
   };
 }
 

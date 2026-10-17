@@ -35,7 +35,7 @@ export type Character = {
 };
 
 export type LocalLineKey =
-  | "morning" | "lunch" | "afternoon" | "evening" | "remind" | "praise" | "empty" | "emptyHead" | "praiseDone"
+  | "morning" | "lunch" | "leave" | "afternoon" | "evening" | "remind" | "praise" | "empty" | "emptyHead" | "praiseDone"
   | "todayEmpty" | "todayPick" | "todayAll" | "todayNone" | "todaySome" | "todoEmpty" | "todoTop"
   | "calOff" | "calNone" | "calNow" | "calNext" | "calThen";
 

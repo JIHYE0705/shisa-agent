@@ -3,12 +3,12 @@ import { installFileLog, stallLag } from "./log.ts";
 import { loadConfig } from "./config.ts";
 import { DEFAULT_TODAY_REMINDER } from "./daily-plan.ts";
 import { localAsk, localLine } from "./local-mode.ts";
-import { LunchAlert, lunchAlertOf } from "./lunch.ts";
+import { LEAVE_BEFORE_MIN, WorkAlerts, minsToLeave, workHoursOf } from "./work-hours.ts";
 import { Store } from "./store.ts";
 import { Bus, EXIT_PORT_TAKEN } from "./bus.ts";
 import { runs } from "./runs.ts";
 import { modelChoices } from "./models.ts";
-import { Agent } from "./core.ts";
+import { Agent, LOCAL_GREET_ID } from "./core.ts";
 import { suggestTitle } from "./chat.ts";
 import { briefingDue } from "./briefing-sources.ts";
 import { loadCommands, SlashCommands } from "./commands.ts";
@@ -103,7 +103,7 @@ let agent!: Agent;
 let slack = createSlack(cfg, () => agent);
 // 채팅 슬래시 명령 목록: 처음 물을 때 SDK 에서(모델 턴 없이), 10분마다 새로
 const commands = new SlashCommands(() => loadCommands());
-agent = new Agent(cfg, store, bus, slack?.port, { retitle: suggestTitle, commands, mergePr,
+agent = new Agent(cfg, store, bus, slack?.port, { retitle: suggestTitle, commands, mergePr, greetOk: (part) => (part === "morning" ? !!workAlerts.claim("start") : Date.now() - startGreetAt > GREET_QUIET_MS),
   autoMergeOp: (op, slug) => settings.autoMergeOp(op, slug) }); // 새 대화 제목: 가벼운 모델(답 뒤에 따로) · 자동 머지 레포는 설정 창과 같은 config.json 에
 // 캐릭터 반응(그림 말풍선·진행 보고·머지 승인). 하루 한 번 규칙은 reactions.json 에 남는다
 const reactions = new Reactions(bus, { logPath: join(HOME_DIR, "reactions.json"), lotsThreshold: Number(process.env.CY_LOTS_THRESHOLD) || 8 });
@@ -130,19 +130,34 @@ function remindToday(opened = false) {
   bus.dashboardChanged();
   if (r.kind === "ask") bus.openPanel("today");
 }
-// 점심시간(12시대) 하루 한 번: 점심 영상(칸 lunch — 기본은 그 캐릭터의 일정 알림 영상) + 점심 인사. 설정 lunchAlert(기본 켬)
-// CY_LUNCH_HOUR: 화면 확인용으로 점심으로 볼 시(0~23)
-const lunch = new LunchAlert(join(HOME_DIR, "lunch.json"), { hour: process.env.CY_LUNCH_HOUR ? Number(process.env.CY_LUNCH_HOUR) : undefined });
-function lunchTick() {
-  const day = lunch.due(lunchAlertOf(cfg.lunchAlert));
-  if (!day) return;
-  const d = bus.activity.play(8000, "lunch"); // 영상 번호는 여기서(그 영상에 한마디가 있으면 그 말)
-  bus.bubble({ id: `lunch:${day}`, text: d.say ?? localLine("lunch"), kind: "info", ttlMs: 60e3 });
+// 근무 시간(work-hours.ts, 설정 창 「근무 시간」): 근무일에 하루 한 번씩. 기록은 lunch.json(점심·출근·퇴근 날짜)
+//  - 출근 인사: 출근 시각 뒤 처음 확인할 때 아침 인사(local.morning, 영상 없음). 로컬 뇌 브리핑의 아침 인사와 같은 기록이라 두 번 안 뜬다
+//  - 점심: 점심 시각부터 한 시간 안에 점심 영상(칸 lunch — 기본은 그 캐릭터의 일정 알림 영상) + 점심 인사
+//  - 퇴근 10분 전: 일정 알림(plan) 영상 + 퇴근 인사(local.leave). plan 영상의 한마디는 일정용이라 쓰지 않는다
+const workAlerts = new WorkAlerts(join(HOME_DIR, "lunch.json"));
+let startGreetAt = 0; // 출근 인사를 띄운 때 — 이 뒤 10분 안의 로컬 브리핑 시간대 인사는 띄우지 않는다
+const GREET_QUIET_MS = 10 * 60e3;
+function workTick() {
+  const wh = workHoursOf(cfg as unknown as Record<string, unknown>);
+  const start = workAlerts.due("start", wh);
+  if (start) { startGreetAt = Date.now(); bus.bubble({ id: LOCAL_GREET_ID, text: localLine("morning"), kind: "info", ttlMs: 60e3 }); }
+  const lunchDay = workAlerts.due("lunch", wh);
+  if (lunchDay) {
+    const d = bus.activity.play(8000, "lunch"); // 영상 번호는 여기서(그 영상에 한마디가 있으면 그 말)
+    bus.bubble({ id: `lunch:${lunchDay}`, text: d.say ?? localLine("lunch"), kind: "info", ttlMs: 60e3 });
+  }
+  const leaveDay = workAlerts.due("leave", wh);
+  if (leaveDay) {
+    bus.activity.play(8000, "plan");
+    const mins = minsToLeave(wh, new Date()) ?? LEAVE_BEFORE_MIN;
+    bus.bubble({ id: `leave:${leaveDay}`, text: fillVars(localLine("leave"), { mins: String(mins) }), kind: "info", ttlMs: 60e3 });
+  }
 }
-bus.onOverlay = () => { remindToday(true); try { lunchTick(); } catch (e: any) { console.warn("[lunch] 알림:", e?.message ?? e); } };
+const safeWork = () => { try { workTick(); } catch (e: any) { console.warn("[work-hours] 알림:", e?.message ?? e); } };
+bus.onOverlay = () => { remindToday(true); safeWork(); };
 setInterval(() => {
   try { remindToday(false); } catch (e: any) { console.warn("[today] 알림:", e?.message ?? e); }
-  try { lunchTick(); } catch (e: any) { console.warn("[lunch] 알림:", e?.message ?? e); }
+  safeWork();
 }, 60e3).unref?.();
 
 // 설정 창: 모델·브리핑 출처(바로 반영 + config.json) · 연결 상태(읽기만). KG 상태는 아래에서 kgBackfill 이 생긴 뒤에 붙는다

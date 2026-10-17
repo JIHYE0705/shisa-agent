@@ -1,7 +1,7 @@
 {
   "_help": {
     "설명": "기본 캐릭터마다 어느 영상을 어느 칸에 쓰는지. 한 칸에 영상을 여러 개 넣으면 그때마다 그중 하나가 랜덤으로 나옵니다(두 개 이상이면 같은 것이 연달아 나오지 않습니다).",
-    "칸": "plan 일정 알림 · dance 춤(채팅 「춤」·「춤춰 줘」) · cheer 응원해 줘 · study 집중·작업 중 · lunch 점심시간",
+    "칸": "plan 일정 알림(퇴근 10분 전 인사도 이 영상) · dance 춤(채팅 「춤」·「춤춰 줘」) · cheer 응원해 줘 · study 집중·작업 중 · lunch 점심시간",
     "file": "영상 이름(확장자 없이). 시사는 assets/character/, 나머지는 assets/characters/<id>/ 의 <file>.webm 과 첫 장면 <file>.png 입니다. 새 파일은 desktop/src/assets.js 허용 목록에도 넣어야 앱이 읽습니다.",
     "scene": "true 면 배경이 있는 장면이라 둥근 네모 카드(테두리)로 보입니다.",
     "say": "이 영상이 나올 때 할 한마디. 없으면 그 칸 기본 대사(춤은 문구 dance, 응원은 cheer, 점심은 local.lunch, 일정 알림은 문구 meeting_alert)를 씁니다. 일정 알림 한마디는 일정 말풍선 글을 대신하고 {mins} {title} {time} {where} 를 쓸 수 있습니다. 다른 칸은 자리표시를 쓰지 않습니다.",

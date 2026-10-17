@@ -452,3 +452,22 @@ test("새 Slack DM·멘션 → 바로 할 일: 새 것만 한 번 묻고, 말풍
   assert.equal(await s.agent.slackTodosNow(), 0); // 이미 본 것 → 다시 안 묻는다
   assert.equal(tasks.length, 1);
 });
+
+test("로컬 뇌 브리핑 시간대 인사: greetOk 가 거절하면(출근 인사가 이미 함) 말풍선 없이, 아니면 local-greet", async () => {
+  for (const ok of [false, true]) {
+    const store = new Store(":memory:");
+    const bus = new Bus();
+    const bubbles: any[] = [];
+    bus.bubble = (b) => { bubbles.push(b); return b.id ?? "x"; };
+    const cfg = { ...loadConfig(), brain: { provider: "local" as const }, repoRoots: [], claudeProjectsDir: "/nonexistent", codexSessionsDir: "/nonexistent" };
+    const asked: string[] = [];
+    const agent = new Agent(cfg, store, bus, undefined, {
+      think: async () => ({ bubble: "좋은 아침이에요.", reply_md: "", todos: [], done_todo_ids: [], proposals: [], greet: "morning" }) as any,
+      runFix: async () => ({ ok: true, summary: "", log: [] }) as any, mergePr: () => "", git: async () => [],
+      greetOk: (part: string) => { asked.push(part); return ok; },
+    } as any);
+    await agent.runBriefing();
+    assert.deepEqual(asked, ["morning"]);
+    assert.equal(bubbles.some((b) => b.id === "local-greet"), ok, `greetOk ${ok}`);
+  }
+});

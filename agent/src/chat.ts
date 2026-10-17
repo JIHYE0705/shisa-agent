@@ -1,6 +1,7 @@
 // 데스크톱 대화(패널 채팅 탭·캐릭터 호버). 스레드마다 한 번에 하나씩(그 스레드의 줄), 다른 스레드끼리는 동시에(상한 없음) —
 // 단 같은 레포를 동시에 고치려 하면 뒤의 답이 기다린다(repo-lock.ts). 기록은 store 스레드에, 진행은 SSE chat 이벤트로.
 // 스레드마다 기록이 따로다 — 모델은 그 스레드의 최근 흐름만 본다.
+import { workHoursLine, workHoursOf } from "./work-hours.ts";
 import { randomUUID } from "node:crypto";
 import type { Config } from "./config.ts";
 import type { Store, ChatTurn, ChatSendMeta, Todo, Thread, ThreadKind } from "./store.ts";
@@ -264,7 +265,7 @@ export function chatPrompt(cfg: Config, store: Store, history: ChatTurn[], text:
     : `${t.role === "user" ? "사용자" : character().name}${t.todoId ? ` (할 일 "${t.todoTitle ?? t.todoId}"에 대해)` : ""}: ${t.text.slice(0, 1200)}${refs(t)}`);
   const guidelines = guidelinesFor(store, "chat"); // 사용자가 정한 행동 지침(guidelines.ts) — 맥락 넣는 법과 상관없이 늘
   const head = inlineContext(cfg)
-    ? [buildContext(store, new Date(), { selfId: cfg.slackUserId, query: focus ? `${focus.title} ${text}` : text, sessions: sessionsAllowed(cfg) }), "", ...(guidelines ? [guidelines, ""] : []), summary ?? "", "", ...(meeting(store) ? [meeting(store), ""] : [])]
+    ? [buildContext(store, new Date(), { selfId: cfg.slackUserId, query: focus ? `${focus.title} ${text}` : text, sessions: sessionsAllowed(cfg) }), workHoursLine(workHoursOf(cfg as unknown as Record<string, unknown>), new Date()), "", ...(guidelines ? [guidelines, ""] : []), summary ?? "", "", ...(meeting(store) ? [meeting(store), ""] : [])]
     : [contextHeader(cfg, { ...(thread ? { thread } : {}), ...(focus ? { focus } : {}), ...(guidelines ? { guidelines } : {}) }), ""];
   return [
     ...head,
