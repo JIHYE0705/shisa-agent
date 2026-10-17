@@ -14,7 +14,7 @@ import { learnFrom } from "./profile.ts";
 import { stage1, stage2 } from "./kg/extract.ts";
 import { KgBackfill } from "./kg/backfill.ts";
 import { refineIncremental } from "./kg/refine.ts";
-import { mcpCalendarSource } from "./calendar-sync.ts";
+import { MCP_BRAIN_REASON, mcpCalendarSource } from "./calendar-sync.ts";
 import { statusOf } from "./status.ts";
 import type { Chunk } from "./kg/chunks.ts";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -233,7 +233,7 @@ test("캘린더 MCP 동기화: 뇌가 Claude Code 가 아니면 SDK 를 부르�
   resetSkipNotes();
   const src = mcpCalendarSource({ mode: "mcp", cap: "calendar", server: "cal", tools: { listEvents: "list_events" } } as any, noSdk);
   const r = await src(withBrain("codex"), { from: ago(0), to: ago(-60) });
-  assert.deepEqual(r, { ok: false, events: [], calls: 0, errors: 0, costUsd: 0 });
+  assert.deepEqual(r, { ok: false, events: [], calls: 0, errors: 0, costUsd: 0, code: "brain", reason: MCP_BRAIN_REASON });
 });
 
 test("GET /status: 뒤에서 하는 정리는 Codex 로 · MCP 커넥터는 Claude Code 가 있어야 · 코드는 Claude 로그인", () => {

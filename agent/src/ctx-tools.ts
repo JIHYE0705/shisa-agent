@@ -235,7 +235,7 @@ export function ctxHandlers(cfg: Config, store: Store, deps: CtxDeps = {}) {
     }),
     meetings_upcoming: () => guard("다가오는 회의", () => {
       const s = meetingsContext(store, now());
-      return out("다가오는 회의 (회의 응답 도구의 일정 id 는 eventId)", s ? s.split("\n").slice(1).join("\n") : "(로컬에 저장된 다가오는 회의 없음 — 필요하면 연결된 캘린더 도구로 읽는다)");
+      return out("다가오는 회의 (회의 응답 도구의 일정 id 는 eventId)", s.split("\n").slice(1).join("\n")); // 비어 있으면 캘린더 상태 한 줄(calendar-state.ts)
     }),
   };
 }

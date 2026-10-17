@@ -218,6 +218,7 @@ function harness(nowIso: string, pages: unknown[] = [SAMPLE], cfg = { models: { 
       await new Promise((r) => setImmediate(r));
     }
     now = end;
+    await new Promise((r) => setImmediate(r)); // 바로 시작한 동기화(약속 몇 단계)가 끝나게
   };
   return { cal, store, advance };
 }

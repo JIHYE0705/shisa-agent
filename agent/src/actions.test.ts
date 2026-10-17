@@ -168,7 +168,8 @@ test("맥락·도우미: meetingsContext 에 eventId·시간·내 응답, kstWhe
   const ctx = meetingsContext(h.store, NOW);
   assert.match(ctx, new RegExp(`eventId=${EV} \\| 10/15 목 10:00–11:00 \\| 〈주간 회의〉 \\| 내 응답: 미응답`));
   assert.doesNotMatch(ctx, /지난 회의/);
-  assert.equal(meetingsContext(new Store(":memory:"), NOW), ""); // 표가 없어도 괜찮다
+  // 표가 없어도 괜찮고, 비어 있으면 캘린더 상태 한 줄(연결 안 됨)을 적는다
+  assert.match(meetingsContext(new Store(":memory:"), NOW), /^## 다가오는 회의 \(오늘·내일\)\n\(캘린더가 연결돼 있지 않다/);
   assert.equal(kstWhen("2026-10-15T01:00:00.000Z"), "10/15 목 10:00");
 });
 

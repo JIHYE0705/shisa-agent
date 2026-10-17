@@ -14,6 +14,7 @@ import { HOME_DIR, type Config } from "./config.ts";
 import { classify, connectorServerUrls } from "./mcp-health.ts";
 import { argv as ghArgv, runGh } from "./gh.ts";
 import { CAPABILITIES, CONNECTORS, connectorStatus, type Capability } from "./connectors.ts";
+import type { CalendarState } from "./calendar-state.ts";
 import { hasUserMcpServer } from "./mcp.ts";
 import { authFailText, brainAuthFailed, brainCreditNeeded, brainKeyReady, creditFailText, type KeyProvider } from "./providers.ts";
 import { NEEDS_CLAUDE_MCP } from "./feature-brain.ts";
@@ -81,6 +82,7 @@ export type ConnectionsDeps = {
   env?: NodeJS.ProcessEnv;
   lastRun?: (kind: RunKind) => Run | undefined;
   kg?: () => { phase: string; reason?: string; step?: string } | undefined;
+  calendar?: () => CalendarState; // 캘린더 동기화 상태(calendar-sync.ts): 연결됨 줄·캘린더 동기화 줄이 실제 결과를 따른다
 };
 
 const worst = (xs: ConnState[]): ConnState => (["error", "warn", "unknown", "ok", "off"] as ConnState[]).find((s) => xs.includes(s)) ?? "unknown";
@@ -99,7 +101,7 @@ export function sdkLoggedIn(s: Pick<SdkProbe, "account" | "error">): boolean {
 
 export class Connections {
   private cfg: Config;
-  private d: Required<Omit<ConnectionsDeps, "lastRun" | "kg">> & Pick<ConnectionsDeps, "lastRun" | "kg">;
+  private d: Required<Omit<ConnectionsDeps, "lastRun" | "kg" | "calendar">> & Pick<ConnectionsDeps, "lastRun" | "kg" | "calendar">;
   http: Record<string, HttpProbe> = {};
   sdk?: SdkProbe;
   ghr?: GhProbe;
@@ -117,6 +119,7 @@ export class Connections {
       hasServer: deps.hasServer ?? hasUserMcpServer,
       env: deps.env ?? process.env,
       lastRun: deps.lastRun,
+      calendar: deps.calendar,
       kg: deps.kg,
     };
   }
@@ -238,6 +241,11 @@ export class Connections {
         row.state = worst(states);
         row.detail = bits.join(" · ");
       }
+      // 캘린더: 설정만 보고 「연결됨」이라 하지 않는다. 가져오는 중·못 가져온 이유를 같은 줄에
+      const cs = cap === "calendar" && x.mode !== "off" && st.ready ? this.d.calendar?.() : undefined;
+      if (cs?.phase === "pending") row.detail = `${row.detail} · 일정 가져오는 중`;
+      else if (cs?.phase === "ok") row.detail = `${row.detail} · 일정 ${cs.meetings ?? 0}개 가져옴`;
+      else if (cs?.phase === "failed" && cs.code !== "brain") { row.state = "error"; row.detail = `${row.detail} · 일정을 가져오지 못했어요`; row.error = cs.reason; }
       // MCP 연결은 Claude Code 뇌로만 읽는다 — 다른 뇌면 등록돼 있어도 브리핑에 안 들어간다
       if (x.mode === "mcp" && provider !== "claude-code") {
         row.state = row.state === "error" ? "error" : "warn";
@@ -262,7 +270,7 @@ export class Connections {
     const slackApi = conns.slack.mode === "api";
     rows.push(slackApi ? this.runRow("slack-ingest", "Slack 수집", "slack-ingest", 30, now)
       : { id: "slack-ingest", label: "Slack 수집", group: "local", check: "local", checkedAt: at, state: "off", detail: "Slack 이 직접 연결(API)이 아니라 수집하지 않아요" });
-    rows.push(conns.calendar.mode !== "off" ? this.runRow("calendar", "캘린더 동기화", "calendar", 90, now)
+    rows.push(conns.calendar.mode !== "off" ? (this.d.calendar ? this.calendarRow(this.d.calendar(), now) : this.runRow("calendar", "캘린더 동기화", "calendar", 90, now))
       : { id: "calendar", label: "캘린더 동기화", group: "local", check: "local", checkedAt: at, state: "off", detail: "캘린더 연결 안 함" });
     const kgRow = this.runRow("kg", "지식그래프(KG)", "kg", 3 * 60, now);
     const k = this.d.kg?.();
@@ -277,6 +285,16 @@ export class Connections {
     rows.push({ id: "sessions", label: "작업 세션(Claude Code·Codex 기록)", group: "local", check: "local", checkedAt: at,
       state: sessionsOn ? "ok" : "off", detail: sessionsOn ? "로컬 기록을 읽어요" : this.cfg.onboarded === false ? "처음 설정을 마치기 전이라 읽지 않아요" : "읽지 않아요(설정에서 켤 수 있어요)", briefing: brief(["sessions"]) });
     return rows;
+  }
+
+  // 캘린더 동기화 줄: 실행 기록 대신 동기화 상태로(마지막 성공·일정 수·실패 이유). 90분 넘게 성공이 없으면 주황
+  private calendarRow(s: CalendarState, now: Date): ConnRow {
+    const base = { id: "calendar", label: "캘린더 동기화", group: "local" as const, check: "local" as CheckId, checkedAt: now.toISOString() };
+    if (s.phase === "off") return { ...base, state: "off", detail: "캘린더 연결 안 함" };
+    if (s.phase === "pending") return { ...base, state: "unknown", detail: "일정을 가져오는 중이에요" };
+    if (s.phase === "failed") return { ...base, state: s.code === "brain" ? "warn" : "error", detail: `가져오지 못했어요 (${ago(s.at, now)})${s.lastOkAt ? ` · 마지막 성공 ${ago(s.lastOkAt, now)}` : ""}`, error: s.reason ?? "이유를 몰라요" };
+    const stale = s.at ? now.getTime() - Date.parse(s.at) > 90 * 60e3 : false;
+    return { ...base, state: stale ? "warn" : "ok", detail: `마지막 성공 ${ago(s.at, now)} · 오늘·내일 일정 ${s.meetings ?? 0}개${stale ? " · 오래됐어요" : ""}` };
   }
 
   // 마지막 run 으로 본 정기 작업 상태: 실패면 빨강, staleMin 넘게 성공이 없으면 주황

@@ -27,6 +27,7 @@ import { WAIT_SETUP, markFreshInstall, modelWorkAllowed, sessionsAllowed } from 
 import { execFile } from "node:child_process";
 import { openSpec } from "./plat.ts";
 import { CalendarSync, alertDetail, alertVars } from "./calendar-sync.ts";
+import { withCalendarSync } from "./calendar-state.ts";
 import { calendarPick } from "./manual-projects.ts";
 import { withRun, asRoutine } from "./runs.ts";
 import { KgBackfill } from "./kg/backfill.ts";
@@ -165,13 +166,24 @@ setInterval(() => {
 // 뇌·이름·레포 폴더를 바꾸면 바로 반영되고(재시작 불필요) 데스크톱에 SSE status 로 알린다
 // 커넥터는 시작 때 한 번 정한다(캘린더 동기화·Slack 수집·가드가 붙잡고 있다). 마법사·[연결 해제]가 바꾸면 다시 켜서 반영:
 // launchd(install.sh, KeepAlive) 아래면 스스로 끄고 launchd 가 다시 켠다. 손으로 띄운 데몬은 바뀜만 알린다
-function reloadConnectors(): { changed: boolean; restarting: boolean } {
-  const changed = connectorsChanged(cfg.connectors, resolveConnectors());
+// 캘린더만 바뀌었으면 다시 켜지 않고 바로 반영한다(원천을 바꾸고 곧바로 한 번 가져온다, applied). 다른 연결이 바뀌면 예전처럼
+function reloadConnectors(): { changed: boolean; restarting: boolean; applied?: boolean } {
+  const next = resolveConnectors();
+  let applied = false;
+  if (connectorsChanged({ ...cfg.connectors, calendar: next.calendar }, cfg.connectors)) {
+    cfg.connectors.calendar = next.calendar;
+    calendar.setConnector(next.calendar);
+    applied = true;
+    console.log(`[connectors] 캘린더 연결이 바뀜(${next.calendar.mode}), 바로 일정을 가져와요`);
+    pushStatus();
+    bus.dashboardChanged();
+  }
+  const changed = connectorsChanged(cfg.connectors, next);
   const restarting = changed && process.env.CY_AGENT_SUPERVISED === "1";
   if (changed) console.log(`[connectors] config.json 의 연결이 바뀜, ${restarting ? "다시 시작해요" : "데몬을 다시 켜야 다 반영돼요"}`);
   // Windows 에서 제게 SIGTERM 을 보내면 핸들러 없이 바로 끝나므로 핸들러를 직접 부른다
   if (restarting) setTimeout(() => (process.platform === "win32" ? void shutdown() : process.kill(process.pid, "SIGTERM")), 500);
-  return { changed, restarting };
+  return { changed: changed || applied, restarting, ...(applied ? { applied } : {}) };
 }
 // 사용자 캐릭터·기본 캐릭터 대사 고친 것(~/.cy-agent/characters/): Settings 가 config.json character 를 고르기 전에 읽어 둔다
 const characterStore = new CharacterStore(join(HOME_DIR, "characters"));
@@ -187,10 +199,12 @@ const settings = new Settings(cfg, { onChange: (keys) => {
   if (keys.includes("onboarded") && modelWorkAllowed(cfg)) setTimeout(() => onboardedNow(), 0); // 마법사를 막 마침 → 첫 정리
   else if (keys.includes("readSessions") && sessionsAllowed(cfg)) setTimeout(() => ingest(), 0);
   if (keys.includes("calendarAlert")) calendar.check(); // 알림 시각을 바로 다시 잡는다
+  // 뇌를 바꿈(MCP 캘린더는 Claude Code 뇌로만 읽는다)·마법사를 마침 → 캘린더를 바로 한 번 다시 가져온다(이유·상태 줄도 그에 맞게)
+  if (calendar.enabled && keys.some((k) => k === "brain" || k === "onboarded")) calendar.sync().catch(() => {});
   if (keys.includes("character")) bus.characterChanged(); // 앱 그림·영상을 바로 바꾼다
 } });
 let kgStatus: (() => { phase: string; reason?: string; step?: string }) | undefined;
-const connections = new Connections(cfg, { lastRun: lastRunOf((o) => runs.listRuns(o)), kg: () => kgStatus?.() });
+const connections = new Connections(cfg, { lastRun: lastRunOf((o) => runs.listRuns(o)), kg: () => kgStatus?.(), calendar: () => calendar.state() });
 // GET /status: 뇌가 claude-code 인데 로그인 확인 전이면 한 번 확인을 걸고(비동기) 끝나면 SSE status 로 알린다
 const status = () => statusOf(cfg, { claude: () => connections.claudeLoggedIn() });
 let claudeProbe: Promise<void> | undefined;
@@ -210,7 +224,7 @@ await bus.listen(cfg.port, {
   dashboard: async () => ({
     ...(await agent.dashboard()),
     meetings: calendar.enabled ? calendar.upcoming().map(({ webLink: _w, ...m }) => m) : [],
-    connectors: withMcpBrain(cfg, connectorStatus(conns)), // MCP 연결은 Claude Code 뇌일 때만 읽는다
+    connectors: withCalendarSync(withMcpBrain(cfg, connectorStatus(conns)), calendar.state()), // MCP 연결은 Claude Code 뇌일 때만 읽는다. 캘린더는 실제로 가져왔는지도
   }),
   todoDone: (id) => agent.todoDone(id),
   todoAdd: (t) => agent.addTodo(t),
@@ -297,7 +311,7 @@ await bus.listen(cfg.port, {
     const answer = localAsk(id, {
       today: () => agent.dailyPlan().state().items,
       open: () => store.openTodos(),
-      calendar: () => ({ enabled: calendar.enabled, meetings: calendar.enabled ? calendar.upcoming() : [] }),
+      calendar: () => ({ enabled: calendar.enabled, meetings: calendar.enabled ? calendar.upcoming() : [], state: calendar.state() }),
     });
     if (answer?.id !== "cheer" && answer?.id !== "dance") return answer;
     // 영상 번호는 데몬이 고른다(state.danceVariant). 그 영상에 전용 한마디가 있으면 답 글도 그 말로
@@ -325,6 +339,14 @@ await bus.listen(cfg.port, {
   }),
 });
 console.log(`[cy-agent] 버스 http://127.0.0.1:${cfg.port}`);
+// 캘린더는 버스가 뜨자마자 가져온다(작업 기록 읽기 등 긴 시작 일이 끝날 때까지 「연결됨」인데 일정이 빈 채로 두지 않는다)
+// 일정 N분 전(설정 calendarAlert): 춤 + 말풍선(회의실·온라인 여부, 링크 버튼은 회의 링크, 없으면 캘린더 일정). 일정·분마다 한 번(DB에 남김)
+const stopCalendar = asRoutine(calendar.schedule.bind(calendar))((m, text, mins) => {
+  // 영상 번호는 데몬이 고른다. 그 영상에 전용 한마디가 있으면 일정 말풍선 글 대신(같은 자리표시 {mins}·{title}·{time}·{where})
+  const d = bus.activity.play(8000, "plan");
+  const detail = alertDetail(m);
+  bus.bubble({ id: `meeting:${m.id}@${m.start}#${mins}`, text: d.say ? fillVars(d.say, alertVars(m, mins)) : text, kind: "todo", ttlMs: Math.max(60e3, Date.parse(m.start) - Date.now()), link: m.link ?? m.webLink, ...(detail ? { detail } : {}) });
+}, (r) => console.log("[calendar]", JSON.stringify({ meetings: r.meetings, events: r.events, calls: r.calls, errors: r.errors, costUsd: r.costUsd, ...(r.reason ? { reason: r.reason } : {}) })));
 
 // ── 할 일 캔버스: 데이터가 바뀔 때마다(디바운스·해시로 실제 호출은 변경 시에만)
 const canvas = new TodoCanvas(store, { userId: cfg.slackUserId });
@@ -497,13 +519,6 @@ setInterval(healthTick, 2 * 60e3);
 // 평일 업무시간(이 맥의 시간대로 9~19시)에만 정기 브리핑
 setInterval(() => { if (briefingHours(new Date())) brief(); }, cfg.briefingIntervalMin * 60e3);
 setTimeout(() => briefIfDue("시작"), 5e3);
-// 일정 N분 전(설정 calendarAlert): 춤 + 말풍선(회의실·온라인 여부, 링크 버튼은 회의 링크, 없으면 캘린더 일정). 일정·분마다 한 번(DB에 남김)
-const stopCalendar = asRoutine(calendar.schedule.bind(calendar))((m, text, mins) => {
-  // 영상 번호는 데몬이 고른다. 그 영상에 전용 한마디가 있으면 일정 말풍선 글 대신(같은 자리표시 {mins}·{title}·{time}·{where})
-  const d = bus.activity.play(8000, "plan");
-  const detail = alertDetail(m);
-  bus.bubble({ id: `meeting:${m.id}@${m.start}#${mins}`, text: d.say ? fillVars(d.say, alertVars(m, mins)) : text, kind: "todo", ttlMs: Math.max(60e3, Date.parse(m.start) - Date.now()), link: m.link ?? m.webLink, ...(detail ? { detail } : {}) });
-}, (r) => console.log("[calendar]", JSON.stringify({ meetings: r.meetings, events: r.events, calls: r.calls, errors: r.errors, costUsd: r.costUsd })));
 
 // 설치 마법사를 막 마쳤을 때(PUT /settings onboarded: true): 시작할 때 하던 첫 정리를 지금 한 번
 function onboardedNow() {

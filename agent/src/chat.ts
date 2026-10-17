@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { Config } from "./config.ts";
 import type { Store, ChatTurn, ChatSendMeta, Todo, Thread, ThreadKind } from "./store.ts";
 import type { PanelSection } from "./bus.ts";
-import { ask, brainFacts, buildContext, SCHEMA as THOUGHT_SCHEMA, INTERACTIVE_SYSTEM, WRITE_GUIDE, type Thought } from "./brain.ts";
+import { ask, brainFacts, buildContext, SCHEMA as THOUGHT_SCHEMA, INTERACTIVE_SYSTEM, NO_TOOLS_SYSTEM, WRITE_GUIDE, type Thought } from "./brain.ts";
 import { buildDashboard, dashboardSummary } from "./dashboard.ts";
 import { TODO_OPS_SCHEMA, trashedNote, type TodoOp } from "./todos.ts";
 import { PROJECT_OPS_SCHEMA } from "./manual-projects.ts";
@@ -196,7 +196,8 @@ const CHAT_CONTEXT_INLINE = "- 위 맥락(세션·할 일·대시보드 요약)�
 const CHAT_CONTEXT_TOOLS = `${CTX_GUIDE}
 - 할 일을 바꾸라는데(todo_ops) 대상 할 일이 머리말에 없으면 todos_list(query) 로 찾아 그 id 를 쓴다.
 - 메일·일정·Slack 원문 등 바깥 정보가 필요하거나 사용자가 무언가를 해 달라고(올려줘·보내줘·답해줘·고쳐줘) 하면 업무 도구(연결된 MCP 등)를 쓴다.`;
-const chatSystem = (context: string) => `${INTERACTIVE_SYSTEM}
+const CHAT_CONTEXT_NOTOOLS = "- 위 맥락(세션·할 일·일정·대시보드 요약)으로 답한다. 맥락에 없는 메일·Slack 원문은 볼 수 없다고 짧게 말한다.";
+const chatSystem = (context: string, base = INTERACTIVE_SYSTEM, writeGuide = WRITE_GUIDE) => `${base}
 - 지금은 데스크톱 캐릭터에 붙은 입력창으로 대화 중이다. 이전 대화 흐름을 이어서 답한다.
 ${context}
 - "프로젝트 현황 보여줘", "할 일 열어줘"처럼 화면을 보여달라는 요청이면 show에 섹션을 넣고 reply_md는 한두 줄로 요약한다.
@@ -213,7 +214,7 @@ ${context}
 ${RULE_GUIDE} 규칙은 바로 저장되고 맞는 기존 할 일에도 적용된다(데몬이 결과를 덧붙인다).
 ${GUIDELINE_GUIDE} 저장 결과는 데몬이 답에 덧붙인다.
 - 사용자 말에 「춤」「댄스」가 들어 있으면 앱이 이미 캐릭터 춤 영상과 정해진 한마디를 띄웠다 — 춤 얘기는 하지 말고(춘다·신난다 같은 말도, 못 춘다는 말도 하지 않는다) 나머지 내용에만 답한다.
-${WRITE_GUIDE}`;
+${writeGuide}`;
 export const CHAT_SYSTEM = chatSystem(CHAT_CONTEXT_TOOLS); // 기본(contextMode tools)
 
 // 백그라운드 에이전트(bg-agents.ts) 시스템 프롬프트 — 채팅이 맡긴 지시 하나를 끝까지, 채팅 답과 같은 권한
@@ -238,6 +239,10 @@ export function runBackgroundAgent(cfg: Config, store: Store, job: { threadId: s
   }));
 }
 export const CHAT_SYSTEM_INLINE = chatSystem(CHAT_CONTEXT_INLINE); // 되돌리기(contextMode inline)
+export const CHAT_SYSTEM_NOTOOLS = chatSystem(CHAT_CONTEXT_NOTOOLS, NO_TOOLS_SYSTEM, ""); // Claude Code 가 아닌 뇌(업무 도구 없음)
+// 채팅 시스템 프롬프트 고르기: Claude Code 가 아니면 도구 없는 것, Claude Code 면 contextMode 에 따라
+export const chatSystemFor = (cfg: Pick<Config, "contextMode"> & { brain?: Pick<Config["brain"], "provider"> }) =>
+  (cfg.brain?.provider ?? "claude-code") !== "claude-code" ? CHAT_SYSTEM_NOTOOLS : inlineContext(cfg) ? CHAT_SYSTEM_INLINE : CHAT_SYSTEM;
 
 
 // 패널에서 할 일 하나를 집어 들고 말할 때 프롬프트에 붙는 블록
@@ -261,7 +266,8 @@ export function focusBlock(t: Todo): string {
   ].join("\n");
 }
 
-const meeting = (store: Store) => meetingsContext(store);
+// 회의가 있을 때만(eventId 줄). 비었을 때의 캘린더 상태 줄은 buildContext 의 「오늘·내일 일정」에 이미 있다
+const meeting = (store: Store) => { const m = meetingsContext(store); return m.includes("eventId=") ? m : ""; };
 
 // 채팅 프롬프트. contextMode tools(기본): 작은 머리말(시각·사용자·이 대화·대상 할 일) + 이 대화의 최근 흐름 + 집어 든 할 일 + 코드 + 지금 한 말 —
 // 업무 맥락은 모델이 cy 도구로 필요할 때 읽는다. inline: 예전처럼 큰 맥락 + 대시보드 요약 + 다가오는 회의를 앞에 붙인다
@@ -342,7 +348,7 @@ export async function suggestTitle(cfg: Config, text: string, reply: string, thr
 // 대화형: 모든 도구, 쓰기는 이 대화에 승인 카드(via chat|hover)
 export function chatAskOpts(cfg: Config, text: string, repo?: RelatedRepo, threadId?: string, via: ActionVia = "chat", model?: string) {
   return {
-    system: inlineContext(cfg) ? CHAT_SYSTEM_INLINE : CHAT_SYSTEM, model: model ?? cfg.models.general,
+    system: chatSystemFor(cfg), model: model ?? cfg.models.general,
     code: { roots: cfg.repoRoots, ...(repo ? { cwd: repo.path } : {}) },
     interactive: { origin: { via, ...(threadId ? { threadId } : {}) } },
     run: { kind: "chat" as const, title: `채팅: ${text.split("\n")[0].slice(0, 60)}`, ...(threadId ? { ref: threadId } : {}) },

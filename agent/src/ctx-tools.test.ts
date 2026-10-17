@@ -222,7 +222,8 @@ test("cy 도구: 픽스처에서 예전 블록과 같은 데이터를 짧게 —
   assert.match(dash, /오늘 내 커밋: 0개/);
   assert.match(dash, /최근 7일 프로젝트 \d+개 \(자세히는 projects_recent\)/);
   assert.match(projs, /- cy-agent \(\/r\/cy-agent\)/);
-  assert.match(meet, /로컬에 저장된 다가오는 회의 없음/);
+  assert.match(meet, /캘린더가 연결돼 있지 않다/); // 비어 있으면 캘린더 상태 한 줄(calendar-state.ts)
+  assert.doesNotMatch(meet, /캘린더 도구로/); // ICS·연결 안 됨이면 도구로 읽으라고 하지 않는다
   // 잘못된 입력은 오류 결과로(예외 없이)
   assert.equal((await h.kg_search({ query: " " })).isError, true);
   assert.equal((await h.session_get({ id: "session:nope" })).isError, true);

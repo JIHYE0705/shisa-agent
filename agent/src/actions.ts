@@ -15,6 +15,7 @@
 // 도구 승인(type "tool_permission", permissions.ts): 대화형 에이전트가 쓰기 도구를 부르려 하면 SDK canUseTool 이 여기에
 // 승인 카드를 만들고 결정을 **기다린다**. 상태는 같은 표를 쓴다: pending → done(허용) | cancelled(거부) | expired(10분 무응답).
 // 실행은 모델 쪽 SDK 가 하므로 running·failed 는 없다. 데몬이 다시 켜지면 남은 대기는 expired(기다리던 호출이 없다).
+import { calendarNote, calendarStaleNote, readCalendarState } from "./calendar-state.ts";
 import { query as sdkQuery, type HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -158,14 +159,17 @@ export function parseProposal(raw: unknown): Result<{ type: ActionType<any>; par
 
 const RESPONSE_KO: Record<string, string> = { accepted: "수락함", tentativelyaccepted: "미정", declined: "거절함", notresponded: "미응답", none: "미응답", organizer: "내가 주최" };
 
-// 프롬프트 블록: 아직 안 끝난 회의(로컬 meetings 표 — calendar-sync 가 채움)
+// 프롬프트 블록: 아직 안 끝난 회의(로컬 meetings 표 — calendar-sync 가 채움).
+// 비어 있으면 캘린더 상태(연결 안 됨·가져오는 중·실패 이유·정말 없음)를 한 줄로. 「연결 안 돼서 못 가져왔다」고 잘못 말하지 않게
 export function meetingsContext(store: Store, now = new Date(), limit = 15): string {
   let rows: any[] = [];
   try {
     rows = store.db.prepare("SELECT * FROM meetings WHERE end > ? ORDER BY start LIMIT ?").all(now.toISOString(), limit) as any[];
-  } catch { return ""; }
-  if (!rows.length) return "";
-  return ["## 다가오는 회의 (오늘·내일, 시작 순 — 회의 응답 도구의 일정 id 는 여기 eventId)",
+  } catch { rows = []; }
+  const cal = readCalendarState(store);
+  if (!rows.length) return ["## 다가오는 회의 (오늘·내일)", calendarNote(cal)].join("\n");
+  const stale = calendarStaleNote(cal);
+  return ["## 다가오는 회의 (오늘·내일, 시작 순 — 회의 응답 도구의 일정 id 는 여기 eventId)", ...(stale ? [stale] : []),
     ...rows.map((r) => `- eventId=${r.id} | ${kstWhen(r.start)}–${new Date(Date.parse(r.end) + 9 * 3600e3).toISOString().slice(11, 16)} | 〈${r.subject}〉${r.location ? ` | 장소: ${r.location}` : ""}${r.response ? ` | 내 응답: ${RESPONSE_KO[String(r.response).toLowerCase()] ?? r.response}` : ""}`),
   ].join("\n");
 }

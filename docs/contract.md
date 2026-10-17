@@ -155,6 +155,7 @@ type Bubble = {
 - 설정 창의 「연결 상태」 줄이다. 응답은 `{ rows: ConnRow[], checkedAt }`.
 - `ConnRow` 필드: `id`, `label`, `group: core|service|local`, `state: ok|warn|error|off|unknown`, `detail`, `error?`(가림), `check`, `pending?`, `doc?`, `used?`, `briefing?`.
 - `check`는 `id`(`net|claude|gh|local`)만 다시 확인한다.
+- 캘린더 두 줄(`connector:calendar`·`calendar`)은 설정만 보지 않고 실제 동기화 결과(아래 「캘린더 동기화 상태」)를 따른다. 가져오는 중이면 `detail`에 「일정 가져오는 중」, 가져왔으면 일정 수, 못 가져왔으면 `state: error`와 `error`에 사람이 읽는 이유가 들어간다.
 
 ### 그 밖
 
@@ -175,7 +176,17 @@ type Bubble = {
   - `projects[]`: `name`, `path`, `lastActive`, `sessions24h`, `lastTitle`, `lastPrompt`, `branch`, `commitsToday`, `recentCommits`, `hidden`
   - `manualProjects[]`: 직접 만든 프로젝트(아래 「직접 만든 프로젝트」, 진행 중 먼저)
   - `todos[]`(아래), `recentDone[]`, `proposals[]`, `today{date,asked,items}`
-  - `connectors[]{cap,label,mode,ready,detail,doc}`, `meetings[]{id,subject,start,end,link?}`, `todoRules[]`
+  - `connectors[]{cap,label,mode,ready,detail,doc,sync?}`, `meetings[]{id,subject,start,end,link?}`, `todoRules[]`
+  - `sync`는 연결된 캘린더 줄에만 붙는다: `{ phase: pending|ok|failed, at?, meetings?, reason? }`. 패널 연결 카드는 이걸로 「연결됨 · 일정 가져오는 중」·「연결됨 · 일정을 못 가져옴」(+ 이유)을 보인다.
+
+### 캘린더 동기화 상태(`calendar-state.ts`)
+
+- `CalendarSync`가 가져올 때마다 `cy.db`의 `calendar_state` 한 줄에 남긴다: `phase`(`off|pending|ok|failed`), `mode`, `key`(연결 설정의 해시. 설정이 바뀌면 예전 결과를 쓰지 않는다), `at`, `lastOkAt`, `meetings`, `events`, `reason`, `code`(`http|html|network|tls|timeout|url|mcp|brain|other`).
+- ICS 실패 이유는 사람이 알 수 있는 말로 남긴다. 예: 구글 「공개 주소」(`/public/`)면 「iCal 형식의 비공개 주소」를 넣으라고, 웹 페이지가 오면 .ics 주소를 넣으라고, 인증서 오류면 프록시·백신을 보라고. 비밀 주소는 이유에 넣지 않는다. 못 가져온 동기화는 실행 기록(`kind: calendar`)도 `failed`다.
+- MCP 캘린더인데 뇌가 Claude Code가 아니면 부르지 않고 `phase: failed`, `code: brain`으로 그 까닭을 남긴다.
+- 연결 설정이 바뀌면(`POST /connectors/reload`에서 캘린더가 바뀜) 데몬을 다시 켜지 않고 원천을 바꾼 뒤 곧바로 한 번 가져온다. 응답에 `applied: true`가 붙고, 다른 연결도 바뀌었을 때만 예전처럼 다시 켠다(`restarting`). 뇌(`brain`)를 바꾸거나 설치 마법사를 마쳐도 바로 한 번 가져온다. 데몬이 켜질 때도 버스가 뜨자마자 가져온다.
+- AI 맥락(`meetingsContext`, inline 맥락의 「오늘·내일 일정」)은 일정이 비면 상태 한 줄을 넣는다: 연결 안 됨 · 가져오는 중 · 못 가져온 이유 · 정말 일정 없음. 「연결된 캘린더 도구로 읽는다」는 MCP 캘린더를 Claude Code로 읽을 때만 붙는다. Claude Code가 아닌 뇌의 채팅 시스템 프롬프트(`CHAT_SYSTEM_NOTOOLS`)는 업무 도구(MCP)를 부를 수 있다고 하지 않는다.
+- 로컬 답(「다음 일정」 칩)도 같은 상태를 본다: 가져오는 중이면 기다려 달라고, 실패면 이유를 `detail`에 싣고 설정의 더 연결하기로 연다.
 - `POST /briefing` → 202. 지금 브리핑(오래 걸리니 기다리지 않는다).
 - `POST /refresh` → 202. Slack 다시 훑기 → 새 할 일 → 브리핑.
 - `POST /projects/hide|unhide { id: 경로 }` → 200 / 404. 숨긴 프로젝트는 집계·프롬프트에서 빠진다.

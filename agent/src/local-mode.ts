@@ -134,7 +134,7 @@ export type QuickFacts = {
   now: Date;
   today?: QuickPlanItem[]; // 오늘 할 일(열림·끝냄)
   open?: LocalTodo[]; // 열린 할 일(우선순위 순)
-  calendar?: { enabled: boolean; meetings: QuickMeeting[] };
+  calendar?: { enabled: boolean; meetings: QuickMeeting[]; state?: { phase: string; reason?: string } }; // state: 동기화 상태(calendar-state.ts)
 };
 // variant: 응원·춤 때 데몬이 고른 영상 번호(state.danceVariant 와 같다)
 export type QuickAnswer = { id: QuickAskId; text: string; detail?: string; kind: "info" | "done"; open?: { section: "today" | "todos" | "setup"; id?: string }; variant?: number };
@@ -149,6 +149,8 @@ export const QUICK_LINES = {
   todoTop: "지금은 '{title}'부터 해 보면 좋겠어요.",
   calOff: "캘린더를 연결하면 다음 일정도 알려 드릴게요. 설정의 더 연결하기에서 할 수 있어요.",
   calNone: "오늘과 내일은 잡힌 일정이 없어요. 여유 있게 보내요.",
+  calLoading: "캘린더는 연결됐어요. 지금 일정을 가져오는 중이라 잠시 뒤에 다시 물어봐 주세요.",
+  calFail: "캘린더는 연결됐는데 일정을 가져오지 못했어요. 까닭은 아래에 적어 둘게요.",
   calNow: "지금 〈{title}〉 일정 중이에요. {end}에 끝나요{where}.",
   calNext: "다음 일정은 〈{title}〉, {when}이에요{where}.",
   cheer: [
@@ -219,7 +221,12 @@ function answerEvent(f: QuickFacts, seed: string): QuickAnswer {
   const list = cal.meetings
     .filter((m) => Number.isFinite(Date.parse(m.start)) && Number.isFinite(Date.parse(m.end)) && Date.parse(m.end) > now)
     .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
-  if (!list.length) return { id: "next_event", kind: "info", text: spoken(localLine("calNone"), seed, "calm") };
+  if (!list.length) {
+    // 연결됐는데 아직 못 가져왔거나 실패했으면 「일정 없음」이라고 하지 않는다
+    if (cal.state?.phase === "pending") return { id: "next_event", kind: "info", text: spoken(localLine("calLoading"), seed, "calm") };
+    if (cal.state?.phase === "failed") return { id: "next_event", kind: "info", text: spoken(localLine("calFail"), seed, "calm"), ...(cal.state.reason ? { detail: cal.state.reason } : {}), open: { section: "setup", id: "extras" } };
+    return { id: "next_event", kind: "info", text: spoken(localLine("calNone"), seed, "calm") };
+  }
   const m = list[0];
   const where = m.location ? ` · 📍 ${cleanTitle(m.location).slice(0, 30)}` : "";
   const title = cleanTitle(m.subject).slice(0, 40) || "제목 없음";

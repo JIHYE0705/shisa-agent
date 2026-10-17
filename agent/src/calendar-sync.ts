@@ -7,6 +7,7 @@
 import { query as sdkQuery, type HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { NEEDS_CLAUDE_MCP, skipQuietly } from "./feature-brain.ts";
 import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { HOME_DIR, type Config } from "./config.ts";
 import type { Store } from "./store.ts";
@@ -15,6 +16,7 @@ import { CONNECTORS, isWriteName, mcpTool, type Conn } from "./connectors.ts";
 import { calendarName, eventsInWindow, fetchIcsText, type FetchText } from "./ics.ts";
 import { phrase } from "./phrases.ts";
 import { calendarAlertOf } from "./calendar-alert.ts";
+import { readCalendarState, writeCalendarState, type CalendarState } from "./calendar-state.ts";
 
 export const SYNC_EVERY_MS = 30 * 60e3;   // 30분마다 다시 가져온다
 export const DANCE_MS = 8000;
@@ -183,22 +185,55 @@ export function alertDetail(m: Meeting): string | undefined {
 
 // ── 원천(커넥터) ─────────────────────────────────────────────
 
-export type CalendarSource = (cfg: Config, w: { from: string; to: string }) => Promise<{ ok: boolean; events: CalEvent[]; calls: number; errors: number; costUsd: number }>;
+// reason·code: 못 가져왔을 때 사람이 읽는 이유와 종류(calendar-state.ts). 성공이면 없다
+export type SourceResult = { ok: boolean; events: CalEvent[]; calls: number; errors: number; costUsd: number; reason?: string; code?: string };
+export type CalendarSource = (cfg: Config, w: { from: string; to: string }) => Promise<SourceResult>;
 
-// api: 비공개 ICS 주소들(여러 캘린더면 여러 개). 하나라도 실패하면 ok=false(예전 것 유지)
+// ICS 주소를 읽다 난 오류 → 사람이 알 수 있는 이유. 주소(비밀)는 넣지 않는다
+export function icsFailReason(e: any, url: string): { code: string; reason: string } {
+  const msg = String(e?.message ?? e ?? "");
+  const cause = String(e?.cause?.code ?? e?.code ?? "");
+  let host = "", path = "";
+  try { const u = new URL(url.replace(/^webcal:\/\//i, "https://")); host = u.hostname.toLowerCase(); path = u.pathname; } catch { return { code: "url", reason: "캘린더 주소 모양이 올바르지 않아요. iCal 형식 비공개 주소를 다시 복사해 넣어 주세요." }; }
+  const google = host === "calendar.google.com";
+  const http = /ICS HTTP (\d{3})/.exec(msg);
+  if (http) {
+    const st = Number(http[1]);
+    if (st === 404 || st === 401 || st === 403 || st === 410) {
+      if (google && /\/public\//.test(path)) return { code: "http", reason: `구글 캘린더의 「공개 주소」를 넣으셨어요(HTTP ${st}). 캘린더 설정 → 캘린더 통합의 「iCal 형식의 비공개 주소」를 넣어 주세요.` };
+      if (google) return { code: "http", reason: `구글 캘린더가 이 주소를 찾지 못했어요(HTTP ${st}). 「iCal 형식의 비공개 주소」를 다시 복사해 넣어 주세요. 비공개 주소를 재설정했다면 새 주소가 필요해요.` };
+      return { code: "http", reason: `캘린더 서버가 이 주소를 찾지 못했어요(HTTP ${st}). 게시한 ICS 주소를 다시 복사해 넣어 주세요.` };
+    }
+    return { code: "http", reason: `캘린더 서버가 오류로 답했어요(HTTP ${st}). 잠시 뒤에 다시 가져올게요.` };
+  }
+  if (/ICS 형식이 아님/.test(msg)) return { code: "html", reason: "캘린더가 아니라 웹 페이지가 왔어요. 캘린더 화면 주소 말고 「iCal 형식의 비공개 주소」(.ics)를 넣어 주세요." };
+  if (e?.name === "TimeoutError" || e?.name === "AbortError" || /timeout|timed out/i.test(msg)) return { code: "timeout", reason: "캘린더 서버가 20초 안에 답하지 않았어요. 인터넷 연결을 확인해 주세요. 잠시 뒤에 다시 가져올게요." };
+  if (/CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER/i.test(cause)) return { code: "tls", reason: "보안 연결(인증서)을 확인하지 못했어요. 회사 프록시나 백신이 HTTPS 를 가로채고 있는지 확인해 주세요." };
+  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT/i.test(cause) || /fetch failed/i.test(msg)) return { code: "network", reason: `캘린더 서버(${host})에 닿지 못했어요. 인터넷이나 회사 프록시 연결을 확인해 주세요.` };
+  if (/ERR_INVALID_URL|Failed to parse URL|Invalid URL/i.test(`${cause} ${msg}`)) return { code: "url", reason: "캘린더 주소 모양이 올바르지 않아요. iCal 형식 비공개 주소를 다시 복사해 넣어 주세요." };
+  return { code: "other", reason: `캘린더를 읽지 못했어요(${msg.slice(0, 60) || "알 수 없는 오류"}).` };
+}
+
+// api: 비공개 ICS 주소들(여러 캘린더면 여러 개). 하나라도 실패하면 ok=false(예전 것 유지), 이유는 처음 실패한 것
 export function icsSource(urls: string[], opts: { timeZone: string; email?: string }, fetchText: FetchText = fetchIcsText): CalendarSource {
   return async (_cfg, w) => {
     const events: CalEvent[] = [];
     let errors = 0;
+    let fail: { code: string; reason: string } | undefined;
     for (const [i, url] of urls.entries()) {
       try {
         const text = await fetchText(url);
         const name = calendarName(text) || (urls.length > 1 ? `캘린더 ${i + 1}` : "");
         events.push(...eventsInWindow(text, Date.parse(w.from), Date.parse(w.to), opts).map((e) => (name ? { ...e, calendar: name } : e)));
       }
-      catch (e: any) { errors++; console.warn("[calendar] ICS 실패:", String(e?.message ?? e).slice(0, 80)); }
+      catch (e: any) {
+        errors++;
+        const r = icsFailReason(e, url);
+        fail ??= urls.length > 1 ? { code: r.code, reason: `${i + 1}번째 캘린더: ${r.reason}` } : r;
+        console.warn(`[calendar] ICS 실패(${i + 1}/${urls.length}, ${r.code}):`, String(e?.message ?? e).slice(0, 80), e?.cause?.code ? `(${e.cause.code})` : "");
+      }
     }
-    return { ok: !errors && urls.length > 0, events, calls: urls.length, errors, costUsd: 0 };
+    return { ok: !errors && urls.length > 0, events, calls: urls.length, errors, costUsd: 0, ...(fail ? fail : {}) };
   };
 }
 
@@ -228,6 +263,8 @@ const MCP_EVENTS_SCHEMA = {
   },
 } as const;
 
+export const MCP_BRAIN_REASON = "MCP 로 연결한 캘린더는 뇌(AI)가 Claude Code 일 때만 읽어요. 지금 뇌로 일정을 보려면 캘린더를 「iCal 형식의 비공개 주소」로 연결해 주세요.";
+
 // mcp: 경량 모델이 매핑된 목록 도구(listEvents)만 부르고, 결과를 우리 모양으로 옮겨 준다(서버마다 응답 모양이 달라서)
 export function mcpCalendarSource(conn: Extract<Conn, { mode: "mcp" }>, q: typeof sdkQuery = sdkQuery): CalendarSource {
   const tool = conn.tools.listEvents;
@@ -235,9 +272,9 @@ export function mcpCalendarSource(conn: Extract<Conn, { mode: "mcp" }>, q: typeo
     // MCP 는 Claude Code 경로로만 읽는다(Codex·API 키 뇌에선 SDK 를 부르지 않는다). 예전 일정은 그대로 둔다
     if ((cfg.brain?.provider ?? "claude-code") !== "claude-code") {
       skipQuietly("calendar", cfg, console.log, NEEDS_CLAUDE_MCP);
-      return { ok: false, events: [], calls: 0, errors: 0, costUsd: 0 };
+      return { ok: false, events: [], calls: 0, errors: 0, costUsd: 0, code: "brain", reason: MCP_BRAIN_REASON };
     }
-    if (!tool || isWriteName(tool)) return { ok: false, events: [], calls: 0, errors: 1, costUsd: 0 };
+    if (!tool || isWriteName(tool)) return { ok: false, events: [], calls: 0, errors: 1, costUsd: 0, code: "mcp", reason: "캘린더 MCP 에 일정 목록 도구(listEvents)가 정해져 있지 않아요." };
     const full = mcpTool(conn.server, tool);
     let calls = 0;
     const pre: HookCallback = async (input) => {
@@ -268,7 +305,8 @@ export function mcpCalendarSource(conn: Extract<Conn, { mode: "mcp" }>, q: typeo
       }
     } catch { errors++; }
     const events = mcpEventsToCal(out?.events);
-    return { ok: !!out?.ok && calls > 0 && !errors, events, calls, errors, costUsd };
+    const ok = !!out?.ok && calls > 0 && !errors;
+    return { ok, events, calls, errors, costUsd, ...(ok ? {} : { code: "mcp", reason: calls ? "캘린더 MCP 도구가 일정을 돌려주지 않았어요. Claude Code 에서 캘린더 MCP 로그인을 확인해 주세요." : "캘린더 MCP 도구를 부르지 못했어요. claude mcp list 에서 캘린더 서버가 연결됨인지 확인해 주세요." }) };
   };
 }
 
@@ -293,6 +331,9 @@ export function mcpEventsToCal(list: unknown): CalEvent[] {
   }
   return out;
 }
+
+// 연결 설정의 지문(주소는 비밀이라 해시만 남긴다). 설정이 바뀌면 예전 동기화 결과를 쓰지 않는다
+export const connKey = (conn: Conn | undefined): string => createHash("sha256").update(JSON.stringify(conn ?? null)).digest("hex").slice(0, 16);
 
 // 커넥터 설정 → 원천. off·준비 안 됨은 null
 export function sourceFor(conn: Conn): CalendarSource | null {
@@ -319,7 +360,7 @@ export type CalendarDeps = {
   source?: CalendarSource | null; // 원천(커넥터). 안 주면 cfg.connectors.calendar. null = 끔
 };
 export type CalendarAlert = (m: Meeting, text: string, mins: number) => void;
-export type CalendarSyncResult = { events: number; meetings: number; calls: number; errors: number; costUsd: number; skipped: Record<string, number> };
+export type CalendarSyncResult = { events: number; meetings: number; calls: number; errors: number; costUsd: number; skipped: Record<string, number>; reason?: string };
 
 export class CalendarSync {
   private cfg: Config;
@@ -330,11 +371,16 @@ export class CalendarSync {
   private lastSync = 0;
   private lastTick = 0;
   private stopped = true;
+  private scheduled = false; // schedule() 을 불렀나(연결이 나중에 생겨도 그때 알림·주기를 켠다)
+  private gen = 0;           // 연결 설정이 바뀔 때마다 하나씩(바뀌기 전에 시작한 동기화 결과는 버린다)
+  private runningGen = -1;
+  private st: CalendarState = { phase: "off" };
   onChange?: () => void;
 
   constructor(cfg: Config, store: Store, deps: Partial<CalendarDeps> = {}) {
     this.cfg = cfg; this.store = store;
-    const source = "source" in deps ? deps.source : sourceFor(cfg.connectors?.calendar ?? CONNECTORS.calendar);
+    const conn = cfg.connectors?.calendar ?? CONNECTORS.calendar;
+    const source = "source" in deps ? deps.source : sourceFor(conn);
     this.deps = {
       now: () => new Date(),
       setTimer: (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; },
@@ -343,6 +389,36 @@ export class CalendarSync {
       source: source ?? null,
     };
     this.migrate();
+    this.resetState(conn, true);
+  }
+
+  // 연결이 바뀌었거나 켤 때: 같은 설정으로 남긴 상태가 있으면 이어 쓰고, 없으면 「가져오는 중」(연결 안 됐으면 off)
+  private resetState(conn: Conn | undefined, keepSame: boolean) {
+    const key = connKey(conn);
+    const mode = conn?.mode === "api" || conn?.mode === "mcp" ? conn.mode : undefined;
+    if (!this.deps.source) { this.setState({ phase: "off" }); return; }
+    const prev = keepSame ? readCalendarState(this.store) : null;
+    this.setState(prev && prev.key === key && prev.phase !== "off" ? { ...prev, ...(mode ? { mode } : {}) } : { phase: "pending", key, ...(mode ? { mode } : {}) });
+  }
+  private setState(s: CalendarState) {
+    this.st = s;
+    writeCalendarState(this.store, s);
+  }
+  // 지금 동기화 상태(연결 상태 줄·패널·로컬 답)
+  state(): CalendarState { return { ...this.st }; }
+
+  // 설정 창·마법사가 캘린더 연결을 바꿈(POST /connectors/reload): 데몬을 다시 켜지 않고 원천을 바꾸고 바로 한 번 가져온다
+  setConnector(conn: Conn) {
+    this.gen++;
+    this.deps.source = sourceFor(conn);
+    this.resetState(conn, false);
+    if (!this.deps.source) { this.disable(); return; }
+    this.onChange?.();
+    if (this.scheduled) {
+      this.stopped = false;
+      this.check();
+      this.sync().then((r) => this.onSync?.(r)).catch((e) => console.warn("[calendar] 동기화 실패:", e?.message ?? e));
+    }
   }
 
   private migrate() {
@@ -357,9 +433,14 @@ export class CalendarSync {
     return { from: `${today}T00:00:00+09:00`, to: `${addDays(today, 2)}T00:00:00+09:00` };
   }
 
+  // 같은 설정으로 도는 중이면 그걸 기다리고, 설정이 바뀐 뒤면 앞의 것이 끝난 다음 새로 한 번
   sync(): Promise<CalendarSyncResult> {
-    this.running ??= this.doSync().finally(() => { this.running = undefined; });
-    return this.running;
+    if (this.running && this.runningGen === this.gen) return this.running;
+    const before = this.running;
+    const p: Promise<CalendarSyncResult> = (before ? before.catch(() => undefined).then(() => this.doSync()) : this.doSync()).finally(() => { if (this.running === p) this.running = undefined; });
+    this.running = p;
+    this.runningGen = this.gen;
+    return p;
   }
 
   // 캘린더가 연결돼 있나(off 면 동기화·알림을 하지 않는다)
@@ -367,31 +448,56 @@ export class CalendarSync {
 
   // [연결 해제]: 데몬을 다시 켜지 않아도 지금부터 동기화·알림을 멈추고 회의도 안 보여 준다
   disable() {
+    this.gen++;
     this.deps.source = null;
     this.stopped = true;
     if (this.timer) this.deps.clearTimer(this.timer);
+    this.setState({ phase: "off" });
   }
 
   private async doSync(): Promise<CalendarSyncResult> {
     const w = this.window();
     const src = this.deps.source;
+    const gen = this.gen;
     if (!src) return { events: 0, meetings: 0, calls: 0, errors: 0, costUsd: 0, skipped: {} };
+    const mode = this.cfg.connectors?.calendar?.mode;
     // MCP 캘린더는 모델이 중계한다: 설치 마법사를 마치기 전엔 부르지 않는다(ICS 는 모델 없이 사용자가 붙인 주소만 읽는다)
-    if (this.cfg.onboarded === false && this.cfg.connectors?.calendar?.mode === "mcp") return { events: 0, meetings: 0, calls: 0, errors: 0, costUsd: 0, skipped: {} };
-    const r = await (this.deps.wrapRun ? this.deps.wrapRun(() => src(this.cfg, w)) : src(this.cfg, w));
-    return this.finish(w, r.events, r.ok, r);
+    if (this.cfg.onboarded === false && mode === "mcp") return { events: 0, meetings: 0, calls: 0, errors: 0, costUsd: 0, skipped: {} };
+    // MCP 캘린더인데 뇌가 Claude Code 가 아니면 읽을 수 없다: 실행 기록 없이 그 까닭만 남긴다
+    if (mode === "mcp" && (this.cfg.brain?.provider ?? "claude-code") !== "claude-code") {
+      skipQuietly("calendar", this.cfg, console.log, NEEDS_CLAUDE_MCP);
+      return this.finish(w, gen, { ok: false, events: [], calls: 0, errors: 0, costUsd: 0, code: "brain", reason: MCP_BRAIN_REASON });
+    }
+    let r: SourceResult | undefined;
+    const once = async () => {
+      r = await src(this.cfg, w);
+      // 못 가져왔으면 실행 기록도 실패로(「마지막 성공」으로 보이지 않게). 이유는 r 에 남는다
+      if (!r.ok) throw new Error(r.reason ?? "캘린더를 가져오지 못했어요");
+      return r;
+    };
+    try { await (this.deps.wrapRun ? this.deps.wrapRun(once) : once()); }
+    catch (e: any) { r ??= { ok: false, events: [], calls: 0, errors: 1, costUsd: 0, code: "other", reason: `캘린더를 읽지 못했어요(${String(e?.message ?? e).slice(0, 60)}).` }; }
+    return this.finish(w, gen, r!);
   }
 
-  private finish(w: { from: string; to: string }, events: CalEvent[], ok: boolean, c: { calls: number; errors: number; costUsd: number }): CalendarSyncResult {
+  private finish(w: { from: string; to: string }, gen: number, r: SourceResult): CalendarSyncResult {
+    const { events, ok } = r;
     const skipped: Record<string, number> = {};
-    for (const e of events) { const r = skipReason(e); if (r) skipped[r] = (skipped[r] ?? 0) + 1; }
+    for (const e of events) { const x = skipReason(e); if (x) skipped[x] = (skipped[x] ?? 0) + 1; }
     const meetings = toMeetings(events);
+    const out = { events: events.length, meetings: meetings.length, calls: r.calls, errors: r.errors, costUsd: r.costUsd, skipped, ...(ok ? {} : { reason: r.reason ?? "캘린더를 가져오지 못했어요" }) };
+    if (gen !== this.gen) return out; // 그사이 연결이 바뀌었다(끊었거나 다른 주소): 예전 설정의 결과는 버린다
     // 한 번이라도 받았고 오류가 없을 때만 그 창을 통째로 바꾼다(취소된 회의가 사라지게). 실패면 예전 것 유지
     if (ok) this.replace(w, meetings);
+    const at = this.deps.now().toISOString();
+    const prev = this.st;
+    this.setState(ok
+      ? { phase: "ok", ...(prev.mode ? { mode: prev.mode } : {}), ...(prev.key ? { key: prev.key } : {}), at, lastOkAt: at, meetings: meetings.length, events: events.length }
+      : { phase: "failed", ...(prev.mode ? { mode: prev.mode } : {}), ...(prev.key ? { key: prev.key } : {}), at, ...(prev.lastOkAt ? { lastOkAt: prev.lastOkAt, meetings: prev.meetings, events: prev.events } : {}), reason: r.reason ?? "캘린더를 가져오지 못했어요", ...(r.code ? { code: r.code } : {}) });
     this.lastSync = this.deps.now().getTime();
     this.onChange?.();
     this.check();
-    return { events: events.length, meetings: meetings.length, calls: c.calls, errors: c.errors, costUsd: c.costUsd, skipped };
+    return out;
   }
 
   private replace(w: { from: string; to: string }, meetings: Meeting[]) {
@@ -480,13 +586,16 @@ export class CalendarSync {
   }
 
   // 켤 때 한 번 가져오고, 30분마다·잠자기에서 깨면 다시. 반환: 정지
+  // 연결이 아직 없으면 기다렸다가 setConnector 로 연결되면 그때 켠다
   schedule(onAlert: CalendarAlert, onSync?: (r: CalendarSyncResult) => void): () => void {
-    if (!this.enabled) return () => {}; // 캘린더 연결 안 됨
     this.onAlert = onAlert;
     this.onSync = onSync;
+    this.scheduled = true;
+    const stop = () => { this.scheduled = false; this.stopped = true; if (this.timer) this.deps.clearTimer(this.timer); };
+    if (!this.enabled) return stop; // 캘린더 연결 안 됨
     this.stopped = false;
     this.check(); // 저장된 회의로 바로(데몬 재시작 직후에도 알림 창 안이면 울린다)
     this.sync().then((r) => onSync?.(r)).catch((e) => console.warn("[calendar] 동기화 실패:", e?.message ?? e));
-    return () => { this.stopped = true; if (this.timer) this.deps.clearTimer(this.timer); };
+    return stop;
   }
 }
